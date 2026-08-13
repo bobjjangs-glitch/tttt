@@ -1,0 +1,21 @@
+[12-Aug-2026 14:52:56 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 14:53:14 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 14:59:06 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 15:02:37 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 15:04:16 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 15:05:42 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 17:40:01 Asia/Seoul] PHP Warning:  Undefined variable $pdo in /hosting/bobjjangs1231/html/tire/admin/orders.php on line 226
+[12-Aug-2026 17:40:01 Asia/Seoul] [UNCAUGHT] Call to a member function prepare() on null in /hosting/bobjjangs1231/html/tire/admin/orders.php:226
+#0 {main}
+[12-Aug-2026 17:40:04 Asia/Seoul] PHP Warning:  Undefined variable $pdo in /hosting/bobjjangs1231/html/tire/admin/orders.php on line 226
+[12-Aug-2026 17:40:04 Asia/Seoul] [UNCAUGHT] Call to a member function prepare() on null in /hosting/bobjjangs1231/html/tire/admin/orders.php:226
+#0 {main}
+[12-Aug-2026 17:40:19 Asia/Seoul] PHP Warning:  Undefined variable $pdo in /hosting/bobjjangs1231/html/tire/admin/orders.php on line 226
+[12-Aug-2026 17:40:19 Asia/Seoul] [UNCAUGHT] Call to a member function prepare() on null in /hosting/bobjjangs1231/html/tire/admin/orders.php:226
+#0 {main}

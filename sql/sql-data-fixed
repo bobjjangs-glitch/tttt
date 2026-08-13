@@ -1,0 +1,385 @@
+-- ================================================
+-- TIRETOP 실서비스용 데이터베이스 스키마 (MySQL 8.0 / utf8mb4)
+-- 도닷호스팅 phpMyAdmin에서 bobjjangs1231 DB에 직접 실행 가능
+-- ================================================
+
+-- (CREATE DATABASE / USE 제거 — 호스팅 계정 DB에 직접 테이블 생성)
+
+-- ============================================================
+-- 기존 테이블에 새 컬럼 추가 (이미 있으면 무시)
+-- phpMyAdmin SQL 탭에 그대로 복사 붙여넣기 하시면 됩니다.
+-- ============================================================
+
+-- tt_products 에 새 컬럼들 추가
+ALTER TABLE tt_products ADD COLUMN IF NOT EXISTS spec VARCHAR(100) NULL AFTER model;
+ALTER TABLE tt_products ADD COLUMN IF NOT EXISTS origin VARCHAR(50) NULL AFTER spec;
+ALTER TABLE tt_products ADD COLUMN IF NOT EXISTS dot_code VARCHAR(20) NULL AFTER origin;
+ALTER TABLE tt_products ADD COLUMN IF NOT EXISTS supply_price INT UNSIGNED NOT NULL DEFAULT 0 AFTER price_sale;
+ALTER TABLE tt_products ADD COLUMN IF NOT EXISTS stock INT NOT NULL DEFAULT 0 AFTER supply_price;
+
+-- tt_product_options 에 새 컬럼들 추가
+ALTER TABLE tt_product_options ADD COLUMN IF NOT EXISTS dot_code VARCHAR(20) NULL AFTER size;
+ALTER TABLE tt_product_options ADD COLUMN IF NOT EXISTS price_sale INT UNSIGNED NOT NULL DEFAULT 0 AFTER extra_price;
+
+-- tt_banners 에 노출기간 컬럼 추가
+ALTER TABLE tt_banners ADD COLUMN IF NOT EXISTS start_at DATETIME NULL;
+ALTER TABLE tt_banners ADD COLUMN IF NOT EXISTS end_at DATETIME NULL;
+ALTER TABLE tt_banners ADD COLUMN IF NOT EXISTS created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+-- ============================================================
+-- 새 테이블 생성 (이미 있으면 건너뜀)
+-- ============================================================
+
+-- ── 회원 ──
+CREATE TABLE IF NOT EXISTS tt_users (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  email           VARCHAR(191) NOT NULL UNIQUE,
+  password_hash   VARCHAR(255) NOT NULL,
+  name            VARCHAR(50)  NOT NULL,
+  phone           VARCHAR(20)  NULL,
+  zipcode         VARCHAR(10)  NULL,
+  address1        VARCHAR(255) NULL,
+  address2        VARCHAR(255) NULL,
+  marketing_agree TINYINT(1)   NOT NULL DEFAULT 0,
+  status          ENUM('active','dormant','withdrawn') NOT NULL DEFAULT 'active',
+  login_fail_cnt  TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  locked_until    DATETIME NULL,
+  last_login_at   DATETIME NULL,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ── 관리자 (회원과 완전 분리) ──
+CREATE TABLE IF NOT EXISTS tt_admins (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  username        VARCHAR(50) NOT NULL UNIQUE,
+  password_hash   VARCHAR(255) NOT NULL,
+  name            VARCHAR(50) NOT NULL,
+  role            ENUM('super','manager','cs') NOT NULL DEFAULT 'manager',
+  status          ENUM('active','disabled') NOT NULL DEFAULT 'active',
+  last_login_at   DATETIME NULL,
+  last_login_ip   VARCHAR(45) NULL,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_admin_logs (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  admin_id    INT UNSIGNED NOT NULL,
+  action      VARCHAR(100) NOT NULL,
+  target_type VARCHAR(50)  NULL,
+  target_id   BIGINT UNSIGNED NULL,
+  memo        VARCHAR(255) NULL,
+  ip_addr     VARCHAR(45)  NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (admin_id) REFERENCES tt_admins(id)
+) ENGINE=InnoDB;
+
+-- ── 카테고리 / 브랜드 ──
+CREATE TABLE IF NOT EXISTS tt_categories (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  parent_id   INT UNSIGNED NULL,
+  name        VARCHAR(50) NOT NULL,
+  slug        VARCHAR(50) NOT NULL UNIQUE,
+  sort_order  INT NOT NULL DEFAULT 0,
+  is_active   TINYINT(1) NOT NULL DEFAULT 1,
+  FOREIGN KEY (parent_id) REFERENCES tt_categories(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_brands (
+  id        INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name      VARCHAR(50) NOT NULL,
+  slug      VARCHAR(50) NOT NULL UNIQUE,
+  logo_url  VARCHAR(255) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB;
+
+-- ── 상품 ──
+CREATE TABLE IF NOT EXISTS tt_products (
+  id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  category_id    INT UNSIGNED NOT NULL,
+  brand_id       INT UNSIGNED NOT NULL,
+  name           VARCHAR(150) NOT NULL,
+  model          VARCHAR(100) NULL,
+  spec           VARCHAR(100) NULL,          -- 타이어 규격 (예: 225/45R18)
+  origin         VARCHAR(50)  NULL,          -- 원산지
+  dot_code       VARCHAR(20)  NULL,          -- 대표 DOT 코드
+  sku            VARCHAR(50)  NOT NULL UNIQUE,
+  description    TEXT NULL,
+  thumbnail_url  VARCHAR(255) NULL,
+  price_original INT UNSIGNED NOT NULL,
+  price_sale     INT UNSIGNED NOT NULL,
+  supply_price   INT UNSIGNED NOT NULL DEFAULT 0,  -- 공급가(매입가)
+  stock          INT NOT NULL DEFAULT 0,           -- 단일 재고(옵션 없는 상품용)
+  status         ENUM('active','hidden') NOT NULL DEFAULT 'active',
+  view_count     INT UNSIGNED NOT NULL DEFAULT 0,
+  sales_count    INT UNSIGNED NOT NULL DEFAULT 0,
+  rating_avg     DECIMAL(2,1) NOT NULL DEFAULT 0.0,
+  review_count   INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (category_id) REFERENCES tt_categories(id),
+  FOREIGN KEY (brand_id) REFERENCES tt_brands(id),
+  INDEX idx_category (category_id),
+  INDEX idx_brand (brand_id),
+  INDEX idx_status (status)
+) ENGINE=InnoDB;
+
+-- 타이어 전용 옵션(규격별 재고/추가금) — 다른 카테고리는 vehicle/season NULL 허용
+CREATE TABLE IF NOT EXISTS tt_product_options (
+  id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  product_id   BIGINT UNSIGNED NOT NULL,
+  size         VARCHAR(30) NULL,        -- 예: 225/45R18
+  dot_code     VARCHAR(20) NULL,        -- DOT 코드 (주차+연도, 예: 2625)
+  season       ENUM('사계절','여름','겨울') NULL,
+  vehicle_type ENUM('승용차','SUV','고성능','트럭') NULL,
+  extra_price  INT NOT NULL DEFAULT 0,  -- 규격별 추가금(음수 가능)
+  price_sale   INT UNSIGNED NOT NULL DEFAULT 0,  -- 옵션별 판매가
+  stock_qty    INT UNSIGNED NOT NULL DEFAULT 0,
+  is_active    TINYINT(1) NOT NULL DEFAULT 1,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_product_images (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  product_id BIGINT UNSIGNED NOT NULL,
+  image_url  VARCHAR(255) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_product_tags (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  product_id BIGINT UNSIGNED NOT NULL,
+  tag        ENUM('BEST','HOT','NEW','SALE') NOT NULL,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_product_tag (product_id, tag)
+) ENGINE=InnoDB;
+
+-- ── 장바구니 / 찜 ──
+CREATE TABLE IF NOT EXISTS tt_carts (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id    BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  option_id  BIGINT UNSIGNED NULL,
+  qty        INT UNSIGNED NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id),
+  FOREIGN KEY (option_id) REFERENCES tt_product_options(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_wishlists (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id    BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_wish (user_id, product_id),
+  FOREIGN KEY (user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ── 장착점(설치점) ──
+CREATE TABLE IF NOT EXISTS tt_install_shops (
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name           VARCHAR(100) NOT NULL,
+  phone          VARCHAR(20)  NULL,
+  zipcode        VARCHAR(10)  NULL,
+  address        VARCHAR(255) NOT NULL,
+  lat            DECIMAL(10,7) NULL,
+  lng            DECIMAL(10,7) NULL,
+  business_hours VARCHAR(100) NULL,
+  is_active      TINYINT(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB;
+
+-- ── 주문 (스냅샷 방식으로 정합성 보장) ──
+CREATE TABLE IF NOT EXISTS tt_orders (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_no        VARCHAR(30) NOT NULL UNIQUE,   -- 예: TT20260713-000123
+  user_id         BIGINT UNSIGNED NOT NULL,
+  install_shop_id INT UNSIGNED NULL,
+  status          ENUM('pending','paid','preparing','installed','completed','canceled','refunded')
+                  NOT NULL DEFAULT 'pending',
+  payment_method  ENUM('bank_transfer','virtual_account','card') NOT NULL DEFAULT 'bank_transfer',
+  payment_status  ENUM('unpaid','paid','refunded') NOT NULL DEFAULT 'unpaid',
+  total_amount    INT UNSIGNED NOT NULL,
+  discount_amount INT UNSIGNED NOT NULL DEFAULT 0,
+  shipping_fee    INT UNSIGNED NOT NULL DEFAULT 0,
+  recipient_name  VARCHAR(50) NOT NULL,
+  recipient_phone VARCHAR(20) NOT NULL,
+  zipcode         VARCHAR(10) NULL,
+  address1        VARCHAR(255) NULL,
+  address2        VARCHAR(255) NULL,
+  memo            VARCHAR(255) NULL,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES tt_users(id),
+  FOREIGN KEY (install_shop_id) REFERENCES tt_install_shops(id),
+  INDEX idx_user (user_id),
+  INDEX idx_status (status)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_order_items (
+  id                 BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_id           BIGINT UNSIGNED NOT NULL,
+  product_id         BIGINT UNSIGNED NOT NULL,
+  option_id          BIGINT UNSIGNED NULL,
+  product_name_snap  VARCHAR(150) NOT NULL,  -- 주문 시점 상품명 스냅샷
+  size_snap          VARCHAR(30)  NULL,
+  price_snap         INT UNSIGNED NOT NULL,  -- 주문 시점 단가 스냅샷
+  qty                INT UNSIGNED NOT NULL,
+  subtotal           INT UNSIGNED NOT NULL,
+  FOREIGN KEY (order_id) REFERENCES tt_orders(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_order_status_logs (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_id   BIGINT UNSIGNED NOT NULL,
+  status     VARCHAR(30) NOT NULL,
+  memo       VARCHAR(255) NULL,
+  admin_id   INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (order_id) REFERENCES tt_orders(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ── 리뷰 / Q&A ──
+CREATE TABLE IF NOT EXISTS tt_reviews (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  product_id    BIGINT UNSIGNED NOT NULL,
+  user_id       BIGINT UNSIGNED NOT NULL,
+  order_item_id BIGINT UNSIGNED NULL,
+  rating        TINYINT UNSIGNED NOT NULL,
+  content       TEXT NOT NULL,
+  image_url     VARCHAR(255) NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES tt_users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_qna (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  product_id  BIGINT UNSIGNED NOT NULL,
+  user_id     BIGINT UNSIGNED NOT NULL,
+  question    TEXT NOT NULL,
+  answer      TEXT NULL,
+  is_secret   TINYINT(1) NOT NULL DEFAULT 0,
+  answered_at DATETIME NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES tt_users(id)
+) ENGINE=InnoDB;
+
+-- ── 쿠폰 ──
+CREATE TABLE IF NOT EXISTS tt_coupons (
+  id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code             VARCHAR(30) NOT NULL UNIQUE,
+  type             ENUM('percent','fixed') NOT NULL,
+  value            INT UNSIGNED NOT NULL,
+  min_order_amount INT UNSIGNED NOT NULL DEFAULT 0,
+  valid_from       DATETIME NOT NULL,
+  valid_to         DATETIME NOT NULL,
+  usage_limit      INT UNSIGNED NULL,
+  used_count       INT UNSIGNED NOT NULL DEFAULT 0,
+  is_active        TINYINT(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_user_coupons (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id    BIGINT UNSIGNED NOT NULL,
+  coupon_id  INT UNSIGNED NOT NULL,
+  is_used    TINYINT(1) NOT NULL DEFAULT 0,
+  used_at    DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
+  FOREIGN KEY (coupon_id) REFERENCES tt_coupons(id)
+) ENGINE=InnoDB;
+
+-- ── 배너 / 공지사항 / FAQ ──
+
+-- ── 재고 요청 (사용자가 품절 상품의 재고를 요청) ──
+CREATE TABLE IF NOT EXISTS tt_stock_requests (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id     BIGINT UNSIGNED NULL,       -- 비회원도 가능하므로 NULL 허용
+  product_id  BIGINT UNSIGNED NOT NULL,
+  dot_code    VARCHAR(20)  NULL,           -- 특정 DOT에 대한 요청이면 입력
+  qty         INT NOT NULL DEFAULT 1,      -- 요청 수량
+  phone       VARCHAR(20)  NULL,           -- 비회원 연락처
+  status      ENUM('pending','notified','closed') NOT NULL DEFAULT 'pending',
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (product_id) REFERENCES tt_products(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ── 배너 ──
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  title      VARCHAR(100) NOT NULL,
+  image_url  VARCHAR(255) NOT NULL,
+  link_url   VARCHAR(255) NULL,
+  position   VARCHAR(30) NOT NULL DEFAULT 'main_top',
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active  TINYINT(1) NOT NULL DEFAULT 1,
+  start_at   DATETIME NULL,
+  end_at     DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ── 프로모 배너 (메인 4단 컬러/이미지 배너 그리드, admin/promo-banners.php 에서 관리) ──
+CREATE TABLE IF NOT EXISTS tt_promo_banners (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  title       VARCHAR(100) NOT NULL,
+  description VARCHAR(255) NULL,
+  cta_text    VARCHAR(50)  NOT NULL DEFAULT '바로가기',
+  image_url   VARCHAR(255) NULL,
+  link_url    VARCHAR(255) NULL,
+  sort_order  INT NOT NULL DEFAULT 0,
+  is_active   TINYINT(1) NOT NULL DEFAULT 1,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ── 카테고리 아이콘 (메인 상단 슬라이드 카드, admin/category-icons.php 에서 관리) ──
+CREATE TABLE IF NOT EXISTS tt_category_icons (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  label           VARCHAR(50)  NOT NULL,
+  icon_image_url  VARCHAR(255) NOT NULL,
+  link_url        VARCHAR(255) NULL,
+  sort_order      INT NOT NULL DEFAULT 0,
+  is_active       TINYINT(1) NOT NULL DEFAULT 1,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ── 휴대폰 인증 (ajax-send-phone-code.php / ajax-verify-phone-code.php) ──
+CREATE TABLE IF NOT EXISTS tt_phone_verifications (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  phone       VARCHAR(20) NOT NULL,
+  code        VARCHAR(10) NOT NULL,
+  is_verified TINYINT(1) NOT NULL DEFAULT 0,
+  expires_at  DATETIME NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_phone (phone)
+) ENGINE=InnoDB;
+
+
+CREATE TABLE IF NOT EXISTS tt_notices (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  admin_id   INT UNSIGNED NOT NULL,
+  title      VARCHAR(150) NOT NULL,
+  content    TEXT NOT NULL,
+  is_pinned  TINYINT(1) NOT NULL DEFAULT 0,
+  view_count INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (admin_id) REFERENCES tt_admins(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS tt_faqs (
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  category   VARCHAR(30) NOT NULL,
+  question   VARCHAR(255) NOT NULL,
+  answer     TEXT NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0
+) ENGINE=InnoDB;
+
+-- ── 사이트 설정 (key-value) ──
+CREATE TABLE IF NOT EXISTS tt_site_settings (
+  setting_key   VARCHAR(50) PRIMARY KEY,
+  setting_value TEXT NULL
+) ENGINE=InnoDB;
