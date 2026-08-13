@@ -990,3 +990,323 @@ body:has(.admin-login-wrap){
   display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;
   border-radius:999px;background:#eef2ff;color:#4338ca;
 }
+/* =========================================
+   팝업 광고 관리 (popups.php) - 트렌디 카드 그리드
+   ========================================= */
+.popup-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));
+  gap:18px;
+}
+.popup-card{
+  background:#fff;
+  border:1px solid var(--adm-border);
+  border-radius:16px;
+  overflow:hidden;
+  transition:transform .18s ease, box-shadow .18s ease;
+  position:relative;
+}
+.popup-card:hover{
+  transform:translateY(-4px);
+  box-shadow:0 12px 28px rgba(17,24,39,.10);
+}
+.popup-card-thumb{
+  position:relative;
+  width:100%;
+  height:150px;
+  background:linear-gradient(135deg,#f8f9fb,#eef1f5);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+}
+.popup-card-thumb img{
+  max-width:100%;
+  max-height:100%;
+  object-fit:contain;
+}
+.popup-schedule-badge{
+  position:absolute;
+  top:10px;
+  left:10px;
+  font-size:11px;
+  font-weight:800;
+  padding:4px 10px;
+  border-radius:999px;
+  letter-spacing:.02em;
+  box-shadow:0 2px 6px rgba(0,0,0,.12);
+}
+.popup-schedule-live{background:#dcfce7;color:#15803d}
+.popup-schedule-scheduled{background:#fef3c7;color:#92400e}
+.popup-schedule-ended{background:#f1f5f9;color:#94a3b8}
+.popup-schedule-hidden{background:#fee2e2;color:#b91c1c}
+
+.popup-card-body{padding:16px 16px 14px}
+.popup-card-title{
+  font-size:14.5px;
+  font-weight:800;
+  color:var(--adm-text);
+  margin-bottom:6px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.popup-card-meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:12px;
+}
+.popup-meta-chip{
+  font-size:11px;
+  font-weight:700;
+  color:var(--adm-text-sub);
+  background:#f8f9fb;
+  border:1px solid var(--adm-border);
+  padding:3px 9px;
+  border-radius:999px;
+}
+.popup-card-period{
+  font-size:12px;
+  color:var(--adm-text-sub);
+  margin-bottom:14px;
+  line-height:1.5;
+}
+
+.popup-card-footer{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding-top:12px;
+  border-top:1px solid var(--adm-border);
+}
+
+/* iOS 스타일 토글 스위치 */
+.popup-toggle-form{display:inline-flex;align-items:center;gap:8px}
+.popup-toggle-label{font-size:12px;font-weight:700;color:var(--adm-text-sub)}
+.popup-toggle-switch{
+  position:relative;
+  width:42px;
+  height:24px;
+  border:none;
+  border-radius:999px;
+  background:#d1d5db;
+  cursor:pointer;
+  transition:background .2s;
+  flex-shrink:0;
+}
+.popup-toggle-switch::after{
+  content:'';
+  position:absolute;
+  top:3px; left:3px;
+  width:18px; height:18px;
+  background:#fff;
+  border-radius:50%;
+  transition:transform .2s;
+  box-shadow:0 1px 3px rgba(0,0,0,.25);
+}
+.popup-toggle-switch.on{background:var(--adm-primary)}
+.popup-toggle-switch.on::after{transform:translateX(18px)}
+
+.popup-card-actions{display:flex;gap:6px}
+.popup-icon-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:32px; height:32px;
+  border-radius:8px;
+  border:1px solid var(--adm-border);
+  background:#fff;
+  color:var(--adm-text-sub);
+  cursor:pointer;
+  font-size:14px;
+  transition:all .15s;
+}
+.popup-icon-btn:hover{border-color:var(--adm-primary);color:var(--adm-primary);background:#eff6ff}
+.popup-icon-btn.danger:hover{border-color:var(--adm-danger);color:var(--adm-danger);background:#fef2f2}
+
+/* 등록 폼 - 좌우 분할 (입력 / 실시간 미리보기) */
+.popup-form-layout{
+  display:grid;
+  grid-template-columns:1fr 280px;
+  gap:28px;
+}
+@media (max-width:900px){
+  .popup-form-layout{grid-template-columns:1fr}
+}
+.popup-preview-panel{
+  background:linear-gradient(135deg,#f8f9fb,#eef1f5);
+  border:1px dashed var(--adm-border);
+  border-radius:14px;
+  padding:18px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  min-height:280px;
+}
+.popup-preview-panel-label{
+  font-size:12px;
+  font-weight:700;
+  color:var(--adm-text-sub);
+  align-self:flex-start;
+}
+.popup-preview-box{
+  background:#fff;
+  border-radius:10px;
+  box-shadow:0 8px 20px rgba(17,24,39,.10);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  transition:width .15s, height .15s;
+}
+.popup-preview-box img{width:100%;height:100%;object-fit:contain}
+.popup-preview-box-empty{
+  font-size:24px;
+  color:#cbd5e1;
+}
+.popup-preview-dim{
+  font-size:11.5px;
+  font-weight:700;
+  color:var(--adm-text-sub);
+  background:#fff;
+  padding:3px 10px;
+  border-radius:999px;
+}
+
+.popup-dropzone{
+  border:2px dashed var(--adm-border);
+  border-radius:12px;
+  padding:22px;
+  text-align:center;
+  cursor:pointer;
+  transition:border-color .15s, background .15s;
+  position:relative;
+}
+.popup-dropzone:hover, .popup-dropzone.dragover{
+  border-color:var(--adm-primary);
+  background:#eff6ff;
+}
+.popup-dropzone input[type="file"]{
+  position:absolute; inset:0; opacity:0; cursor:pointer;
+}
+.popup-dropzone-icon{font-size:26px;margin-bottom:6px}
+.popup-dropzone-text{font-size:13px;font-weight:700;color:var(--adm-text-sub)}
+.popup-dropzone-sub{font-size:11.5px;color:#9ca3af;margin-top:2px}
+/* =========================================
+   팝업 광고 - 노출 기간(시작/종료일시) 트렌디 카드
+   ========================================= */
+.popup-period-card{
+  background:linear-gradient(135deg,#f8f9fb,#eef1f5);
+  border:1px solid var(--adm-border);
+  border-radius:14px;
+  padding:18px 20px;
+  transition:border-color .2s, background .2s;
+}
+.popup-period-card.has-error{
+  border-color:#fca5a5;
+  background:linear-gradient(135deg,#fef2f2,#fee2e2);
+}
+.popup-period-card-label{
+  font-size:12px;
+  font-weight:800;
+  color:var(--adm-text-sub);
+  margin-bottom:12px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.popup-period-row{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.popup-period-field{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.popup-period-field-title{
+  font-size:11px;
+  font-weight:700;
+  color:#9ca3af;
+}
+.popup-datetime-wrap{
+  position:relative;
+  display:flex;
+  align-items:center;
+  background:#fff;
+  border:1px solid var(--adm-border);
+  border-radius:10px;
+  padding:0 12px;
+  transition:border-color .15s, box-shadow .15s;
+}
+.popup-datetime-wrap:focus-within{
+  border-color:var(--adm-primary);
+  box-shadow:0 0 0 3px rgba(37,99,235,.12);
+}
+.popup-datetime-wrap .dt-icon{
+  font-size:15px;
+  margin-right:8px;
+  flex-shrink:0;
+  opacity:.7;
+}
+.popup-datetime-wrap input[type="datetime-local"]{
+  border:none;
+  padding:10px 0;
+  font-size:13.5px;
+  font-weight:600;
+  color:var(--adm-text);
+  width:100%;
+  background:transparent;
+}
+.popup-datetime-wrap input[type="datetime-local"]:focus{
+  outline:none;
+}
+.popup-period-arrow{
+  font-size:18px;
+  color:#c7cdd6;
+  margin-top:18px;
+  flex-shrink:0;
+}
+.popup-period-summary{
+  margin-top:12px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.popup-period-summary-badge{
+  font-size:12px;
+  font-weight:800;
+  padding:5px 12px;
+  border-radius:999px;
+  background:#eef2ff;
+  color:#4338ca;
+}
+.popup-period-summary-badge.always{
+  background:#f1f5f9;
+  color:#64748b;
+}
+.popup-period-summary-badge.error{
+  background:#fee2e2;
+  color:#b91c1c;
+}
+.popup-period-clear-btn{
+  font-size:11.5px;
+  font-weight:700;
+  color:#9ca3af;
+  background:none;
+  border:none;
+  cursor:pointer;
+  text-decoration:underline;
+  text-underline-offset:2px;
+}
+.popup-period-clear-btn:hover{ color:var(--adm-primary); }
+
+@media (max-width:640px){
+  .popup-period-row{ flex-direction:column; align-items:stretch; }
+  .popup-period-arrow{ display:none; }
+}

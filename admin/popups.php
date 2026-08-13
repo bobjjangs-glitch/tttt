@@ -5,9 +5,6 @@ AdminAuth::requirePermission('banners'); // [주의] 실제 권한 슬러그가 
 
 $pdo = Database::connection();
 
-/* =====================================================================
-   테이블이 없으면 즉시 생성 (배포 시 마이그레이션을 빠뜻려도 최소 동작 보장)
-   ===================================================================== */
 function ensure_popups_table(PDO $pdo): void
 {
     $pdo->exec("
@@ -34,14 +31,8 @@ const POPUP_MAX_UPLOAD_PIXEL_H = 6000;
 const POPUP_MIN_W = 200; const POPUP_MAX_W = 900;
 const POPUP_MIN_H = 200; const POPUP_MAX_H = 1000;
 
-function redirect_popups(): never {
-    redirect('/admin/popups.php');
-}
+function redirect_popups(): never { redirect('/admin/popups.php'); }
 
-/* =====================================================================
-   이미지 리사이즈 — 배너와 달리 잘라내지 않고(contain) 비율 유지한 채
-   지정 크기 안에 맞춘다. 텍스트/버튼이 포함된 팝업 이미지가 잘리는 사고 방지.
-   ===================================================================== */
 function popup_resize_contain(string $srcPath, string $destPath, string $ext, int $targetW, int $targetH): bool
 {
     $ext = strtolower($ext);
@@ -86,7 +77,6 @@ function popup_handle_upload(array $file, int $targetW, int $targetH): array
 
     $imageInfo = @getimagesize($file['tmp_name']);
     if ($imageInfo === false) return ['ok' => false, 'msg' => '이미지 파일만 업로드할 수 있습니다.'];
-
     if ($imageInfo[0] > POPUP_MAX_UPLOAD_PIXEL_W || $imageInfo[1] > POPUP_MAX_UPLOAD_PIXEL_H) {
         return ['ok' => false, 'msg' => "이미지 해상도가 너무 큽니다. (최대 " . POPUP_MAX_UPLOAD_PIXEL_W . "×" . POPUP_MAX_UPLOAD_PIXEL_H . "px)"];
     }
@@ -112,9 +102,7 @@ function popup_handle_upload(array $file, int $targetW, int $targetH): array
     return ['ok' => true, 'url' => BASE_URL . '/uploads/popups/' . $filename];
 }
 
-/* =====================================================================
-   POST 핸들러 — 등록/수정
-   ===================================================================== */
+/* ===== POST 핸들러 (기존과 동일) ===== */
 if (is_post() && ($_POST['form_type'] ?? '') === 'save_popup') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) { flash('admin_error', '잘못된 요청입니다.'); redirect_popups(); }
 
@@ -207,74 +195,127 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'delete_popup') {
     redirect_popups();
 }
 
-/* =====================================================================
-   조회
-   ===================================================================== */
+/* ===== 조회 + 스케줄 상태 계산 ===== */
 $popups = $pdo->query('
     SELECT id, title, image_url, link_url, width, height, start_at, end_at, allow_today_close, sort_order, is_active
     FROM tt_popups ORDER BY sort_order ASC, id DESC
 ')->fetchAll();
 
+/**
+ * 노출 상태를 4단계로 계산한다: hidden(숨김) / scheduled(예정) / live(진행중) / ended(종료)
+ * is_active 토글과 별개로, 관리자가 지금 실제로 화면에 뜨고 있는지 한눈에 알 수 있게 하기 위함.
+ */
+function popup_schedule_state(array $pp): array
+{
+    if ((int)$pp['is_active'] === 0) {
+        return ['key' => 'hidden', 'label' => '숨김'];
+    }
+    $now = time();
+    $start = $pp['start_at'] ? strtotime($pp['start_at']) : null;
+    $end   = $pp['end_at'] ? strtotime($pp['end_at']) : null;
+
+    if ($start !== null && $now < $start) return ['key' => 'scheduled', 'label' => '예정'];
+    if ($end !== null && $now > $end)     return ['key' => 'ended', 'label' => '종료'];
+    return ['key' => 'live', 'label' => '진행중'];
+}
+
 $pageTitle = '팝업 광고 관리';
 require __DIR__ . '/includes/header.php';
 ?>
 
-<div class="admin-card" style="margin-bottom:20px">
-  <h2 id="popupFormTitle">팝업 광고 등록</h2>
+<div class="admin-card" style="margin-bottom:24px">
+  <div class="admin-card-head-row">
+    <h2 id="popupFormTitle">✨ 팝업 광고 등록</h2>
+  </div>
+
   <form method="post" enctype="multipart/form-data" id="popupForm">
     <?= Csrf::field() ?>
     <input type="hidden" name="form_type" value="save_popup">
     <input type="hidden" name="popup_id" id="popupIdInput" value="0">
 
-    <div class="admin-form-grid">
-      <div class="admin-form-row">
-        <label>팝업 제목 (관리용) <span class="req">*</span></label>
-        <input type="text" name="title" id="popupTitleInput" required maxlength="80">
-      </div>
-      <div class="admin-form-row">
-        <label>클릭 시 이동할 링크 URL</label>
-        <input type="text" name="link_url" id="popupLinkInput" placeholder="https://... (비워두면 이미지만 표시)">
-      </div>
-      <div class="admin-form-row">
-        <label>노출 순서 (숫자가 작을수록 먼저 뜸)</label>
-        <input type="number" name="sort_order" id="popupSortInput" value="0">
+    <div class="popup-form-layout">
+      <div>
+        <div class="admin-form-grid" style="grid-template-columns:repeat(2,1fr)">
+          <div class="admin-form-row admin-form-row-full">
+            <label>팝업 제목 (관리용) <span class="req">*</span></label>
+            <input type="text" name="title" id="popupTitleInput" required maxlength="80" placeholder="예: 8월 여름 타이어 이벤트">
+          </div>
+          <div class="admin-form-row admin-form-row-full">
+            <label>클릭 시 이동할 링크 URL</label>
+            <input type="text" name="link_url" id="popupLinkInput" placeholder="https://... (비워두면 이미지만 표시)">
+          </div>
+
+          <div class="admin-form-row">
+            <label>가로(px)</label>
+            <input type="number" name="width" id="popupWidthInput" value="420" min="<?= POPUP_MIN_W ?>" max="<?= POPUP_MAX_W ?>">
+          </div>
+          <div class="admin-form-row">
+            <label>세로(px)</label>
+            <input type="number" name="height" id="popupHeightInput" value="560" min="<?= POPUP_MIN_H ?>" max="<?= POPUP_MAX_H ?>">
+          </div>
+
+          <div class="admin-form-row admin-form-row-full">
+            <div class="popup-period-card" id="popupPeriodCard">
+              <div class="popup-period-card-label">📅 노출 기간 설정</div>
+
+              <div class="popup-period-row">
+                <div class="popup-period-field">
+                  <span class="popup-period-field-title">시작일시</span>
+                  <div class="popup-datetime-wrap">
+                    <span class="dt-icon">🟢</span>
+                    <input type="datetime-local" name="start_at" id="popupStartInput">
+                  </div>
+                </div>
+
+                <span class="popup-period-arrow">→</span>
+
+                <div class="popup-period-field">
+                  <span class="popup-period-field-title">종료일시</span>
+                  <div class="popup-datetime-wrap">
+                    <span class="dt-icon">🔴</span>
+                    <input type="datetime-local" name="end_at" id="popupEndInput">
+                  </div>
+                </div>
+              </div>
+
+              <div class="popup-period-summary">
+                <span class="popup-period-summary-badge" id="popupPeriodSummaryBadge">상시 노출</span>
+                <button type="button" class="popup-period-clear-btn" id="popupPeriodClearBtn">기간 초기화</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="admin-form-row">
+            <label>노출 순서</label>
+            <input type="number" name="sort_order" id="popupSortInput" value="0">
+            <p class="admin-form-hint">숫자가 작을수록 먼저 뜹니다.</p>
+          </div>
+          <div class="admin-form-row" style="justify-content:center">
+            <label class="admin-checkbox-inline" style="margin-top:26px">
+              <input type="checkbox" name="allow_today_close" id="popupAllowTodayClose" value="1" checked>
+              "오늘 하루 보지 않기" 버튼 노출
+            </label>
+          </div>
+
+          <div class="admin-form-row admin-form-row-full">
+            <label id="popupImageLabel">팝업 이미지 <span class="req">*</span></label>
+            <div class="popup-dropzone" id="popupDropzone">
+              <input type="file" name="image" id="popupImageInput" accept="image/*">
+              <div class="popup-dropzone-icon">🖼️</div>
+              <div class="popup-dropzone-text">클릭 또는 이미지를 끌어다 놓으세요</div>
+              <div class="popup-dropzone-sub">jpg, png, webp, gif · 최대 8MB · 비율 유지 자동 리사이즈</div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div class="admin-form-row">
-        <label>가로(px)</label>
-        <input type="number" name="width" id="popupWidthInput" value="420" min="<?= POPUP_MIN_W ?>" max="<?= POPUP_MAX_W ?>">
-      </div>
-      <div class="admin-form-row">
-        <label>세로(px)</label>
-        <input type="number" name="height" id="popupHeightInput" value="560" min="<?= POPUP_MIN_H ?>" max="<?= POPUP_MAX_H ?>">
-      </div>
-
-      <div class="admin-form-row">
-        <label>노출 시작일시</label>
-        <input type="datetime-local" name="start_at" id="popupStartInput">
-      </div>
-      <div class="admin-form-row">
-        <label>노출 종료일시</label>
-        <input type="datetime-local" name="end_at" id="popupEndInput">
-        <p class="admin-form-hint">둘 다 비워두면 노출 여부는 오직 아래 '노출/숨김' 토글로만 제어됩니다.</p>
-      </div>
-
-      <div class="admin-form-row">
-        <label>
-          <input type="checkbox" name="allow_today_close" id="popupAllowTodayClose" value="1" checked>
-          "오늘 하루 보지 않기" 버튼 노출
-        </label>
-      </div>
-
-      <div class="admin-form-row admin-form-row-full">
-        <p class="admin-form-hint">지정한 가로×세로 안에 이미지 비율을 유지한 채(잘리지 않고) 맞춰서 저장됩니다.</p>
-      </div>
-
-      <div class="admin-form-row admin-form-row-full" id="popupCurrentPreview"></div>
-
-      <div class="admin-form-row admin-form-row-full">
-        <label id="popupImageLabel">팝업 이미지 <span class="req">*</span></label>
-        <input type="file" name="image" accept="image/*">
+      <div class="popup-preview-panel">
+        <span class="popup-preview-panel-label">실시간 미리보기</span>
+        <div class="popup-preview-box" id="popupPreviewBox" style="width:140px;height:187px;">
+          <img id="popupPreviewImg" style="display:none;">
+          <span class="popup-preview-box-empty" id="popupPreviewEmpty">🪧</span>
+        </div>
+        <span class="popup-preview-dim" id="popupPreviewDim">420 × 560</span>
       </div>
     </div>
 
@@ -286,80 +327,189 @@ require __DIR__ . '/includes/header.php';
 </div>
 
 <div class="admin-card">
-  <h2>등록된 팝업 광고 <span class="admin-count-pill"><?= count($popups) ?>개</span></h2>
-  <table class="admin-table-trendy">
-    <thead>
-      <tr>
-        <th style="width:110px">미리보기</th><th>제목</th><th>링크</th><th style="width:90px">사이즈</th>
-        <th style="width:170px">노출 기간</th><th style="width:70px">순서</th><th style="width:90px">노출</th><th style="width:150px"></th>
-      </tr>
-    </thead>
-    <tbody>
-    <?php if (empty($popups)): ?>
-      <tr><td colspan="8" class="admin-empty-row">🪧 등록된 팝업 광고가 없습니다.</td></tr>
-    <?php else: foreach ($popups as $pp): ?>
-      <tr>
-        <td><img src="<?= h($pp['image_url']) ?>" style="width:90px;height:36px;object-fit:contain;border-radius:6px;background:#f1f5f9;"></td>
-        <td><span class="admin-prod-name"><?= h($pp['title']) ?></span></td>
-        <td class="admin-text-sub"><?= $pp['link_url'] ? h($pp['link_url']) : '-' ?></td>
-        <td class="mono"><?= (int)$pp['width'] ?>×<?= (int)$pp['height'] ?></td>
-        <td class="admin-text-sub">
-          <?= $pp['start_at'] ? h(date('Y-m-d H:i', strtotime($pp['start_at']))) : '제한없음' ?>
-          ~
-          <?= $pp['end_at'] ? h(date('Y-m-d H:i', strtotime($pp['end_at']))) : '제한없음' ?>
-        </td>
-        <td class="mono"><?= (int)$pp['sort_order'] ?></td>
-        <td>
-          <form method="post" style="display:inline">
-            <?= Csrf::field() ?><input type="hidden" name="form_type" value="toggle_popup_status">
-            <input type="hidden" name="popup_id" value="<?= (int)$pp['id'] ?>">
-            <button type="submit" class="status-toggle-btn status-badge status-<?= $pp['is_active']?'done':'cancelled' ?>"><?= $pp['is_active']?'노출중':'숨김' ?></button>
-          </form>
-        </td>
-        <td>
-          <button type="button" class="admin-link-btn btn-edit-popup"
-            data-id="<?= (int)$pp['id'] ?>"
-            data-title="<?= h($pp['title']) ?>"
-            data-link="<?= h((string)$pp['link_url']) ?>"
-            data-width="<?= (int)$pp['width'] ?>"
-            data-height="<?= (int)$pp['height'] ?>"
-            data-sort="<?= (int)$pp['sort_order'] ?>"
-            data-start="<?= $pp['start_at'] ? h(date('Y-m-d\TH:i', strtotime($pp['start_at']))) : '' ?>"
-            data-end="<?= $pp['end_at'] ? h(date('Y-m-d\TH:i', strtotime($pp['end_at']))) : '' ?>"
-            data-today-close="<?= (int)$pp['allow_today_close'] ?>"
-            data-image="<?= h($pp['image_url']) ?>">수정</button>
-          <form method="post" style="display:inline" onsubmit="return confirm('이 팝업 광고를 삭제하시겠습니까?');">
-            <?= Csrf::field() ?><input type="hidden" name="form_type" value="delete_popup">
-            <input type="hidden" name="popup_id" value="<?= (int)$pp['id'] ?>">
-            <button type="submit" class="admin-link-btn admin-link-btn-danger">삭제</button>
-          </form>
-        </td>
-      </tr>
-    <?php endforeach; endif; ?>
-    </tbody>
-  </table>
+  <div class="admin-card-head-row">
+    <h2>등록된 팝업 광고 <span class="admin-count-pill"><?= count($popups) ?>개</span></h2>
+  </div>
+
+  <?php if (empty($popups)): ?>
+    <div class="admin-empty-row">🪧 등록된 팝업 광고가 없습니다. 위 폼에서 첫 팝업을 등록해 보세요.</div>
+  <?php else: ?>
+    <div class="popup-grid">
+      <?php foreach ($popups as $pp):
+        $state = popup_schedule_state($pp);
+      ?>
+      <div class="popup-card">
+        <div class="popup-card-thumb">
+          <span class="popup-schedule-badge popup-schedule-<?= $state['key'] ?>"><?= h($state['label']) ?></span>
+          <img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>">
+        </div>
+        <div class="popup-card-body">
+          <div class="popup-card-title"><?= h($pp['title']) ?></div>
+          <div class="popup-card-meta">
+            <span class="popup-meta-chip"><?= (int)$pp['width'] ?>×<?= (int)$pp['height'] ?></span>
+            <span class="popup-meta-chip">순서 <?= (int)$pp['sort_order'] ?></span>
+            <?php if ($pp['link_url']): ?><span class="popup-meta-chip">🔗 링크 있음</span><?php endif; ?>
+          </div>
+          <div class="popup-card-period">
+            <?= $pp['start_at'] ? h(date('Y.m.d H:i', strtotime($pp['start_at']))) : '제한없음' ?>
+            &nbsp;→&nbsp;
+            <?= $pp['end_at'] ? h(date('Y.m.d H:i', strtotime($pp['end_at']))) : '제한없음' ?>
+          </div>
+          <div class="popup-card-footer">
+            <form method="post" class="popup-toggle-form">
+              <?= Csrf::field() ?><input type="hidden" name="form_type" value="toggle_popup_status">
+              <input type="hidden" name="popup_id" value="<?= (int)$pp['id'] ?>">
+              <button type="submit" class="popup-toggle-switch <?= $pp['is_active'] ? 'on' : '' ?>" aria-label="노출 토글"></button>
+              <span class="popup-toggle-label"><?= $pp['is_active'] ? '노출' : '숨김' ?></span>
+            </form>
+            <div class="popup-card-actions">
+              <button type="button" class="popup-icon-btn btn-edit-popup" title="수정"
+                data-id="<?= (int)$pp['id'] ?>"
+                data-title="<?= h($pp['title']) ?>"
+                data-link="<?= h((string)$pp['link_url']) ?>"
+                data-width="<?= (int)$pp['width'] ?>"
+                data-height="<?= (int)$pp['height'] ?>"
+                data-sort="<?= (int)$pp['sort_order'] ?>"
+                data-start="<?= $pp['start_at'] ? h(date('Y-m-d\TH:i', strtotime($pp['start_at']))) : '' ?>"
+                data-end="<?= $pp['end_at'] ? h(date('Y-m-d\TH:i', strtotime($pp['end_at']))) : '' ?>"
+                data-today-close="<?= (int)$pp['allow_today_close'] ?>"
+                data-image="<?= h($pp['image_url']) ?>">✏️</button>
+              <form method="post" onsubmit="return confirm('이 팝업 광고를 삭제하시겠습니까?');">
+                <?= Csrf::field() ?><input type="hidden" name="form_type" value="delete_popup">
+                <input type="hidden" name="popup_id" value="<?= (int)$pp['id'] ?>">
+                <button type="submit" class="popup-icon-btn danger" title="삭제">🗑️</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+  <?php endif; ?>
 </div>
 
 <script>
-const popupForm         = document.getElementById('popupForm');
-const popupFormTitle     = document.getElementById('popupFormTitle');
-const popupIdInput       = document.getElementById('popupIdInput');
-const popupTitleInput    = document.getElementById('popupTitleInput');
-const popupLinkInput     = document.getElementById('popupLinkInput');
-const popupSortInput     = document.getElementById('popupSortInput');
-const popupWidthInput    = document.getElementById('popupWidthInput');
-const popupHeightInput   = document.getElementById('popupHeightInput');
-const popupStartInput    = document.getElementById('popupStartInput');
-const popupEndInput      = document.getElementById('popupEndInput');
-const popupAllowToday    = document.getElementById('popupAllowTodayClose');
-const popupImageLabel    = document.getElementById('popupImageLabel');
-const popupCurrentPreview = document.getElementById('popupCurrentPreview');
-const popupFormSubmitBtn = document.getElementById('popupFormSubmitBtn');
-const popupFormCancelBtn = document.getElementById('popupFormCancelBtn');
+const popupForm          = document.getElementById('popupForm');
+const popupFormTitle      = document.getElementById('popupFormTitle');
+const popupIdInput        = document.getElementById('popupIdInput');
+const popupTitleInput     = document.getElementById('popupTitleInput');
+const popupLinkInput      = document.getElementById('popupLinkInput');
+const popupSortInput      = document.getElementById('popupSortInput');
+const popupWidthInput     = document.getElementById('popupWidthInput');
+const popupHeightInput    = document.getElementById('popupHeightInput');
+const popupStartInput     = document.getElementById('popupStartInput');
+const popupEndInput       = document.getElementById('popupEndInput');
+const popupAllowToday     = document.getElementById('popupAllowTodayClose');
+const popupImageLabel     = document.getElementById('popupImageLabel');
+const popupImageInput     = document.getElementById('popupImageInput');
+const popupDropzone       = document.getElementById('popupDropzone');
+const popupFormSubmitBtn  = document.getElementById('popupFormSubmitBtn');
+const popupFormCancelBtn  = document.getElementById('popupFormCancelBtn');
+const popupPreviewBox     = document.getElementById('popupPreviewBox');
+const popupPreviewImg     = document.getElementById('popupPreviewImg');
+const popupPreviewEmpty   = document.getElementById('popupPreviewEmpty');
+const popupPreviewDim     = document.getElementById('popupPreviewDim');
 
+/* ===== 노출 기간 실시간 계산 및 카드 상태 표시 ===== */
+const popupPeriodCard          = document.getElementById('popupPeriodCard');
+const popupPeriodSummaryBadge  = document.getElementById('popupPeriodSummaryBadge');
+const popupPeriodClearBtn      = document.getElementById('popupPeriodClearBtn');
+
+function updatePeriodSummary() {
+  const startVal = popupStartInput.value;
+  const endVal   = popupEndInput.value;
+
+  popupPeriodCard.classList.remove('has-error');
+  popupPeriodSummaryBadge.classList.remove('always', 'error');
+
+  if (!startVal && !endVal) {
+    popupPeriodSummaryBadge.textContent = '상시 노출 (기간 제한 없음)';
+    popupPeriodSummaryBadge.classList.add('always');
+    return;
+  }
+
+  if (startVal && endVal) {
+    const start = new Date(startVal);
+    const end   = new Date(endVal);
+    if (end < start) {
+      popupPeriodCard.classList.add('has-error');
+      popupPeriodSummaryBadge.classList.add('error');
+      popupPeriodSummaryBadge.textContent = '⚠️ 종료일이 시작일보다 빠릅니다';
+      return;
+    }
+    const diffDays = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+    popupPeriodSummaryBadge.textContent = `총 ${diffDays}일간 진행`;
+    return;
+  }
+
+  if (startVal && !endVal) {
+    popupPeriodSummaryBadge.textContent = '시작일 이후 계속 노출 (종료일 미지정)';
+    return;
+  }
+
+  popupPeriodSummaryBadge.textContent = '종료일까지 즉시 노출 시작';
+}
+
+popupStartInput.addEventListener('input', updatePeriodSummary);
+popupEndInput.addEventListener('input', updatePeriodSummary);
+popupPeriodClearBtn.addEventListener('click', () => {
+  popupStartInput.value = '';
+  popupEndInput.value = '';
+  updatePeriodSummary();
+});
+
+updatePeriodSummary(); // 최초 진입 시 1회 실행
+
+/* ===== 실시간 미리보기 박스 크기 갱신 (비율 유지, 최대 200x260 안에서 스케일) ===== */
+const PREVIEW_MAX_W = 200, PREVIEW_MAX_H = 260;
+function updatePreviewBoxSize() {
+  const w = Math.max(1, parseInt(popupWidthInput.value, 10) || 1);
+  const h = Math.max(1, parseInt(popupHeightInput.value, 10) || 1);
+  const scale = Math.min(PREVIEW_MAX_W / w, PREVIEW_MAX_H / h, 1);
+  popupPreviewBox.style.width  = Math.round(w * scale) + 'px';
+  popupPreviewBox.style.height = Math.round(h * scale) + 'px';
+  popupPreviewDim.textContent = w + ' × ' + h;
+}
+popupWidthInput.addEventListener('input', updatePreviewBoxSize);
+popupHeightInput.addEventListener('input', updatePreviewBoxSize);
+updatePreviewBoxSize();
+
+/* ===== 이미지 선택 시 실제 파일 미리보기 표시 ===== */
+function showPreviewFromFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    popupPreviewImg.src = e.target.result;
+    popupPreviewImg.style.display = 'block';
+    popupPreviewEmpty.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+popupImageInput.addEventListener('change', () => {
+  if (popupImageInput.files && popupImageInput.files[0]) {
+    showPreviewFromFile(popupImageInput.files[0]);
+  }
+});
+
+/* 드래그 앤 드롭 시각 효과 */
+['dragenter', 'dragover'].forEach(evt => {
+  popupDropzone.addEventListener(evt, (e) => { e.preventDefault(); popupDropzone.classList.add('dragover'); });
+});
+['dragleave', 'drop'].forEach(evt => {
+  popupDropzone.addEventListener(evt, (e) => { e.preventDefault(); popupDropzone.classList.remove('dragover'); });
+});
+popupDropzone.addEventListener('drop', (e) => {
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) {
+    popupImageInput.files = e.dataTransfer.files;
+    showPreviewFromFile(file);
+  }
+});
+
+/* ===== 수정 버튼 클릭 시 폼에 값 채우기 ===== */
 document.querySelectorAll('.btn-edit-popup').forEach(btn => {
   btn.addEventListener('click', () => {
-    popupFormTitle.textContent = '팝업 광고 수정';
+    popupFormTitle.textContent = '✏️ 팝업 광고 수정';
     popupIdInput.value = btn.dataset.id;
     popupTitleInput.value = btn.dataset.title;
     popupLinkInput.value = btn.dataset.link;
@@ -370,7 +520,13 @@ document.querySelectorAll('.btn-edit-popup').forEach(btn => {
     popupEndInput.value = btn.dataset.end;
     popupAllowToday.checked = btn.dataset.todayClose === '1';
     popupImageLabel.innerHTML = '팝업 이미지 <span class="admin-text-sub">(선택 시에만 교체됩니다)</span>';
-    popupCurrentPreview.innerHTML = '<img src="' + btn.dataset.image + '" style="max-width:200px;border-radius:8px;border:1px solid #e2e8f0;">';
+
+    popupPreviewImg.src = btn.dataset.image;
+    popupPreviewImg.style.display = 'block';
+    popupPreviewEmpty.style.display = 'none';
+    updatePreviewBoxSize();
+    updatePeriodSummary(); // [수정] 기존 저장된 기간 값을 배지에도 즉시 반영
+
     popupFormSubmitBtn.textContent = '수정 완료';
     popupFormCancelBtn.style.display = '';
     popupForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -379,12 +535,16 @@ document.querySelectorAll('.btn-edit-popup').forEach(btn => {
 
 popupFormCancelBtn.addEventListener('click', () => {
   popupForm.reset();
-  popupFormTitle.textContent = '팝업 광고 등록';
+  popupFormTitle.textContent = '✨ 팝업 광고 등록';
   popupIdInput.value = '0';
   popupImageLabel.innerHTML = '팝업 이미지 <span class="req">*</span>';
-  popupCurrentPreview.innerHTML = '';
+  popupPreviewImg.style.display = 'none';
+  popupPreviewImg.src = '';
+  popupPreviewEmpty.style.display = 'block';
   popupFormSubmitBtn.textContent = '팝업 등록';
   popupFormCancelBtn.style.display = 'none';
+  updatePreviewBoxSize();
+  updatePeriodSummary(); // [수정] 폼 초기화 시 배지도 '상시 노출' 상태로 되돌림
 });
 </script>
 

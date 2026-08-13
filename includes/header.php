@@ -5,8 +5,12 @@ if (Auth::isLoggedIn()) {
     $stmt = $pdo->prepare('SELECT COALESCE(SUM(qty),0) AS cnt FROM tt_carts WHERE user_id = :uid');
     $stmt->execute(['uid' => Auth::currentUserId()]);
     $cartCount = (int)$stmt->fetchColumn();
-    <?php
-/* ===== 팝업 광고 조회: 활성 + 노출 기간 내인 것만, 순서대로 최대 5개 ===== */
+}
+
+/* ===== 팝업 광고 조회: 활성 + 노출 기간 내인 것만, 순서대로 최대 5개 =====
+   [FIX] 비로그인 사용자는 위 if 블록을 타지 않아 $pdo가 없을 수 있으므로
+   여기서 한 번 더 안전하게 커넥션을 확보한다. */
+$pdo = $pdo ?? Database::connection();
 $activePopups = [];
 try {
     $ppStmt = $pdo->query("
@@ -22,9 +26,6 @@ try {
 } catch (Throwable $e) {
     error_log('[popup fetch] ' . $e->getMessage());
     $activePopups = [];
-}
-?>
-
 }
 ?>
 <!DOCTYPE html>
@@ -165,9 +166,18 @@ window.ttSetCartCount = function(count) {
   overflow: hidden;
   pointer-events: auto;
   animation: ttPopupIn .25s ease;
+  max-width: 92vw;
+  max-height: 88vh;
 }
 @keyframes ttPopupIn { from { opacity:0; transform: translateY(10px) scale(.97); } to { opacity:1; transform: translateY(0) scale(1); } }
-.tt-popup-box img { display:block; width:100%; height:calc(100% - 40px); object-fit: contain; background:#f8fafc; }
+
+/* [FIX] 링크 유무와 무관하게 이미지 영역 높이가 항상 "박스 전체 - 풋터 40px"로
+   고정되도록 별도 래퍼(.tt-popup-img-wrap)를 둔다. 이전에는 <a>에만 이 높이를 줘서
+   링크 없는 팝업의 img가 박스 전체 높이를 차지해 풋터를 밀어내고 잘리게 만들었다. */
+.tt-popup-img-wrap { display:block; width:100%; height:calc(100% - 40px); overflow:hidden; }
+.tt-popup-img-wrap a { display:block; width:100%; height:100%; }
+.tt-popup-img-wrap img { display:block; width:100%; height:100%; object-fit: contain; background:#f8fafc; }
+
 .tt-popup-footer {
   height: 40px; display:flex; align-items:center; justify-content:space-between;
   padding: 0 12px; background:#f8fafc; border-top:1px solid #e2e8f0; font-size:12px;
@@ -182,11 +192,13 @@ window.ttSetCartCount = function(count) {
        id="ttPopupBox<?= (int)$pp['id'] ?>"
        data-popup-id="<?= (int)$pp['id'] ?>"
        style="width:<?= (int)$pp['width'] ?>px; height:<?= (int)($pp['height'] + 40) ?>px;">
-    <?php if (!empty($pp['link_url'])): ?>
-      <a href="<?= h($pp['link_url']) ?>"><img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>"></a>
-    <?php else: ?>
-      <img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>">
-    <?php endif; ?>
+    <div class="tt-popup-img-wrap">
+      <?php if (!empty($pp['link_url'])): ?>
+        <a href="<?= h($pp['link_url']) ?>"><img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>"></a>
+      <?php else: ?>
+        <img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>">
+      <?php endif; ?>
+    </div>
     <div class="tt-popup-footer">
       <?php if ((int)$pp['allow_today_close'] === 1): ?>
         <button type="button" class="tt-popup-today-btn" data-hide-today="<?= (int)$pp['id'] ?>">오늘 하루 보지 않기</button>
@@ -198,6 +210,7 @@ window.ttSetCartCount = function(count) {
   </div>
   <?php endforeach; ?>
 </div>
+
 
 <script>
 (function () {
