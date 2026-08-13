@@ -5,6 +5,26 @@ if (Auth::isLoggedIn()) {
     $stmt = $pdo->prepare('SELECT COALESCE(SUM(qty),0) AS cnt FROM tt_carts WHERE user_id = :uid');
     $stmt->execute(['uid' => Auth::currentUserId()]);
     $cartCount = (int)$stmt->fetchColumn();
+    <?php
+/* ===== 팝업 광고 조회: 활성 + 노출 기간 내인 것만, 순서대로 최대 5개 ===== */
+$activePopups = [];
+try {
+    $ppStmt = $pdo->query("
+        SELECT id, title, image_url, link_url, width, height, allow_today_close
+        FROM tt_popups
+        WHERE is_active = 1
+          AND (start_at IS NULL OR start_at <= NOW())
+          AND (end_at IS NULL OR end_at >= NOW())
+        ORDER BY sort_order ASC, id DESC
+        LIMIT 5
+    ");
+    $activePopups = $ppStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    error_log('[popup fetch] ' . $e->getMessage());
+    $activePopups = [];
+}
+?>
+
 }
 ?>
 <!DOCTYPE html>
@@ -76,6 +96,7 @@ if (Auth::isLoggedIn()) {
   </div>
 </header>
 
+
 <script>
 window.ttSetCartCount = function(count) {
   const badge = document.getElementById('ttCartBadge');
@@ -133,3 +154,97 @@ window.ttSetCartCount = function(count) {
 </script>
 
 <main class="tt-main">
+  <?php if (!empty($activePopups)): ?>
+<style>
+.tt-popup-overlay-wrap { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
+.tt-popup-box {
+  position: absolute;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: ttPopupIn .25s ease;
+}
+@keyframes ttPopupIn { from { opacity:0; transform: translateY(10px) scale(.97); } to { opacity:1; transform: translateY(0) scale(1); } }
+.tt-popup-box img { display:block; width:100%; height:calc(100% - 40px); object-fit: contain; background:#f8fafc; }
+.tt-popup-footer {
+  height: 40px; display:flex; align-items:center; justify-content:space-between;
+  padding: 0 12px; background:#f8fafc; border-top:1px solid #e2e8f0; font-size:12px;
+}
+.tt-popup-today-btn { background:none; border:none; color:#475569; font-size:12px; cursor:pointer; }
+.tt-popup-close-btn { background:none; border:none; color:#94a3b8; font-size:16px; cursor:pointer; font-weight:700; }
+</style>
+
+<div class="tt-popup-overlay-wrap" id="ttPopupOverlayWrap">
+  <?php foreach ($activePopups as $i => $pp): ?>
+  <div class="tt-popup-box"
+       id="ttPopupBox<?= (int)$pp['id'] ?>"
+       data-popup-id="<?= (int)$pp['id'] ?>"
+       style="width:<?= (int)$pp['width'] ?>px; height:<?= (int)($pp['height'] + 40) ?>px;">
+    <?php if (!empty($pp['link_url'])): ?>
+      <a href="<?= h($pp['link_url']) ?>"><img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>"></a>
+    <?php else: ?>
+      <img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>">
+    <?php endif; ?>
+    <div class="tt-popup-footer">
+      <?php if ((int)$pp['allow_today_close'] === 1): ?>
+        <button type="button" class="tt-popup-today-btn" data-hide-today="<?= (int)$pp['id'] ?>">오늘 하루 보지 않기</button>
+      <?php else: ?>
+        <span></span>
+      <?php endif; ?>
+      <button type="button" class="tt-popup-close-btn" data-close="<?= (int)$pp['id'] ?>" aria-label="닫기">&times;</button>
+    </div>
+  </div>
+  <?php endforeach; ?>
+</div>
+
+<script>
+(function () {
+  function getCookie(name) {
+    const m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function setCookieUntilMidnight(name) {
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+    document.cookie = name + '=1; expires=' + midnight.toUTCString() + '; path=/';
+  }
+
+  const boxes = Array.from(document.querySelectorAll('.tt-popup-box'));
+  let visibleIndex = 0;
+  const OFFSET = 24;
+
+  function layout() {
+    let shown = 0;
+    boxes.forEach((box) => {
+      const id = box.dataset.popupId;
+      if (getCookie('tt_popup_hide_' + id)) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      box.style.left = (60 + shown * OFFSET) + 'px';
+      box.style.top  = (60 + shown * OFFSET) + 'px';
+      shown++;
+    });
+    if (shown === 0) {
+      document.getElementById('ttPopupOverlayWrap')?.remove();
+    }
+  }
+  layout();
+
+  document.querySelectorAll('.tt-popup-close-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('ttPopupBox' + btn.dataset.close)?.remove();
+      layout();
+    });
+  });
+  document.querySelectorAll('[data-hide-today]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setCookieUntilMidnight('tt_popup_hide_' + btn.dataset.hideToday);
+      document.getElementById('ttPopupBox' + btn.dataset.hideToday)?.remove();
+      layout();
+    });
+  });
+})();
+</script>
+<?php endif; ?>
+
