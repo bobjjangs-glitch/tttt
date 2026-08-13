@@ -1,0 +1,992 @@
+/* /admin/assets/css/admin.css */
+/* Reset (common.css를 불러오지 않는 admin/login.php를 위한 최소 리셋) */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;color:#111827}
+
+/* Admin login page */
+body:has(.admin-login-wrap){
+  background:linear-gradient(135deg,#1f2937 0%,#111827 100%);
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.admin-login-wrap{
+  background:#fff;
+  border-radius:16px;
+  padding:40px 36px;
+  width:100%;
+  max-width:380px;
+  box-shadow:0 12px 40px rgba(0,0,0,.25);
+}
+.admin-login-wrap h1{
+  font-size:20px;
+  font-weight:900;
+  color:#2563eb;
+  text-align:center;
+  margin-bottom:24px;
+  letter-spacing:-.5px;
+}
+.admin-login-error{
+  background:#fee2e2;
+  color:#b91c1c;
+  font-size:13px;
+  font-weight:600;
+  padding:10px 14px;
+  border-radius:8px;
+  margin-bottom:16px;
+  text-align:center;
+}
+.admin-login-wrap form{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.admin-login-wrap input[type="text"],
+.admin-login-wrap input[type="password"]{
+  width:100%;
+  padding:12px 14px;
+  border:1px solid #e5e7eb;
+  border-radius:8px;
+  font-size:14px;
+}
+.admin-login-wrap input[type="text"]:focus,
+.admin-login-wrap input[type="password"]:focus{
+  outline:none;
+  border-color:#2563eb;
+  box-shadow:0 0 0 3px rgba(37,99,235,.12);
+}
+.admin-login-wrap button{
+  width:100%;
+  background:#2563eb;
+  color:#fff;
+  border:none;
+  padding:13px;
+  border-radius:8px;
+  font-size:15px;
+  font-weight:800;
+  cursor:pointer;
+  margin-top:4px;
+}
+.admin-login-wrap button:hover{
+  background:#1d4ed8;
+}
+
+:root{
+  --adm-bg:#f4f5f7;
+  --adm-sidebar:#1f2937;
+  --adm-sidebar-hover:#374151;
+  --adm-primary:#2563eb;
+  --adm-danger:#e63946;
+  --adm-success:#16a34a;
+  --adm-warning:#f59e0b;
+  --adm-border:#e5e7eb;
+  --adm-text:#111827;
+  --adm-text-sub:#6b7280;
+}
+.admin-body{margin:0;background:var(--adm-bg);font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;color:var(--adm-text)}
+.admin-layout{display:flex;min-height:100vh}
+
+/* Sidebar */
+.admin-sidebar{width:220px;flex-shrink:0;background:var(--adm-sidebar);color:#e5e7eb;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.admin-logo{font-size:17px;font-weight:800;color:#fff;padding:22px 20px;border-bottom:1px solid rgba(255,255,255,.1)}
+.admin-nav{flex:1;display:flex;flex-direction:column;padding:12px 0}
+.admin-nav a{padding:13px 20px;font-size:14px;font-weight:600;color:#d1d5db;border-left:3px solid transparent}
+.admin-nav a:hover{background:var(--adm-sidebar-hover);color:#fff}
+.admin-nav a.active{background:var(--adm-sidebar-hover);color:#fff;border-left-color:var(--adm-primary)}
+.admin-sidebar-footer{padding:16px 20px;border-top:1px solid rgba(255,255,255,.1)}
+.admin-user-info{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px}
+.admin-user-name{font-weight:700;color:#fff}
+.admin-role-badge{font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px}
+.admin-role-super{background:var(--adm-primary);color:#fff}
+.admin-role-staff{background:#4b5563;color:#e5e7eb}
+.admin-logout-link{font-size:13px;color:#9ca3af}
+.admin-logout-link:hover{color:#fff}
+
+/* Content */
+.admin-content{flex:1;min-width:0}
+.admin-topbar{background:#fff;border-bottom:1px solid var(--adm-border);padding:18px 28px}
+.admin-page-title{font-size:20px;font-weight:800}
+.admin-main{padding:24px 28px 60px}
+
+/* Alerts */
+.admin-alert{padding:12px 16px;border-radius:8px;font-size:14px;font-weight:600;margin-bottom:18px}
+.admin-alert-error{background:#fee2e2;color:#b91c1c}
+.admin-alert-success{background:#dcfce7;color:#15803d}
+
+/* Dashboard cards */
+.admin-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+.admin-stat-card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(17,24,39,.06)}
+.admin-stat-label{font-size:13px;color:var(--adm-text-sub);font-weight:600;margin-bottom:8px}
+.admin-stat-value{font-size:26px;font-weight:800}
+.admin-stat-value.danger{color:var(--adm-danger)}
+
+/* Table */
+.admin-card{background:#fff;border-radius:12px;padding:22px;box-shadow:0 2px 8px rgba(17,24,39,.06)}
+.admin-card h2{font-size:16px;font-weight:800;margin-bottom:16px}
+.admin-table{width:100%;border-collapse:collapse;font-size:14px}
+.admin-table th{text-align:left;padding:10px 12px;border-bottom:2px solid var(--adm-border);color:var(--adm-text-sub);font-weight:700;font-size:13px}
+.admin-table td{padding:12px;border-bottom:1px solid var(--adm-border)}
+.admin-table tr:last-child td{border-bottom:none}
+
+/* Status badges */
+.status-badge{display:inline-block;font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px}
+.status-pending{background:#fef3c7;color:#92400e}
+.status-paid{background:#dbeafe;color:#1d4ed8}
+.status-preparing{background:#e0e7ff;color:#4338ca}
+.status-shipped{background:#cffafe;color:#0e7490}
+.status-done{background:#dcfce7;color:#15803d}
+.status-cancelled{background:#fee2e2;color:#b91c1c}
+
+@media (max-width:900px){
+  .admin-stat-grid{grid-template-columns:repeat(2,1fr)}
+  .admin-sidebar{width:64px}
+  .admin-logo,.admin-nav a span,.admin-user-name,.admin-role-badge,.admin-logout-link{display:none}
+}
+.admin-filter-bar{margin-bottom:16px}
+.admin-filter-form select{padding:8px 12px;border:1px solid var(--adm-border);border-radius:6px;font-size:14px}
+.admin-status-form{display:flex;gap:10px;align-items:center}
+.admin-status-form select,.admin-status-form input[type="text"]{padding:9px 12px;border:1px solid var(--adm-border);border-radius:6px;font-size:14px}
+.btn-admin-primary{background:var(--adm-primary);color:#fff;border:none;padding:9px 18px;border-radius:6px;font-weight:700;font-size:14px}
+.admin-pagination{display:flex;gap:6px;justify-content:center;margin-top:20px}
+.admin-pagination a{padding:6px 12px;border:1px solid var(--adm-border);border-radius:6px;font-size:14px}
+.admin-pagination a.active{background:var(--adm-primary);color:#fff;border-color:var(--adm-primary)}
+/* ===== 트렌디 리프레시 ===== */
+.admin-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap}
+.admin-filter-form select{padding:9px 14px;border:1px solid var(--adm-border);border-radius:10px;font-size:13px;font-weight:600;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+
+.admin-count-pill{display:inline-block;background:#eef2ff;color:#4338ca;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;margin-left:8px;vertical-align:middle}
+
+.admin-card{border-radius:16px;transition:box-shadow .2s}
+.admin-card h2{display:flex;align-items:center}
+
+.admin-table-trendy thead th{
+  background:#f9fafb;
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  color:var(--adm-text-sub);
+  border-bottom:1px solid var(--adm-border);
+}
+.admin-table-trendy tbody tr{transition:background .12s}
+.admin-table-trendy tbody tr:hover{background:#f9fafb}
+.admin-table-trendy td.mono{font-family:'SFMono-Regular',Consolas,monospace;font-size:13px}
+.admin-text-sub{color:var(--adm-text-sub);font-size:13px}
+.admin-empty-row{text-align:center;color:var(--adm-text-sub);padding:48px 0;font-size:14px}
+
+.admin-link-btn{
+  display:inline-block;
+  font-size:12px;
+  font-weight:700;
+  color:var(--adm-primary);
+  border:1px solid #dbeafe;
+  background:#eff6ff;
+  padding:6px 12px;
+  border-radius:8px;
+  transition:all .15s;
+}
+.admin-link-btn:hover{background:var(--adm-primary);color:#fff;border-color:var(--adm-primary)}
+
+.btn-admin-primary{
+  background:var(--adm-primary);color:#fff;border:none;padding:10px 20px;
+  border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;transition:transform .1s,box-shadow .1s;
+}
+.btn-admin-primary:hover{box-shadow:0 4px 12px rgba(37,99,235,.3);transform:translateY(-1px)}
+
+.btn-admin-danger{
+  background:#fff;color:var(--adm-danger);border:1px solid #fecaca;
+  padding:9px 16px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;
+  transition:all .15s;
+}
+.btn-admin-danger:hover{background:var(--adm-danger);color:#fff;border-color:var(--adm-danger)}
+.btn-admin-danger:disabled{opacity:.4;cursor:not-allowed;background:#fff;color:var(--adm-danger)}
+
+.admin-detail-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.admin-back-link{font-size:14px;font-weight:700;color:var(--adm-text-sub)}
+.admin-back-link:hover{color:var(--adm-text)}
+
+.admin-table-kv th{background:#f9fafb;font-weight:700;font-size:13px;color:var(--adm-text-sub);width:150px}
+
+/* 상태 배지 pill 스타일 강화 */
+.status-badge{
+  font-weight:700;letter-spacing:.01em;box-shadow:inset 0 0 0 1px rgba(0,0,0,.04);
+}
+
+/* 체크박스 커스텀 */
+.chkRow, #chkAll{width:16px;height:16px;cursor:pointer;accent-color:var(--adm-primary)}
+
+/* 통계 카드 살짝 리프레시 */
+.admin-stat-card{border-radius:16px;transition:transform .15s,box-shadow .15s}
+.admin-stat-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(17,24,39,.10)}
+.admin-toolbar-right{display:flex;gap:10px;align-items:center}
+
+.btn-admin-excel{
+  display:inline-flex;align-items:center;gap:6px;
+  background:#16a34a;color:#fff;
+  padding:9px 16px;border-radius:10px;
+  font-size:13px;font-weight:700;
+  text-decoration:none;
+  transition:all .15s;
+}
+.btn-admin-excel:hover{background:#15803d;box-shadow:0 4px 12px rgba(22,163,74,.3);transform:translateY(-1px)}
+.admin-filter-form-wide{flex:1;flex-wrap:wrap}
+.admin-input-search{padding:9px 14px;border:1px solid var(--adm-border);border-radius:10px;font-size:13px;min-width:220px}
+
+.btn-admin-add{
+  display:inline-flex;align-items:center;gap:6px;background:var(--adm-primary);color:#fff;
+  padding:9px 16px;border-radius:10px;font-size:13px;font-weight:700;text-decoration:none;
+}
+.btn-admin-add:hover{background:#1d4ed8}
+.btn-admin-cancel{padding:10px 20px;border-radius:10px;font-size:14px;font-weight:700;color:var(--adm-text-sub);border:1px solid var(--adm-border)}
+
+.admin-thumb-img{width:48px;height:48px;object-fit:cover;border-radius:8px;background:#f3f4f6}
+.admin-thumb-placeholder{width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:#f3f4f6;border-radius:8px;font-size:20px}
+.admin-thumb-preview{width:100px;height:100px;object-fit:cover;border-radius:8px;margin-top:10px;display:block}
+.admin-prod-name{font-weight:700}
+
+.admin-stock-low{color:var(--adm-danger);font-weight:700}
+.admin-mini-badge{background:#fee2e2;color:#b91c1c;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;margin-left:4px}
+
+.status-toggle-btn{border:none;cursor:pointer}
+
+.admin-form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.admin-form-row-wide{grid-column:span 2}
+.admin-form-row label{display:block;font-size:13px;font-weight:700;color:var(--adm-text-sub);margin-bottom:6px}
+.admin-form-row input[type="text"],.admin-form-row input[type="number"],
+.admin-form-row select,.admin-form-row textarea{
+  width:100%;padding:10px 12px;border:1px solid var(--adm-border);border-radius:8px;font-size:14px;box-sizing:border-box;
+}
+.admin-form-row textarea{resize:vertical;font-family:inherit}
+
+.admin-options-table th,.admin-options-table td{padding:8px}
+.admin-options-table input[type="text"],.admin-options-table input[type="number"]{
+  width:100%;padding:7px 10px;border:1px solid var(--adm-border);border-radius:6px;font-size:13px;
+}
+.btn-remove-option{background:#fee2e2;color:#b91c1c;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer}
+
+.admin-form-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+
+@media (max-width:700px){
+  .admin-form-grid{grid-template-columns:1fr}
+  .admin-form-row-wide{grid-column:span 1}
+}
+/* =========================================
+   상품 등록/수정 폼 (product_form.php)
+   ========================================= */
+
+.admin-card{
+  background:#fff;
+  border:1px solid var(--adm-border);
+  border-radius:14px;
+  padding:32px;
+  box-shadow:0 2px 8px rgba(0,0,0,.04);
+}
+
+.admin-form-section-title{
+  font-size:15px;
+  font-weight:800;
+  color:var(--adm-text);
+  margin:0 0 18px;
+  padding-bottom:10px;
+  border-bottom:2px solid var(--adm-primary);
+  display:inline-block;
+}
+.admin-form-section-title:not(:first-child){
+  margin-top:36px;
+}
+
+.admin-form-grid{
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:18px 20px;
+  margin-bottom:8px;
+}
+
+.admin-form-row{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.admin-form-row label{
+  font-size:13px;
+  font-weight:700;
+  color:var(--adm-text);
+}
+.admin-form-row label .req{
+  color:#ef4444;
+  margin-left:2px;
+}
+
+.admin-form-row input[type="text"],
+.admin-form-row input[type="number"],
+.admin-form-row input[type="password"],
+.admin-form-row input[type="file"],
+.admin-form-row select,
+.admin-form-row textarea{
+  width:100%;
+  box-sizing:border-box;
+  padding:11px 13px;
+  border:1px solid var(--adm-border);
+  border-radius:8px;
+  font-size:14px;
+  font-family:inherit;
+  color:var(--adm-text);
+  background:#fff;
+  transition:border-color .15s, box-shadow .15s;
+}
+.admin-form-row input:focus,
+.admin-form-row select:focus,
+.admin-form-row textarea:focus{
+  outline:none;
+  border-color:var(--adm-primary);
+  box-shadow:0 0 0 3px rgba(37,99,235,.12);
+}
+.admin-form-row textarea{
+  resize:vertical;
+  min-height:120px;
+  line-height:1.6;
+}
+
+.admin-form-hint{
+  font-size:12px;
+  color:var(--adm-text-sub);
+  margin:4px 0 0;
+}
+
+/* 이미지 미리보기 */
+.admin-thumb-preview{
+  display:flex;
+  align-items:center;
+  gap:16px;
+  margin-bottom:14px;
+  padding:14px;
+  background:#f8f9fb;
+  border:1px solid var(--adm-border);
+  border-radius:10px;
+}
+.admin-thumb-preview img{
+  width:88px;
+  height:88px;
+  object-fit:cover;
+  border-radius:8px;
+  border:1px solid var(--adm-border);
+}
+.admin-checkbox-inline{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:13px;
+  color:var(--adm-text-sub);
+  cursor:pointer;
+  white-space:nowrap;
+}
+.admin-checkbox-inline input[type="checkbox"]{
+  width:16px;
+  height:16px;
+  accent-color:var(--adm-primary);
+  cursor:pointer;
+}
+
+/* 옵션 테이블 */
+.admin-option-table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  margin-top:4px;
+  margin-bottom:14px;
+  border:1px solid var(--adm-border);
+  border-radius:10px;
+  overflow:hidden;
+}
+.admin-option-table thead th{
+  background:#f8f9fb;
+  color:var(--adm-text-sub);
+  font-size:12.5px;
+  font-weight:700;
+  padding:12px 10px;
+  text-align:left;
+  border-bottom:1px solid var(--adm-border);
+}
+.admin-option-table tbody td{
+  padding:10px 10px;
+  border-bottom:1px solid var(--adm-border);
+  vertical-align:middle;
+}
+.admin-option-table tbody tr:last-child td{
+  border-bottom:none;
+}
+.admin-option-table tbody tr:hover{
+  background:#fafbfc;
+}
+.admin-option-table input[type="text"],
+.admin-option-table input[type="number"]{
+  width:100%;
+  box-sizing:border-box;
+  padding:8px 10px;
+  border:1px solid var(--adm-border);
+  border-radius:6px;
+  font-size:13.5px;
+}
+.admin-option-table input:focus{
+  outline:none;
+  border-color:var(--adm-primary);
+  box-shadow:0 0 0 2px rgba(37,99,235,.1);
+}
+.admin-option-table input[type="checkbox"]{
+  width:17px;
+  height:17px;
+  accent-color:var(--adm-primary);
+  cursor:pointer;
+}
+
+/* 버튼 */
+.btn-admin-secondary{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:10px 20px;
+  background:#fff;
+  color:var(--adm-text);
+  border:1px solid var(--adm-border);
+  border-radius:8px;
+  font-size:14px;
+  font-weight:700;
+  cursor:pointer;
+  text-decoration:none;
+  transition:background .15s, border-color .15s;
+}
+.btn-admin-secondary:hover{
+  background:#f4f5f7;
+  border-color:#c7cbd1;
+}
+
+.btn-admin-danger{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:7px 14px;
+  background:#fff;
+  color:#ef4444;
+  border:1px solid #fecaca;
+  border-radius:6px;
+  font-size:12.5px;
+  font-weight:700;
+  cursor:pointer;
+  transition:background .15s;
+}
+.btn-admin-danger:hover{
+  background:#fef2f2;
+}
+
+#btnAddOption{
+  margin-bottom:8px;
+}
+
+.admin-form-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  margin-top:32px;
+  padding-top:20px;
+  border-top:1px solid var(--adm-border);
+}
+.admin-form-actions .btn-admin-primary{
+  padding:11px 28px;
+}
+
+/* 반응형 – 화면 좁아지면 3열 → 1열 */
+@media (max-width: 900px){
+  .admin-form-grid{
+    grid-template-columns:repeat(2, 1fr);
+  }
+}
+@media (max-width: 600px){
+  .admin-card{
+    padding:20px;
+  }
+  .admin-form-grid{
+    grid-template-columns:1fr;
+  }
+  .admin-option-table thead{
+    display:none;
+  }
+  .admin-option-table tbody tr{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    padding:12px;
+  }
+}
+/* =========================================
+   상품 관리 목록 (products.php)
+   ========================================= */
+
+.admin-toolbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:14px;
+  margin-bottom:20px;
+  flex-wrap:wrap;
+}
+
+.admin-filter-form-wide{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  flex:1;
+}
+.admin-filter-form-wide select,
+.admin-input-search{
+  padding:10px 13px;
+  border:1px solid var(--adm-border);
+  border-radius:8px;
+  font-size:13.5px;
+  background:#fff;
+  color:var(--adm-text);
+}
+.admin-input-search{
+  min-width:220px;
+  flex:1;
+  max-width:280px;
+}
+.admin-filter-form-wide select:focus,
+.admin-input-search:focus{
+  outline:none;
+  border-color:var(--adm-primary);
+  box-shadow:0 0 0 3px rgba(37,99,235,.1);
+}
+
+.admin-toolbar-right{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-shrink:0;
+}
+
+/* 상단 버튼 3종 */
+.btn-admin-add,
+.btn-admin-excel{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:10px 16px;
+  border-radius:8px;
+  font-size:13.5px;
+  font-weight:700;
+  text-decoration:none;
+  white-space:nowrap;
+  transition:filter .15s, background .15s;
+}
+.btn-admin-add{
+  background:var(--adm-primary);
+  color:#fff;
+}
+.btn-admin-add:hover{
+  filter:brightness(0.92);
+}
+.btn-admin-excel{
+  background:#ecfdf5;
+  color:#059669;
+  border:1px solid #a7f3d0;
+}
+.btn-admin-excel:hover{
+  background:#d1fae5;
+}
+.btn-bulk-delete{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:10px 16px;
+  border-radius:8px;
+  font-size:13.5px;
+  font-weight:700;
+  border:1px solid #fecaca;
+  background:#fff;
+  color:#ef4444;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:background .15s;
+}
+.btn-bulk-delete:hover:not(:disabled){
+  background:#fef2f2;
+}
+.btn-bulk-delete:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
+
+/* 카드 + 헤더 */
+.admin-card{
+  background:#fff;
+  border:1px solid var(--adm-border);
+  border-radius:14px;
+  padding:24px;
+  box-shadow:0 2px 8px rgba(0,0,0,.04);
+}
+.admin-card h2{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-size:16px;
+  font-weight:800;
+  color:var(--adm-text);
+  margin:0 0 16px;
+}
+.admin-count-pill{
+  display:inline-flex;
+  align-items:center;
+  padding:4px 12px;
+  background:#eef2ff;
+  color:var(--adm-primary);
+  border-radius:999px;
+  font-size:12.5px;
+  font-weight:700;
+}
+
+/* 테이블 */
+.admin-table-trendy{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+}
+.admin-table-trendy thead th{
+  background:#f8f9fb;
+  color:var(--adm-text-sub);
+  font-size:12px;
+  font-weight:700;
+  padding:12px 10px;
+  text-align:left;
+  border-bottom:1px solid var(--adm-border);
+  white-space:nowrap;
+}
+.admin-table-trendy tbody td{
+  padding:12px 10px;
+  border-bottom:1px solid var(--adm-border);
+  font-size:13.5px;
+  color:var(--adm-text);
+  vertical-align:middle;
+}
+.admin-table-trendy tbody tr:last-child td{
+  border-bottom:none;
+}
+.admin-table-trendy tbody tr:hover{
+  background:#fafbfc;
+}
+.admin-table-trendy input[type="checkbox"]{
+  width:16px;
+  height:16px;
+  accent-color:var(--adm-primary);
+  cursor:pointer;
+}
+.admin-empty-row{
+  text-align:center;
+  padding:60px 20px !important;
+  color:var(--adm-text-sub);
+  font-size:14px;
+}
+
+/* 썸네일 */
+.admin-thumb-img{
+  width:48px;
+  height:48px;
+  border-radius:8px;
+  object-fit:cover;
+  border:1px solid var(--adm-border);
+  display:block;
+}
+.admin-thumb-placeholder{
+  width:48px;
+  height:48px;
+  border-radius:8px;
+  background:#f4f5f7;
+  border:1px solid var(--adm-border);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:20px;
+}
+
+/* 상품명 */
+.admin-prod-name{
+  font-weight:700;
+  color:var(--adm-text);
+}
+.admin-text-sub{
+  font-size:12px;
+  color:var(--adm-text-sub);
+  margin-top:2px;
+}
+
+/* 숫자 컬럼 (가격/재고/판매량) */
+.mono{
+  font-family:'SF Mono','Consolas',monospace;
+  font-weight:600;
+  color:var(--adm-text);
+}
+.admin-stock-low{
+  color:#d97706;
+}
+.admin-mini-badge{
+  display:inline-block;
+  margin-left:6px;
+  padding:2px 7px;
+  background:#fef3c7;
+  color:#d97706;
+  border-radius:999px;
+  font-size:10.5px;
+  font-weight:700;
+  vertical-align:middle;
+}
+
+/* 상태 토글 버튼 (기존 status-badge 재사용 + 버튼 리셋) */
+.status-toggle-btn{
+  border:none;
+  cursor:pointer;
+  font-family:inherit;
+  transition:filter .15s;
+}
+.status-toggle-btn:hover{
+  filter:brightness(0.95);
+}
+
+/* 수정 링크 */
+.admin-link-btn{
+  display:inline-flex;
+  align-items:center;
+  padding:6px 14px;
+  border:1px solid var(--adm-border);
+  border-radius:6px;
+  font-size:12.5px;
+  font-weight:700;
+  color:var(--adm-text);
+  text-decoration:none;
+  transition:background .15s;
+}
+.admin-link-btn:hover{
+  background:#f4f5f7;
+  border-color:var(--adm-primary);
+  color:var(--adm-primary);
+}
+
+/* 페이지네이션 */
+.admin-pagination{
+  display:flex;
+  justify-content:center;
+  gap:6px;
+  margin-top:20px;
+}
+.admin-pagination a{
+  padding:7px 13px;
+  border:1px solid var(--adm-border);
+  border-radius:6px;
+  font-size:13px;
+  color:var(--adm-text);
+  text-decoration:none;
+}
+.admin-pagination a:hover{
+  background:#f4f5f7;
+}
+.admin-pagination a.active{
+  background:var(--adm-primary);
+  color:#fff;
+  border-color:var(--adm-primary);
+}
+
+/* 반응형 */
+@media (max-width: 900px){
+  .admin-toolbar{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .admin-toolbar-right{
+    justify-content:flex-end;
+  }
+  .admin-table-trendy{
+    display:block;
+    overflow-x:auto;
+    white-space:nowrap;
+  }
+}
+/* 필수 입력값 오류 표시 */
+.admin-form-row.has-error input,
+.admin-form-row.has-error select,
+.admin-form-row.has-error textarea{
+  border-color:#ef4444 !important;
+  border-bottom-width:3px;
+  background:#fef2f2;
+  box-shadow:0 0 0 2px rgba(239,68,68,.08);
+}
+.admin-form-row .field-error-msg{
+  display:none;
+  font-size:12px;
+  color:#ef4444;
+  font-weight:700;
+  margin-top:2px;
+}
+.admin-form-row.has-error .field-error-msg{
+  display:block;
+}
+/* =========================================
+   회원 상세 페이지 (users.php ?id=)
+   ========================================= */
+.admin-detail-head{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  margin-bottom:20px;
+}
+.admin-detail-avatar{
+  width:56px;
+  height:56px;
+  border-radius:50%;
+  background:linear-gradient(135deg,#2563eb,#4338ca);
+  color:#fff;
+  font-size:20px;
+  font-weight:800;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex-shrink:0;
+}
+.admin-detail-title-group h2{
+  font-size:19px;
+  font-weight:800;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:0;
+}
+.admin-detail-sub{
+  font-size:13px;
+  color:var(--adm-text-sub);
+  margin-top:2px;
+}
+
+.admin-detail-grid{
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:16px;
+  margin-top:4px;
+}
+.admin-detail-item{
+  background:#f8f9fb;
+  border:1px solid var(--adm-border);
+  border-radius:10px;
+  padding:14px 16px;
+}
+.admin-detail-item strong{
+  display:block;
+  font-size:12px;
+  font-weight:700;
+  color:var(--adm-text-sub);
+  margin-bottom:6px;
+}
+.admin-detail-item span{
+  font-size:14.5px;
+  font-weight:600;
+  color:var(--adm-text);
+}
+
+.admin-summary-grid{
+  display:grid;
+  grid-template-columns:repeat(4, 1fr);
+  gap:16px;
+}
+.admin-summary-card{
+  background:#fff;
+  border:1px solid var(--adm-border);
+  border-radius:12px;
+  padding:18px;
+  text-align:center;
+  transition:transform .15s, box-shadow .15s;
+}
+.admin-summary-card:hover{
+  transform:translateY(-2px);
+  box-shadow:0 8px 20px rgba(17,24,39,.08);
+}
+.admin-summary-card strong{
+  display:block;
+  font-size:12px;
+  color:var(--adm-text-sub);
+  font-weight:700;
+  margin-bottom:8px;
+}
+.admin-summary-card span{
+  font-size:21px;
+  font-weight:800;
+  color:var(--adm-primary);
+}
+
+.admin-inline-form{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:16px;
+  padding-top:16px;
+  border-top:1px solid var(--adm-border);
+}
+.admin-inline-form select{
+  padding:10px 13px;
+  border:1px solid var(--adm-border);
+  border-radius:8px;
+  font-size:14px;
+}
+
+.btn-admin-unlock{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  background:#fffbeb;
+  color:#b45309;
+  border:1px solid #fde68a;
+  padding:10px 18px;
+  border-radius:10px;
+  font-size:13.5px;
+  font-weight:700;
+  cursor:pointer;
+  transition:background .15s;
+}
+.btn-admin-unlock:hover{
+  background:#fef3c7;
+}
+
+@media (max-width:900px){
+  .admin-detail-grid{ grid-template-columns:repeat(2, 1fr); }
+  .admin-summary-grid{ grid-template-columns:repeat(2, 1fr); }
+}
+@media (max-width:600px){
+  .admin-detail-grid{ grid-template-columns:1fr; }
+  .admin-summary-grid{ grid-template-columns:1fr; }
+}
+.admin-card-head-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.admin-mini-hint{font-size:12.5px;color:var(--adm-text-sub);font-weight:500}
+.admin-mini-badge{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:800;color:#fff;background:var(--adm-primary);border-radius:999px;padding:1px 7px;vertical-align:middle}
+.admin-form-hint{font-size:11.5px;color:var(--adm-text-sub);font-weight:500;margin-left:4px}
+/* ★ 안전장치: 파일 내 중복 정의로 label의 display가 상황에 따라 달라지는 문제 방지 */
+.admin-form-row label{display:block !important;margin-bottom:6px}
+.admin-form-row .admin-form-hint{display:block;margin:4px 0 0;font-size:12px;color:var(--adm-text-sub)}
+.admin-form-row-full{grid-column:1 / -1}
+/* ===== 홈 화면 관리(banners.php) 탭 UI — 실제 admin.css에 없어서 신규 추가 ===== */
+.admin-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid var(--adm-border);flex-wrap:wrap}
+.admin-tab{
+  padding:11px 18px;font-size:14px;font-weight:700;color:var(--adm-text-sub);
+  border-bottom:3px solid transparent;margin-bottom:-2px;text-decoration:none;
+  transition:color .15s, border-color .15s;
+}
+.admin-tab:hover{color:var(--adm-text)}
+.admin-tab.active{color:var(--adm-primary);border-bottom-color:var(--adm-primary)}
+
+/* 라디오 인라인 (기존 .admin-checkbox-inline과 톤 통일) */
+.admin-radio-inline{
+  display:inline-flex;align-items:center;gap:6px;font-size:13px;
+  color:var(--adm-text-sub);cursor:pointer;white-space:nowrap;margin-right:16px;
+}
+.admin-radio-inline input[type="radio"]{width:16px;height:16px;accent-color:var(--adm-primary);cursor:pointer}
+
+/* 프로모 배너 위치 표시 뱃지 */
+.admin-badge{
+  display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;
+  border-radius:999px;background:#eef2ff;color:#4338ca;
+}
