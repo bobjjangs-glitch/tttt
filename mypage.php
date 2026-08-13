@@ -11,10 +11,16 @@ if (!Auth::isLoggedIn()) {
 $pdo = Database::connection();
 $uid = Auth::currentUserId();
 
+/* 구매확정이 가능한 주문 상태 / 리뷰 작성 가능 기간(일) */
+if (!defined('ORDER_CONFIRM_ELIGIBLE_STATUSES')) {
+    define('ORDER_CONFIRM_ELIGIBLE_STATUSES', ['shipped', 'done']);
+}
+if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
+    define('REVIEW_WRITE_WINDOW_DAYS', 7);
+}
+
 /* =====================================================================
    [FIX-3] 비밀번호 변경 시도 쓰로틀링 (세션 기반, DB 스키마 변경 없음)
-   로그인 폼(Auth::attemptLogin)과 동일한 취지로, 세션을 탈취한 공격자가
-   "현재 비밀번호"를 무제한으로 추측하지 못하도록 5회 실패 시 15분 잠근다.
    ===================================================================== */
 function pwchange_check_locked(): ?string
 {
@@ -40,6 +46,44 @@ function pwchange_reset_fail(): void
     unset($_SESSION['_pw_change_fail']);
 }
 
+/**
+ * 주문 한 건에 대해 "구매확정" 버튼 또는 리뷰 작성 가능 D-day 배지를 HTML로 반환한다.
+ * 문자열은 전부 더블쿼트로 작성해 내부에 홑따옴표(status='active' 류)가 섞여도
+ * PHP 문자열이 조기 종료되는 사고를 원천적으로 막는다.
+ */
+function render_order_confirm_cell(array $o): string
+{
+    $status      = $o['status'] ?? '';
+    $confirmedAt = $o['confirmed_at'] ?? null;
+
+    if ($confirmedAt === null && in_array($status, ORDER_CONFIRM_ELIGIBLE_STATUSES, true)) {
+        $orderId = (int)$o['id'];
+        return "
+            <form method=\"post\" action=\"" . BASE_URL . "/mypage.php#orders\" style=\"display:inline;\">
+                <input type=\"hidden\" name=\"form_type\" value=\"confirm_order\">
+                <input type=\"hidden\" name=\"order_id\" value=\"{$orderId}\">
+                " . Csrf::field() . "
+                <button type=\"submit\" class=\"btn-confirm-order\"
+                        onclick=\"return confirm('구매를 확정하시겠습니까? 확정 후 7일간 리뷰를 작성할 수 있습니다.');\">
+                    구매확정
+                </button>
+            </form>";
+    }
+
+    if ($confirmedAt !== null) {
+        $deadline = (new DateTime($confirmedAt))->modify('+' . REVIEW_WRITE_WINDOW_DAYS . ' days');
+        $now = new DateTime();
+        if ($now <= $deadline) {
+            $diff = $now->diff($deadline);
+            $daysLeft = max(1, (int)$diff->days + (($diff->h > 0 || $diff->i > 0) ? 1 : 0));
+            return "<span class=\"badge-confirmed\">확정완료 (리뷰 D-{$daysLeft})</span>";
+        }
+        return '<span class="badge-confirmed expired">확정완료 (리뷰 기간 종료)</span>';
+    }
+
+    return '<span class="badge-muted">-</span>';
+}
+
 // ---------- 프로필 수정 처리 ----------
 if (is_post() && ($_POST['form_type'] ?? '') === 'profile') {
     if (!Csrf::verify($_POST['csrf_token'] ?? null)) {
@@ -56,9 +100,6 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'profile') {
     $v->require('name', '이름')
       ->require('phone', '휴대폰 번호')->phone('phone');
 
-    /* [FIX-5 관련 아님, 별도] 우편번호 형식 검증 — Validator 클래스를 전역
-       수정하면 다른 페이지(회원가입 등)에도 영향을 주므로, 여기서는
-       마이페이지 전용으로 간단히 인라인 검증한다. */
     $zipcode = trim($_POST['zipcode'] ?? '');
     $zipErrors = [];
     if ($zipcode !== '' && !preg_match('/^\d{5}$/', $zipcode)) {
@@ -93,7 +134,6 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'password') {
         redirect('/mypage.php#password');
     }
 
-    /* [FIX-3] 잠금 상태면 password_verify()조차 시도하지 않고 즉시 차단 */
     if ($lockedMsg = pwchange_check_locked()) {
         flash('errors', json_encode(['current_password' => $lockedMsg], JSON_UNESCAPED_UNICODE));
         redirect('/mypage.php#password');
@@ -101,7 +141,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'password') {
 
     $curPw     = $_POST['current_password'] ?? '';
     $newPw     = $_POST['new_password'] ?? '';
-    $newPwConf = $_POST['new_password_confirm'] ?? ''; // [FIX-2] 확인 입력값
+    $newPwConf = $_POST['new_password_confirm'] ?? '';
 
     $v = new Validator(['new_password' => $newPw]);
     $v->require('new_password', '새 비밀번호')->passwordStrength('new_password');
@@ -111,7 +151,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'password') {
     $row = $stmt->fetch();
 
     if (!$row || !password_verify($curPw, $row['password_hash'])) {
-        pwchange_record_fail(); // [FIX-3] 실패 카운트 증가
+        pwchange_record_fail();
         flash('errors', json_encode(['current_password' => '현재 비밀번호가 일치하지 않습니다.'], JSON_UNESCAPED_UNICODE));
         redirect('/mypage.php#password');
     }
@@ -119,13 +159,12 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'password') {
         flash('errors', json_encode($v->errors(), JSON_UNESCAPED_UNICODE));
         redirect('/mypage.php#password');
     }
-    /* [FIX-2] 새 비밀번호와 확인값이 다르면 저장하지 않음 */
     if ($newPw !== $newPwConf) {
         flash('errors', json_encode(['new_password_confirm' => '새 비밀번호가 일치하지 않습니다.'], JSON_UNESCAPED_UNICODE));
         redirect('/mypage.php#password');
     }
 
-    pwchange_reset_fail(); // [FIX-3] 성공했으니 실패 카운트 초기화
+    pwchange_reset_fail();
 
     $newHash = password_hash($newPw, PASSWORD_DEFAULT);
     $upd = $pdo->prepare('UPDATE tt_users SET password_hash = :hash WHERE id = :uid');
@@ -147,15 +186,44 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'wish_remove') {
     redirect('/mypage.php#wish');
 }
 
+// ---------- 구매확정 처리 (NEW) ----------
+if (is_post() && ($_POST['form_type'] ?? '') === 'confirm_order') {
+    if (!Csrf::verify($_POST['csrf_token'] ?? null)) {
+        flash('error', '유효하지 않은 요청입니다.');
+        redirect('/mypage.php#orders');
+    }
+    $orderId = (int)($_POST['order_id'] ?? 0);
+
+    $ordStmt = $pdo->prepare('SELECT id, user_id, status, confirmed_at FROM tt_orders WHERE id = :id LIMIT 1');
+    $ordStmt->execute(['id' => $orderId]);
+    $targetOrder = $ordStmt->fetch();
+
+    if (!$targetOrder || (int)$targetOrder['user_id'] !== (int)$uid) {
+        flash('error', '해당 주문을 찾을 수 없습니다.');
+        redirect('/mypage.php#orders');
+    }
+    if ($targetOrder['confirmed_at'] !== null) {
+        flash('error', '이미 구매확정된 주문입니다.');
+        redirect('/mypage.php#orders');
+    }
+    if (!in_array($targetOrder['status'], ORDER_CONFIRM_ELIGIBLE_STATUSES, true)) {
+        flash('error', '배송중 또는 배송완료 상태의 주문만 구매확정할 수 있습니다.');
+        redirect('/mypage.php#orders');
+    }
+
+    $pdo->prepare('UPDATE tt_orders SET confirmed_at = NOW() WHERE id = :id AND user_id = :uid')
+        ->execute(['id' => $orderId, 'uid' => $uid]);
+
+    flash('success', '구매확정이 완료되었습니다. 오늘부터 7일간 리뷰를 작성할 수 있습니다.');
+    redirect('/mypage.php#orders');
+}
+
 // ---------- 데이터 조회 ----------
-/* [FIX-1] SELECT * 대신 필요한 컬럼만 명시적으로 조회 — password_hash를
-   불필요하게 PHP 메모리/배열에 올리지 않는다. */
 $stmt = $pdo->prepare('SELECT id, email, name, phone, address1, address2, zipcode FROM tt_users WHERE id = :uid');
 $stmt->execute(['uid' => $uid]);
 $user = $stmt->fetch();
 
 if (!$user) {
-    // 세션은 있는데 실제 유저 레코드가 없는 비정상 상태 → 강제 로그아웃
     Auth::logout();
     flash('error', '사용자 정보를 확인할 수 없습니다. 다시 로그인해주세요.');
     redirect('/login.php');
@@ -172,13 +240,13 @@ $totalPages  = max(1, (int)ceil($totalOrders / $perPage));
 if ($page > $totalPages) $page = $totalPages;
 $offset = ($page - 1) * $perPage;
 
-// LIMIT/OFFSET은 서버에서 (int) 캐스팅한 값만 사용하므로 SQL 인젝션 위험 없음
 $orderStmt = $pdo->prepare("SELECT * FROM tt_orders WHERE user_id = :uid ORDER BY created_at DESC LIMIT {$perPage} OFFSET {$offset}");
 $orderStmt->execute(['uid' => $uid]);
 $orders = $orderStmt->fetchAll();
 
-/* [FIX-5] 판매중지/숨김 상품은 찜 목록에서 제외 (product-list.php와 동일 기준) */
-$wishStmt = $pdo->prepare('
+/* [FIX-5][재발 방지] 더블쿼트로 SQL을 감싸서 내부 홑따옴표(status='active')로 인한
+   문자열 조기 종료(파싱 에러)가 다시는 발생하지 않도록 고쳤다. */
+$wishStmt = $pdo->prepare("
     SELECT w.id AS wish_id, p.id AS product_id, p.name, p.model, p.thumbnail_url,
            p.price_sale, p.price_original, p.rating_avg, p.review_count,
            b.name AS brand_name
@@ -187,7 +255,7 @@ $wishStmt = $pdo->prepare('
     JOIN tt_brands b ON b.id = p.brand_id
     WHERE w.user_id = :uid
     ORDER BY w.id DESC
-');
+");
 $wishStmt->execute(['uid' => $uid]);
 $wishlist = $wishStmt->fetchAll();
 
@@ -207,9 +275,35 @@ $pageTitle = '마이페이지';
 require __DIR__ . '/includes/header.php';
 ?>
 
+<style>
+.btn-confirm-order {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(99, 102, 241, .3);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.btn-confirm-order:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(99,102,241,.4); }
+.badge-confirmed {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 700;
+}
+.badge-confirmed.expired { background: #f1f5f9; color: #94a3b8; }
+.badge-muted { color: #cbd5e1; font-size: 12px; }
+</style>
+
 <div class="mypage-wrap">
 
-  <!-- 좌측 사이드바 -->
   <aside class="mypage-side">
     <div class="mypage-profile-card">
       <div class="mp-name"><?= h($user['name']) ?>님</div>
@@ -223,7 +317,6 @@ require __DIR__ . '/includes/header.php';
     </nav>
   </aside>
 
-  <!-- 우측 메인 -->
   <div class="mypage-main">
 
     <?php if ($successMsg): ?>
@@ -240,7 +333,7 @@ require __DIR__ . '/includes/header.php';
         <table class="order-table">
           <thead>
             <tr>
-              <th>주문번호</th><th>주문일</th><th>상태</th><th>금액</th>
+              <th>주문번호</th><th>주문일</th><th>상태</th><th>금액</th><th>구매확정 / 리뷰</th>
             </tr>
           </thead>
           <tbody>
@@ -254,12 +347,12 @@ require __DIR__ . '/includes/header.php';
                   </span>
                 </td>
                 <td><?= format_price((int)$o['total_amount']) ?></td>
+                <td><?= render_order_confirm_cell($o) ?></td>
               </tr>
             <?php endforeach; ?>
           </tbody>
         </table>
 
-        <!-- [FIX-4] 주문내역 페이지네이션 -->
         <?php if ($totalPages > 1): ?>
           <div class="order-pagination" style="display:flex;gap:8px;justify-content:center;margin-top:16px">
             <?php if ($page > 1): ?>
@@ -376,7 +469,6 @@ require __DIR__ . '/includes/header.php';
           <label>새 비밀번호</label>
           <input type="password" name="new_password" required>
         </div>
-        <!-- [FIX-2] 새 비밀번호 확인 필드 추가 -->
         <div class="mp-form-row">
           <label>새 비밀번호 확인</label>
           <input type="password" name="new_password_confirm" required>

@@ -2,6 +2,10 @@
 declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
 
+if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
+    define('REVIEW_WRITE_WINDOW_DAYS', 7);
+}
+
 if (!Auth::isLoggedIn()) {
     flash('error', '로그인이 필요합니다.');
     redirect('/login.php');
@@ -30,22 +34,32 @@ if (mb_strlen($content) > 1000) {
 
 $pdo = Database::connection();
 
-// 구매 확정 이력 확인 (order_item_id를 함께 찾아 리뷰에 연결)
+// 구매확정(confirmed_at) 이력 확인 — 더 이상 존재하지 않는 status='completed' 조건을 사용하지 않는다.
 $buyStmt = $pdo->prepare("
-    SELECT oi.id FROM tt_order_items oi
+    SELECT oi.id, o.confirmed_at
+    FROM tt_order_items oi
     JOIN tt_orders o ON o.id = oi.order_id
-    WHERE o.user_id = :uid AND oi.product_id = :pid AND o.status = 'completed'
+    WHERE o.user_id = :uid AND oi.product_id = :pid AND o.confirmed_at IS NOT NULL
+    ORDER BY o.confirmed_at DESC
     LIMIT 1
 ");
 $buyStmt->execute(['uid' => $userId, 'pid' => $productId]);
-$orderItem = $buyStmt->fetch();
+$orderItem = $buyStmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$orderItem) {
-    flash('error', '구매가 완료된 상품에만 리뷰를 작성할 수 있습니다.');
+    flash('error', '구매확정된 상품에만 리뷰를 작성할 수 있습니다.');
     redirect('/product-detail.php?id=' . $productId);
 }
 
-// 중복 작성 방지 (같은 상품에 이미 리뷰를 남겼는지)
+// 구매확정일로부터 7일이 지나면 서버에서 강제로 차단 (화면 버튼 숨김과 별개로 반드시 필요한 이중 방어)
+$confirmedAt = new DateTime($orderItem['confirmed_at']);
+$deadline    = (clone $confirmedAt)->modify('+' . REVIEW_WRITE_WINDOW_DAYS . ' days');
+if (new DateTime() > $deadline) {
+    flash('error', '리뷰 작성 가능 기간(구매확정 후 7일)이 지났습니다.');
+    redirect('/product-detail.php?id=' . $productId);
+}
+
+// 중복 작성 방지
 $dupStmt = $pdo->prepare('SELECT id FROM tt_reviews WHERE user_id = :uid AND product_id = :pid LIMIT 1');
 $dupStmt->execute(['uid' => $userId, 'pid' => $productId]);
 if ($dupStmt->fetch()) {
@@ -67,7 +81,6 @@ try {
         'content' => $content,
     ]);
 
-    // 상품 테이블의 평균 별점/리뷰 수 캐시 갱신
     $pdo->prepare('
         UPDATE tt_products p
         SET review_count = (SELECT COUNT(*) FROM tt_reviews WHERE product_id = p.id),

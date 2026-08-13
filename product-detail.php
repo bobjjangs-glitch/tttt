@@ -2,6 +2,10 @@
 declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
 
+if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
+    define('REVIEW_WRITE_WINDOW_DAYS', 7);
+}
+
 $pdo = Database::connection();
 
 $productId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
@@ -30,7 +34,6 @@ if (!$product || $product['status'] !== 'active') {
     exit;
 }
 
-// DOT 옵션 목록 — 테이블이나 컬럼이 없어도 에러 나지 않도록 try-catch
 $options = [];
 try {
     $optStmt = $pdo->prepare(
@@ -46,7 +49,6 @@ try {
     $options = [];
 }
 
-// 찜 여부 확인 — 반드시 Auth 클래스를 통해서만 로그인 상태를 판단한다
 $isWished = false;
 if (Auth::isLoggedIn()) {
     $wStmt = $pdo->prepare("SELECT id FROM tt_wishlists WHERE user_id = :uid AND product_id = :pid LIMIT 1");
@@ -54,10 +56,8 @@ if (Auth::isLoggedIn()) {
     $isWished = (bool)$wStmt->fetch();
 }
 
-// CSRF 토큰 — 자체 세션 키를 새로 만들지 말고 core/Csrf.php의 토큰을 그대로 사용한다
 $csrfToken = Csrf::token();
 
-// 할인율 계산
 $discountPct = 0;
 if ((int)$product['price_original'] > 0) {
     $discountPct = (int)round((1 - ((int)$product['price_sale'] / (int)$product['price_original'])) * 100);
@@ -66,6 +66,97 @@ if ((int)$product['price_original'] > 0) {
 $pageTitle = $product['name'];
 require __DIR__ . '/includes/header.php';
 ?>
+
+<style>
+/* ===== 리뷰 작성 CTA / 모달 - 트렌디 버튼 스타일 ===== */
+.pd-review-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.btn-review-write {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border: none;
+  padding: 12px 26px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(99, 102, 241, .35);
+  transition: transform .15s ease, box-shadow .15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-review-write:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(99, 102, 241, .45);
+}
+.btn-review-write:active { transform: translateY(0); }
+.pd-review-ddays { font-size: 13px; color: #64748b; }
+
+.review-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, .55);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; visibility: hidden;
+  transition: opacity .2s ease;
+  z-index: 999;
+}
+.review-modal-overlay.active { opacity: 1; visibility: visible; }
+.review-modal-box {
+  background: #fff;
+  border-radius: 20px;
+  padding: 32px;
+  width: 92%;
+  max-width: 440px;
+  position: relative;
+  transform: translateY(16px) scale(.97);
+  transition: transform .2s ease;
+  box-shadow: 0 24px 60px rgba(0,0,0,.25);
+}
+.review-modal-overlay.active .review-modal-box { transform: translateY(0) scale(1); }
+.review-modal-close {
+  position: absolute; top: 16px; right: 16px;
+  background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer;
+}
+.review-modal-title { font-size: 19px; font-weight: 800; margin-bottom: 4px; }
+.review-modal-sub { font-size: 13px; color: #64748b; margin-bottom: 18px; }
+
+.star-rating { display: flex; flex-direction: row-reverse; gap: 4px; margin-bottom: 16px; }
+.star-rating input { display: none; }
+.star-rating label { font-size: 30px; color: #e2e8f0; cursor: pointer; transition: color .12s, transform .12s; }
+.star-rating input:checked ~ label,
+.star-rating label:hover,
+.star-rating label:hover ~ label { color: #fbbf24; }
+
+.review-modal-box textarea {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  resize: vertical;
+  margin-bottom: 18px;
+  box-sizing: border-box;
+}
+.review-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.btn-modal-cancel {
+  background: #f1f5f9; color: #475569; border: none;
+  padding: 10px 20px; border-radius: 999px; font-weight: 600; cursor: pointer;
+}
+.btn-modal-submit {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff; border: none;
+  padding: 10px 24px; border-radius: 999px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 6px 16px rgba(99, 102, 241, .35);
+  transition: transform .12s ease;
+}
+.btn-modal-submit:hover { transform: translateY(-1px); }
+</style>
 
 <main class="tt-main">
 <div class="pd-wrap">
@@ -126,7 +217,6 @@ require __DIR__ . '/includes/header.php';
         <p class="pd-stock-warn" id="pdStockWarn" style="display:none;">품절된 옵션입니다.</p>
       </div>
       <?php else: ?>
-        <!-- 옵션은 없지만 products.stock 으로 재고 표시 -->
         <div class="pd-option-row">
           <label>재고 상태</label>
           <?php if (!empty($product['dot_code'])): ?>
@@ -198,35 +288,55 @@ require __DIR__ . '/includes/header.php';
     $rvStmt->execute(['pid' => $productId]);
     $productReviews = $rvStmt->fetchAll(PDO::FETCH_ASSOC);
 
+    /* 구매확정(confirmed_at) 후 7일 이내인지로 리뷰 작성 가능 여부를 판정한다. */
     $canWriteReview = false;
+    $reviewDeadline = null;
+    $reviewDaysLeft = 0;
+
     if (Auth::isLoggedIn()) {
         $eligStmt = $pdo->prepare("
-            SELECT oi.id FROM tt_order_items oi
+            SELECT oi.id, o.confirmed_at
+            FROM tt_order_items oi
             JOIN tt_orders o ON o.id = oi.order_id
-            WHERE o.user_id = :uid AND oi.product_id = :pid AND o.status = 'completed'
+            WHERE o.user_id = :uid
+              AND oi.product_id = :pid
+              AND o.confirmed_at IS NOT NULL
+            ORDER BY o.confirmed_at DESC
             LIMIT 1
         ");
         $eligStmt->execute(['uid' => Auth::currentUserId(), 'pid' => $productId]);
+        $eligibleOrderItem = $eligStmt->fetch(PDO::FETCH_ASSOC);
+
         $alreadyStmt = $pdo->prepare('SELECT id FROM tt_reviews WHERE user_id = :uid AND product_id = :pid LIMIT 1');
         $alreadyStmt->execute(['uid' => Auth::currentUserId(), 'pid' => $productId]);
-        $canWriteReview = (bool)$eligStmt->fetch() && !$alreadyStmt->fetch();
+        $alreadyReviewed = (bool)$alreadyStmt->fetch();
+
+        if ($eligibleOrderItem && !$alreadyReviewed) {
+            $confirmedAt = new DateTime($eligibleOrderItem['confirmed_at']);
+            $deadline    = (clone $confirmedAt)->modify('+' . REVIEW_WRITE_WINDOW_DAYS . ' days');
+            $now         = new DateTime();
+            if ($now <= $deadline) {
+                $canWriteReview = true;
+                $reviewDeadline = $deadline;
+                $diff = $now->diff($deadline);
+                $reviewDaysLeft = max(1, (int)$diff->days + (($diff->h > 0 || $diff->i > 0) ? 1 : 0));
+            }
+        }
     }
     ?>
 
     <?php if ($canWriteReview): ?>
-        <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
-            <div class="pd-review-rating-input">
-                <?php for ($i = 5; $i >= 1; $i--): ?>
-                    <label><input type="radio" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>><?= $i ?>점</label>
-                <?php endfor; ?>
-            </div>
-            <textarea name="content" rows="3" maxlength="1000" placeholder="사용해 보신 솔직한 후기를 남겨주세요." required></textarea>
-            <button type="submit" class="btn-primary">리뷰 등록</button>
-        </form>
+        <div class="pd-review-cta">
+            <button type="button" class="btn-review-write" id="pdReviewWriteBtn">
+                <span>✎</span> 리뷰 작성하기
+            </button>
+            <span class="pd-review-ddays">
+                리뷰 작성 가능 기간: <strong>D-<?= $reviewDaysLeft ?></strong>
+                (<?= h($reviewDeadline->format('Y.m.d')) ?>까지)
+            </span>
+        </div>
     <?php elseif (Auth::isLoggedIn()): ?>
-        <p style="color:var(--gray4);">구매 확정된 상품에 대해서만 리뷰를 작성할 수 있습니다.</p>
+        <p style="color:var(--gray4);">구매확정 후 7일 이내에만 리뷰를 작성할 수 있습니다. (마이페이지 &gt; 주문내역에서 구매확정을 먼저 진행해 주세요)</p>
     <?php endif; ?>
 
     <?php if (empty($productReviews)): ?>
@@ -248,6 +358,32 @@ require __DIR__ . '/includes/header.php';
 </div>
 
 </div>
+
+<?php if ($canWriteReview): ?>
+<!-- 리뷰 작성 모달 : 7일 창구 안에서는 버튼 클릭 시 언제든 열린다 -->
+<div class="review-modal-overlay" id="reviewModalOverlay">
+  <div class="review-modal-box">
+    <button type="button" class="review-modal-close" id="reviewModalClose" aria-label="닫기">&times;</button>
+    <h3 class="review-modal-title">리뷰 작성하기</h3>
+    <p class="review-modal-sub">솔직한 사용 후기를 남겨주시면 다른 고객에게 큰 도움이 됩니다.</p>
+    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form">
+        <?= Csrf::field() ?>
+        <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
+        <div class="star-rating">
+            <?php for ($i = 5; $i >= 1; $i--): ?>
+                <input type="radio" id="star<?= $i ?>" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>>
+                <label for="star<?= $i ?>">★</label>
+            <?php endfor; ?>
+        </div>
+        <textarea name="content" rows="4" maxlength="1000" placeholder="사용해 보신 솔직한 후기를 남겨주세요." required></textarea>
+        <div class="review-modal-actions">
+            <button type="button" class="btn-modal-cancel" id="reviewModalCancel">취소</button>
+            <button type="submit" class="btn-modal-submit">등록하기</button>
+        </div>
+    </form>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- 바로구매용 히든 폼: checkout.php로 페이지 이동시키는 용도, AJAX 아님 -->
 <form method="post" action="<?= BASE_URL ?>/buy-now.php" id="buyNowForm" style="display:none;">
@@ -311,25 +447,18 @@ if (optionSelect) {
   });
 }
 
-/**
- * 실제 서버 엔드포인트는 JSON body를 기대하고,
- * 응답은 {success, message, data:{...}} 구조로 온다.
- * fetch는 401/419/500 같은 HTTP 에러 상태에서도 reject하지 않으므로
- * status를 직접 같이 반환해 호출부에서 분기 처리한다.
- */
 async function postJson(url, payload) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  const data = await res.json(); // JSON이 아니면 여기서 throw → catch로 감
+  const data = await res.json();
   return { status: res.status, data };
 }
 
 wishBtn.addEventListener('click', async function () {
   try {
-    /* ★ 수정: /api/wish_toggle.php (존재하지 않는 경로) → /wish-toggle.php (루트, 실제 존재하는 파일) */
     const { status, data } = await postJson(BASE_URL + '/wish-toggle.php', {
       product_id: productId,
       csrf_token: csrfToken
@@ -359,14 +488,11 @@ cartBtn.addEventListener('click', async function () {
     return;
   }
 
-  // 옵션이 없는 상품은 option_id를 반드시 null로 보내야 한다.
-  // 빈 문자열('')을 보내면 서버에서 (int)''=0으로 캐스팅되어 존재하지 않는 옵션 id로 조회돼 실패한다.
   const optionIdPayload = (hasOptions && optionSelect && optionSelect.value !== '')
     ? parseInt(optionSelect.value, 10)
     : null;
 
   try {
-    /* ★ 수정: /api/cart_add.php (존재하지 않는 경로) → /cart-add.php (루트, 실제 존재하는 파일) */
     const { status, data } = await postJson(BASE_URL + '/cart-add.php', {
       product_id: productId,
       option_id: optionIdPayload,
@@ -413,11 +539,10 @@ buyBtn.addEventListener('click', function () {
   }
   document.getElementById('buyNowQty').value = Math.max(1, Math.min(99, parseInt(qtyInput.value, 10) || 1));
 
-  buyBtn.disabled = true; // 중복 클릭으로 인한 이중 제출 방지
+  buyBtn.disabled = true;
   document.getElementById('buyNowForm').submit();
 });
 
-// 탭 전환
 document.querySelectorAll('.pd-tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.pd-tab-btn').forEach(b => b.classList.remove('active'));
@@ -427,7 +552,32 @@ document.querySelectorAll('.pd-tab-btn').forEach(btn => {
   });
 });
 
-// 재고 요청 (product-detail 페이지)
+/* ===== 리뷰 작성 모달 열기/닫기 ===== */
+const reviewBtn     = document.getElementById('pdReviewWriteBtn');
+const reviewOverlay = document.getElementById('reviewModalOverlay');
+const reviewClose   = document.getElementById('reviewModalClose');
+const reviewCancel  = document.getElementById('reviewModalCancel');
+
+if (reviewBtn && reviewOverlay) {
+  const openReviewModal = () => {
+    reviewOverlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  };
+  const closeReviewModal = () => {
+    reviewOverlay.classList.remove('active');
+    document.body.style.overflow = '';
+  };
+  reviewBtn.addEventListener('click', openReviewModal);
+  reviewClose?.addEventListener('click', closeReviewModal);
+  reviewCancel?.addEventListener('click', closeReviewModal);
+  reviewOverlay.addEventListener('click', (e) => {
+    if (e.target === reviewOverlay) closeReviewModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && reviewOverlay.classList.contains('active')) closeReviewModal();
+  });
+}
+
 const restockBtn = document.getElementById('pdRestockBtn');
 if (restockBtn) {
   restockBtn.addEventListener('click', async function(){
