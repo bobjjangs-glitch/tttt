@@ -51,6 +51,10 @@ function admin_nav_active(string $script, string $target): string {
       <?php if (AdminAuth::can('banners')): ?>
       <a href="<?= BASE_URL ?>/admin/banners.php" class="<?= admin_nav_active($currentScript, 'banners.php') ?>">홈 화면 관리 (배너·아이콘·프로모)</a>
       <?php endif; ?>
+      <?php if (AdminAuth::can('banners')): ?>
+<a href="<?= BASE_URL ?>/admin/popups.php" class="<?= admin_nav_active($currentScript, 'popups.php') ?>">팝업 광고 관리</a>
+<?php endif; ?>
+
 
       <?php if (AdminAuth::can('reviews')): ?>
       <a href="<?= BASE_URL ?>/admin/reviews.php" class="<?= admin_nav_active($currentScript, 'reviews.php') ?>">리뷰 관리</a>
