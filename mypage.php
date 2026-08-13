@@ -48,8 +48,6 @@ function pwchange_reset_fail(): void
 
 /**
  * 주문 한 건에 대해 "구매확정" 버튼 또는 리뷰 작성 가능 D-day 배지를 HTML로 반환한다.
- * 문자열은 전부 더블쿼트로 작성해 내부에 홑따옴표(status='active' 류)가 섞여도
- * PHP 문자열이 조기 종료되는 사고를 원천적으로 막는다.
  */
 function render_order_confirm_cell(array $o): string
 {
@@ -186,7 +184,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'wish_remove') {
     redirect('/mypage.php#wish');
 }
 
-// ---------- 구매확정 처리 (NEW) ----------
+// ---------- 구매확정 처리 (기존 그대로: 확정 후 상품 상세페이지로 이동해 모달 자동 오픈) ----------
 if (is_post() && ($_POST['form_type'] ?? '') === 'confirm_order') {
     if (!Csrf::verify($_POST['csrf_token'] ?? null)) {
         flash('error', '유효하지 않은 요청입니다.');
@@ -214,8 +212,21 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'confirm_order') {
     $pdo->prepare('UPDATE tt_orders SET confirmed_at = NOW() WHERE id = :id AND user_id = :uid')
         ->execute(['id' => $orderId, 'uid' => $uid]);
 
-    flash('success', '구매확정이 완료되었습니다. 오늘부터 7일간 리뷰를 작성할 수 있습니다.');
-    redirect('/mypage.php#orders');
+    $itemStmt = $pdo->prepare('SELECT product_id FROM tt_order_items WHERE order_id = :oid');
+    $itemStmt->execute(['oid' => $orderId]);
+    $productIds = $itemStmt->fetchAll(PDO::FETCH_COLUMN);
+
+    if (empty($productIds)) {
+        flash('success', '구매확정이 완료되었습니다. 오늘부터 7일간 리뷰를 작성할 수 있습니다.');
+        redirect('/mypage.php#orders');
+    }
+
+    $firstProductId = (int)$productIds[0];
+    if (count($productIds) > 1) {
+        flash('success', '구매확정이 완료되었습니다. 나머지 상품은 마이페이지의 "구매 후기 작성"에서 리뷰를 작성해 주세요.');
+    }
+
+    redirect('/product-detail.php?id=' . $firstProductId . '&write_review=1#review');
 }
 
 // ---------- 데이터 조회 ----------
@@ -244,8 +255,7 @@ $orderStmt = $pdo->prepare("SELECT * FROM tt_orders WHERE user_id = :uid ORDER B
 $orderStmt->execute(['uid' => $uid]);
 $orders = $orderStmt->fetchAll();
 
-/* [FIX-5][재발 방지] 더블쿼트로 SQL을 감싸서 내부 홑따옴표(status='active')로 인한
-   문자열 조기 종료(파싱 에러)가 다시는 발생하지 않도록 고쳤다. */
+/* [FIX-5] 더블쿼트로 SQL을 감싸서 내부 홑따옴표(status='active')로 인한 파싱 에러 재발을 방지 */
 $wishStmt = $pdo->prepare("
     SELECT w.id AS wish_id, p.id AS product_id, p.name, p.model, p.thumbnail_url,
            p.price_sale, p.price_original, p.rating_avg, p.review_count,
@@ -258,6 +268,49 @@ $wishStmt = $pdo->prepare("
 ");
 $wishStmt->execute(['uid' => $uid]);
 $wishlist = $wishStmt->fetchAll();
+
+/* ===== [NEW] 마이페이지 안에서 바로 리뷰를 쓸 수 있는 대상: 구매확정 후 7일 이내 & 미작성 상품 ===== */
+$reviewableStmt = $pdo->prepare("
+    SELECT oi.product_id, MAX(o.confirmed_at) AS confirmed_at,
+           p.name AS product_name, p.thumbnail_url
+    FROM tt_order_items oi
+    JOIN tt_orders o ON o.id = oi.order_id
+    JOIN tt_products p ON p.id = oi.product_id
+    WHERE o.user_id = :uid
+      AND o.confirmed_at IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM tt_reviews r
+          WHERE r.product_id = oi.product_id AND r.user_id = o.user_id
+      )
+    GROUP BY oi.product_id, p.name, p.thumbnail_url
+    ORDER BY confirmed_at DESC
+");
+$reviewableStmt->execute(['uid' => $uid]);
+$reviewableRows = $reviewableStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$reviewableProducts = [];
+foreach ($reviewableRows as $row) {
+    $confirmedAt = new DateTime($row['confirmed_at']);
+    $deadline = (clone $confirmedAt)->modify('+' . REVIEW_WRITE_WINDOW_DAYS . ' days');
+    $now = new DateTime();
+    if ($now <= $deadline) {
+        $diff = $now->diff($deadline);
+        $row['days_left'] = max(1, (int)$diff->days + (($diff->h > 0 || $diff->i > 0) ? 1 : 0));
+        $reviewableProducts[] = $row;
+    }
+}
+
+/* ===== [NEW] 내가 작성한 리뷰 목록 (삭제 버튼 노출용) ===== */
+$myReviewsStmt = $pdo->prepare("
+    SELECT r.id, r.product_id, r.rating, r.content, r.created_at,
+           p.name AS product_name, p.thumbnail_url
+    FROM tt_reviews r
+    JOIN tt_products p ON p.id = r.product_id
+    WHERE r.user_id = :uid
+    ORDER BY r.created_at DESC
+");
+$myReviewsStmt->execute(['uid' => $uid]);
+$myReviews = $myReviewsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $statusLabel = [
     'pending'   => '주문접수',
@@ -300,6 +353,93 @@ require __DIR__ . '/includes/header.php';
 }
 .badge-confirmed.expired { background: #f1f5f9; color: #94a3b8; }
 .badge-muted { color: #cbd5e1; font-size: 12px; }
+
+/* ===== [NEW] 구매 후기 작성 카드 ===== */
+.review-write-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.review-write-card {
+  border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px;
+  display: flex; flex-direction: column; gap: 10px; background: #fff;
+}
+.rw-thumb { width: 100%; height: 120px; border-radius: 10px; overflow: hidden; background: #f1f5f9; display: flex; align-items: center; justify-content: center; }
+.rw-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.rw-thumb .ph { font-size: 32px; }
+.rw-name { font-weight: 700; font-size: 14px; }
+.rw-ddays { font-size: 12px; color: #64748b; }
+.btn-review-write {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff; border: none; padding: 10px 16px; border-radius: 999px;
+  font-weight: 700; font-size: 13px; cursor: pointer;
+  box-shadow: 0 6px 16px rgba(99, 102, 241, .3);
+  transition: transform .12s ease;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn-review-write:hover { transform: translateY(-1px); }
+
+/* ===== [NEW] 내가 쓴 리뷰 ===== */
+.my-review-list { display: flex; flex-direction: column; gap: 14px; }
+.my-review-item {
+  display: grid; grid-template-columns: 72px 1fr auto; gap: 14px; align-items: start;
+  border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; background: #fff;
+}
+.mr-thumb { width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: #f1f5f9; display: flex; align-items: center; justify-content: center; }
+.mr-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.mr-name { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
+.mr-stars { color: #fbbf24; font-size: 13px; margin-bottom: 6px; }
+.mr-content { font-size: 13px; color: #334155; line-height: 1.5; margin: 0 0 6px; }
+.mr-date { font-size: 12px; color: #94a3b8; }
+.btn-review-delete {
+  background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;
+  padding: 8px 14px; border-radius: 999px; font-weight: 600; font-size: 12px; cursor: pointer;
+  height: fit-content;
+}
+.btn-review-delete:hover { background: #fee2e2; }
+
+/* ===== [NEW] 리뷰 작성 모달 (마이페이지 전용, product-detail.php와 동일 스타일) ===== */
+.review-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, .55);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; visibility: hidden;
+  transition: opacity .2s ease;
+  z-index: 999;
+}
+.review-modal-overlay.active { opacity: 1; visibility: visible; }
+.review-modal-box {
+  background: #fff; border-radius: 20px; padding: 32px;
+  width: 92%; max-width: 440px; position: relative;
+  transform: translateY(16px) scale(.97);
+  transition: transform .2s ease;
+  box-shadow: 0 24px 60px rgba(0,0,0,.25);
+}
+.review-modal-overlay.active .review-modal-box { transform: translateY(0) scale(1); }
+.review-modal-close {
+  position: absolute; top: 16px; right: 16px;
+  background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer;
+}
+.review-modal-title { font-size: 19px; font-weight: 800; margin-bottom: 4px; }
+.review-modal-sub { font-size: 13px; color: #64748b; margin-bottom: 18px; }
+.star-rating { display: flex; flex-direction: row-reverse; gap: 4px; margin-bottom: 16px; }
+.star-rating input { display: none; }
+.star-rating label { font-size: 30px; color: #e2e8f0; cursor: pointer; transition: color .12s, transform .12s; }
+.star-rating input:checked ~ label,
+.star-rating label:hover,
+.star-rating label:hover ~ label { color: #fbbf24; }
+.review-modal-box textarea {
+  width: 100%; border: 1px solid #e2e8f0; border-radius: 12px;
+  padding: 12px 14px; font-size: 14px; resize: vertical; margin-bottom: 18px; box-sizing: border-box;
+}
+.review-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.btn-modal-cancel {
+  background: #f1f5f9; color: #475569; border: none;
+  padding: 10px 20px; border-radius: 999px; font-weight: 600; cursor: pointer;
+}
+.btn-modal-submit {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff; border: none; padding: 10px 24px; border-radius: 999px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 6px 16px rgba(99, 102, 241, .35);
+  transition: transform .12s ease;
+}
+.btn-modal-submit:hover { transform: translateY(-1px); }
 </style>
 
 <div class="mypage-wrap">
@@ -311,6 +451,8 @@ require __DIR__ . '/includes/header.php';
     </div>
     <nav class="mypage-tabs">
       <a href="#orders">주문내역</a>
+      <a href="#write-review">구매 후기 작성</a>
+      <a href="#myreviews">내가 쓴 리뷰</a>
       <a href="#wish">찜한 상품</a>
       <a href="#profile">회원정보 수정</a>
       <a href="#password">비밀번호 변경</a>
@@ -371,6 +513,72 @@ require __DIR__ . '/includes/header.php';
 
       <?php else: ?>
         <p class="empty-msg">주문 내역이 없습니다.</p>
+      <?php endif; ?>
+    </section>
+
+    <!-- [NEW] 구매 후기 작성 -->
+    <section class="mypage-section" id="write-review">
+      <h2>구매 후기 작성</h2>
+      <?php if ($reviewableProducts): ?>
+        <div class="review-write-grid">
+          <?php foreach ($reviewableProducts as $rp): ?>
+            <div class="review-write-card">
+              <div class="rw-thumb">
+                <?php if (!empty($rp['thumbnail_url'])): ?>
+                  <img src="<?= h($rp['thumbnail_url']) ?>" alt="<?= h($rp['product_name']) ?>">
+                <?php else: ?>
+                  <span class="ph">🛞</span>
+                <?php endif; ?>
+              </div>
+              <div class="rw-body">
+                <div class="rw-name"><?= h($rp['product_name']) ?></div>
+                <div class="rw-ddays">리뷰 작성 가능: D-<?= (int)$rp['days_left'] ?></div>
+              </div>
+              <button type="button" class="btn-review-write mp-open-review-modal"
+                      data-product-id="<?= (int)$rp['product_id'] ?>"
+                      data-product-name="<?= h($rp['product_name']) ?>">
+                <span>✎</span> 리뷰 작성
+              </button>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php else: ?>
+        <p class="empty-msg">현재 작성 가능한 리뷰가 없습니다. 배송중/배송완료 주문을 구매확정하면 7일간 리뷰를 작성할 수 있습니다.</p>
+      <?php endif; ?>
+    </section>
+
+    <!-- [NEW] 내가 쓴 리뷰 -->
+    <section class="mypage-section" id="myreviews">
+      <h2>내가 쓴 리뷰</h2>
+      <?php if ($myReviews): ?>
+        <div class="my-review-list">
+          <?php foreach ($myReviews as $mr): ?>
+            <div class="my-review-item">
+              <div class="mr-thumb">
+                <?php if (!empty($mr['thumbnail_url'])): ?>
+                  <img src="<?= h($mr['thumbnail_url']) ?>" alt="<?= h($mr['product_name']) ?>">
+                <?php else: ?>
+                  <span class="ph">🛞</span>
+                <?php endif; ?>
+              </div>
+              <div>
+                <div class="mr-name"><?= h($mr['product_name']) ?></div>
+                <div class="mr-stars"><?= str_repeat('★', (int)$mr['rating']) . str_repeat('☆', 5 - (int)$mr['rating']) ?></div>
+                <p class="mr-content"><?= nl2br(h($mr['content'])) ?></p>
+                <div class="mr-date"><?= h(date('Y.m.d', strtotime($mr['created_at']))) ?></div>
+              </div>
+              <form method="post" action="<?= BASE_URL ?>/review-delete.php#myreviews"
+                    onsubmit="return confirm('이 리뷰를 삭제하시겠습니까? 삭제 후에는 되돌릴 수 없습니다.');">
+                <input type="hidden" name="review_id" value="<?= (int)$mr['id'] ?>">
+                <input type="hidden" name="return_to" value="mypage">
+                <?= Csrf::field() ?>
+                <button type="submit" class="btn-review-delete">삭제</button>
+              </form>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php else: ?>
+        <p class="empty-msg">작성한 리뷰가 없습니다.</p>
       <?php endif; ?>
     </section>
 
@@ -479,5 +687,68 @@ require __DIR__ . '/includes/header.php';
 
   </div>
 </div>
+
+<!-- [NEW] 마이페이지 전용 리뷰 작성 모달: 여러 상품 공용, JS로 product_id/제목만 교체 -->
+<div class="review-modal-overlay" id="mpReviewModalOverlay">
+  <div class="review-modal-box">
+    <button type="button" class="review-modal-close" id="mpReviewModalClose" aria-label="닫기">&times;</button>
+    <h3 class="review-modal-title" id="mpReviewModalTitle">리뷰 작성하기</h3>
+    <p class="review-modal-sub">솔직한 사용 후기를 남겨주시면 다른 고객에게 큰 도움이 됩니다.</p>
+    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="mp-review-form">
+        <?= Csrf::field() ?>
+        <input type="hidden" name="return_to" value="mypage">
+        <input type="hidden" name="product_id" id="mpReviewProductId" value="">
+        <div class="star-rating">
+            <?php for ($i = 5; $i >= 1; $i--): ?>
+                <input type="radio" id="mpStar<?= $i ?>" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>>
+                <label for="mpStar<?= $i ?>">★</label>
+            <?php endfor; ?>
+        </div>
+        <textarea name="content" rows="4" maxlength="1000" placeholder="사용해 보신 솔직한 후기를 남겨주세요." required></textarea>
+        <div class="review-modal-actions">
+            <button type="button" class="btn-modal-cancel" id="mpReviewModalCancel">취소</button>
+            <button type="submit" class="btn-modal-submit">등록하기</button>
+        </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+  const overlay        = document.getElementById('mpReviewModalOverlay');
+  const closeBtn        = document.getElementById('mpReviewModalClose');
+  const cancelBtn        = document.getElementById('mpReviewModalCancel');
+  const titleEl          = document.getElementById('mpReviewModalTitle');
+  const productIdInput  = document.getElementById('mpReviewProductId');
+
+  if (!overlay) return;
+
+  function openModal(productId, productName) {
+    productIdInput.value = productId;
+    titleEl.textContent = productName ? (productName + ' 리뷰 작성하기') : '리뷰 작성하기';
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeModal() {
+    overlay.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  document.querySelectorAll('.mp-open-review-modal').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      openModal(btn.dataset.productId, btn.dataset.productName);
+    });
+  });
+
+  closeBtn?.addEventListener('click', closeModal);
+  cancelBtn?.addEventListener('click', closeModal);
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) closeModal();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && overlay.classList.contains('active')) closeModal();
+  });
+})();
+</script>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>

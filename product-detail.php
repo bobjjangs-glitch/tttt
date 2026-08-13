@@ -58,6 +58,16 @@ if (Auth::isLoggedIn()) {
 
 $csrfToken = Csrf::token();
 
+/* ===== [수정 1] 마이페이지에서 구매확정 후 리다이렉트로 들어왔는지 여부 ===== */
+$autoOpenReview = (($_GET['write_review'] ?? '') === '1');
+
+/* ===== [수정 2] 삭제 처리 후 세션 플래시 메시지 표시 ===== */
+$flashMsg = null;
+if (!empty($_SESSION['flash'])) {
+    $flashMsg = $_SESSION['flash'];
+    unset($_SESSION['flash']);
+}
+
 $discountPct = 0;
 if ((int)$product['price_original'] > 0) {
     $discountPct = (int)round((1 - ((int)$product['price_sale'] / (int)$product['price_original'])) * 100);
@@ -156,6 +166,41 @@ require __DIR__ . '/includes/header.php';
   transition: transform .12s ease;
 }
 .btn-modal-submit:hover { transform: translateY(-1px); }
+
+/* ===== [수정 3] 리뷰 아이템 레이아웃 + 삭제 버튼 ===== */
+.pd-review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.pd-review-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pd-review-meta { display: flex; align-items: center; gap: 8px; }
+.btn-review-delete {
+  background: none;
+  border: 1px solid #e2e8f0;
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.btn-review-delete:hover { color: #ef4444; border-color: #fca5a5; }
+.pd-flash-msg {
+  padding: 12px 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+.pd-flash-msg.success { background: #ecfdf5; color: #047857; }
+.pd-flash-msg.error { background: #fef2f2; color: #b91c1c; }
 </style>
 
 <main class="tt-main">
@@ -276,9 +321,15 @@ require __DIR__ . '/includes/header.php';
   </div>
 
 <div class="pd-tab-panel" data-panel="review" id="review">
+    <?php if ($flashMsg): ?>
+        <div class="pd-flash-msg <?= h($flashMsg['type'] ?? 'success') ?>">
+            <?= h($flashMsg['message'] ?? '') ?>
+        </div>
+    <?php endif; ?>
+
     <?php
     $rvStmt = $pdo->prepare("
-        SELECT r.id, r.rating, r.content, r.created_at, u.name AS user_name
+        SELECT r.id, r.user_id, r.rating, r.content, r.created_at, u.name AS user_name
         FROM tt_reviews r
         JOIN tt_users u ON u.id = r.user_id
         WHERE r.product_id = :pid
@@ -287,6 +338,7 @@ require __DIR__ . '/includes/header.php';
     ");
     $rvStmt->execute(['pid' => $productId]);
     $productReviews = $rvStmt->fetchAll(PDO::FETCH_ASSOC);
+    $currentUid = Auth::isLoggedIn() ? (int)Auth::currentUserId() : 0;
 
     /* 구매확정(confirmed_at) 후 7일 이내인지로 리뷰 작성 가능 여부를 판정한다. */
     $canWriteReview = false;
@@ -345,10 +397,23 @@ require __DIR__ . '/includes/header.php';
         <div class="pd-review-list">
             <?php foreach ($productReviews as $rv): ?>
                 <div class="pd-review-item">
-                    <div class="pd-review-meta">
-                        <span class="pd-review-stars"><?= str_repeat('★', (int)$rv['rating']) . str_repeat('☆', 5 - (int)$rv['rating']) ?></span>
-                        <span class="pd-review-user"><?= h(mb_substr($rv['user_name'], 0, 1) . str_repeat('*', max(0, mb_strlen($rv['user_name']) - 1))) ?></span>
-                        <span class="pd-review-date"><?= h(date('Y.m.d', strtotime($rv['created_at']))) ?></span>
+                    <div class="pd-review-item-top">
+                        <div class="pd-review-meta">
+                            <span class="pd-review-stars"><?= str_repeat('★', (int)$rv['rating']) . str_repeat('☆', 5 - (int)$rv['rating']) ?></span>
+                            <span class="pd-review-user"><?= h(mb_substr($rv['user_name'], 0, 1) . str_repeat('*', max(0, mb_strlen($rv['user_name']) - 1))) ?></span>
+                            <span class="pd-review-date"><?= h(date('Y.m.d', strtotime($rv['created_at']))) ?></span>
+                        </div>
+
+                        <?php if ($currentUid && $currentUid === (int)$rv['user_id']): ?>
+                        <!-- [수정 4] 본인 리뷰에만 삭제 버튼 노출, return_to=product로 이 페이지로 되돌아옴 -->
+                        <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('리뷰를 삭제하시겠습니까? 삭제 후에는 복구할 수 없습니다.');" style="margin:0;">
+                            <?= Csrf::field() ?>
+                            <input type="hidden" name="review_id" value="<?= (int)$rv['id'] ?>">
+                            <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
+                            <input type="hidden" name="return_to" value="product">
+                            <button type="submit" class="btn-review-delete">삭제</button>
+                        </form>
+                        <?php endif; ?>
                     </div>
                     <p class="pd-review-content"><?= nl2br(h($rv['content'])) ?></p>
                 </div>
@@ -369,6 +434,8 @@ require __DIR__ . '/includes/header.php';
     <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form">
         <?= Csrf::field() ?>
         <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
+        <!-- [수정 5] 상품 상세페이지에서 제출한 것이므로 제출 후 이 페이지로 되돌아온다 -->
+        <input type="hidden" name="return_to" value="product">
         <div class="star-rating">
             <?php for ($i = 5; $i >= 1; $i--): ?>
                 <input type="radio" id="star<?= $i ?>" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>>
@@ -396,11 +463,12 @@ require __DIR__ . '/includes/header.php';
 <input type="hidden" id="csrfToken" value="<?= h($csrfToken) ?>">
 
 <script>
-const BASE_URL   = "<?= BASE_URL ?>";
-const csrfToken  = document.getElementById('csrfToken').value;
-const productId  = <?= (int)$productId ?>;
-const hasOptions = <?= !empty($options) ? 'true' : 'false' ?>;
-const isLoggedIn = <?= Auth::isLoggedIn() ? 'true' : 'false' ?>;
+const BASE_URL       = "<?= BASE_URL ?>";
+const csrfToken      = document.getElementById('csrfToken').value;
+const productId      = <?= (int)$productId ?>;
+const hasOptions     = <?= !empty($options) ? 'true' : 'false' ?>;
+const isLoggedIn     = <?= Auth::isLoggedIn() ? 'true' : 'false' ?>;
+const autoOpenReview = <?= $autoOpenReview ? 'true' : 'false' ?>; // [수정 6]
 
 const qtyInput     = document.getElementById('pdQtyInput');
 const totalEl      = document.getElementById('pdTotalPrice');
@@ -558,15 +626,16 @@ const reviewOverlay = document.getElementById('reviewModalOverlay');
 const reviewClose   = document.getElementById('reviewModalClose');
 const reviewCancel  = document.getElementById('reviewModalCancel');
 
+function openReviewModal() {
+  reviewOverlay.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+function closeReviewModal() {
+  reviewOverlay.classList.remove('active');
+  document.body.style.overflow = '';
+}
+
 if (reviewBtn && reviewOverlay) {
-  const openReviewModal = () => {
-    reviewOverlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
-  };
-  const closeReviewModal = () => {
-    reviewOverlay.classList.remove('active');
-    document.body.style.overflow = '';
-  };
   reviewBtn.addEventListener('click', openReviewModal);
   reviewClose?.addEventListener('click', closeReviewModal);
   reviewCancel?.addEventListener('click', closeReviewModal);
@@ -576,6 +645,25 @@ if (reviewBtn && reviewOverlay) {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && reviewOverlay.classList.contains('active')) closeReviewModal();
   });
+}
+
+/* ===== [수정 7] 마이페이지 구매확정 → 이 페이지로 리다이렉트 됐을 때 자동으로
+   리뷰 탭 전환 + #review로 스크롤 + 모달 오픈까지 한 번에 처리 ===== */
+if (autoOpenReview) {
+  const reviewTabBtn = document.querySelector('.pd-tab-btn[data-tab="review"]');
+  const reviewPanel  = document.querySelector('.pd-tab-panel[data-panel="review"]');
+
+  document.querySelectorAll('.pd-tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.pd-tab-panel').forEach(p => p.classList.remove('active'));
+  reviewTabBtn?.classList.add('active');
+  reviewPanel?.classList.add('active');
+
+  document.getElementById('review')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  if (reviewOverlay) {
+    // 스크롤 애니메이션과 겹치지 않도록 살짝 지연 후 오픈
+    setTimeout(openReviewModal, 350);
+  }
 }
 
 const restockBtn = document.getElementById('pdRestockBtn');
