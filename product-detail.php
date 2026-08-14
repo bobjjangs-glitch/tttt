@@ -49,6 +49,24 @@ try {
     $options = [];
 }
 
+/* [NEW] 대표 이미지(최대 3장) 조회 — 관리자에서 등록한 순서(sort_order)대로 갤러리 노출.
+   tt_product_main_images가 비어있으면 기존 thumbnail_url 1장으로 하위호환 처리한다. */
+$mainImages = [];
+try {
+    $miStmt = $pdo->prepare(
+        'SELECT image_url FROM tt_product_main_images
+         WHERE product_id = :pid ORDER BY sort_order ASC, id ASC'
+    );
+    $miStmt->execute(['pid' => $productId]);
+    $mainImages = $miStmt->fetchAll(PDO::FETCH_COLUMN);
+} catch (Throwable $e) {
+    error_log('[product-detail main images] ' . $e->getMessage());
+    $mainImages = [];
+}
+if (empty($mainImages) && !empty($product['thumbnail_url'])) {
+    $mainImages = [$product['thumbnail_url']];
+}
+
 /* [NEW] 상세페이지에 이어 붙일 이미지 목록을 순서대로 조회 */
 $detailImages = [];
 try {
@@ -219,6 +237,15 @@ require __DIR__ . '/includes/header.php';
 /* ===== [NEW] 상세페이지 이미지: 세로로 여백 없이 이어 붙는 전형적인 쇼핑몰 상세페이지 레이아웃 ===== */
 .pd-detail-images { margin-top: 24px; display: flex; flex-direction: column; }
 .pd-detail-images img { display: block; width: 100%; height: auto; }
+
+/* ===== [NEW] 대표 이미지 갤러리 썸네일 스트립 ===== */
+.pd-thumb-strip { display: flex; gap: 8px; margin-top: 10px; }
+.pd-thumb-strip img {
+  width: 64px; height: 64px; object-fit: cover; border-radius: 10px;
+  cursor: pointer; border: 2px solid transparent; transition: border-color .12s;
+}
+.pd-thumb-strip img.active,
+.pd-thumb-strip img:hover { border-color: #6366f1; }
 </style>
 
 <main class="tt-main">
@@ -229,13 +256,20 @@ require __DIR__ . '/includes/header.php';
 
   <div class="pd-top">
     <div class="pd-gallery">
-      <div class="pd-main-img">
-        <?php if (!empty($product['thumbnail_url'])): ?>
-          <img src="<?= h($product['thumbnail_url']) ?>" alt="<?= h($product['name']) ?>">
+      <div class="pd-main-img" id="pdMainImgBox">
+        <?php if (!empty($mainImages)): ?>
+          <img id="pdMainImgTag" src="<?= h($mainImages[0]) ?>" alt="<?= h($product['name']) ?>">
         <?php else: ?>
           <span class="ph">🛞</span>
         <?php endif; ?>
       </div>
+      <?php if (count($mainImages) > 1): ?>
+      <div class="pd-thumb-strip" id="pdThumbStrip">
+        <?php foreach ($mainImages as $i => $imgUrl): ?>
+          <img src="<?= h($imgUrl) ?>" class="<?= $i === 0 ? 'active' : '' ?>" data-src="<?= h($imgUrl) ?>" alt="썸네일 <?= $i + 1 ?>">
+        <?php endforeach; ?>
+      </div>
+      <?php endif; ?>
     </div>
 
     <div class="pd-info">
@@ -504,6 +538,19 @@ const stockWarn    = document.getElementById('pdStockWarn');
 const buyBtn       = document.getElementById('pdBuyNowBtn');
 const cartBtn      = document.getElementById('pdAddCartBtn');
 const wishBtn      = document.getElementById('pdWishBtn');
+
+/* ===== [NEW] 대표 이미지 갤러리: 썸네일 클릭 시 큰 이미지 교체 ===== */
+const pdThumbStrip = document.getElementById('pdThumbStrip');
+const pdMainImgTag = document.getElementById('pdMainImgTag');
+if (pdThumbStrip && pdMainImgTag) {
+  pdThumbStrip.addEventListener('click', (e) => {
+    const img = e.target.closest('img');
+    if (!img) return;
+    pdMainImgTag.src = img.dataset.src;
+    pdThumbStrip.querySelectorAll('img').forEach(t => t.classList.remove('active'));
+    img.classList.add('active');
+  });
+}
 
 function currentUnitPrice() {
   if (optionSelect && optionSelect.value !== '') {
