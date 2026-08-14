@@ -35,14 +35,39 @@ function ensure_product_detail_images_table(PDO $pdo): void {
             REFERENCES tt_products(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
+/* ---------- [신규] 타이어 스펙 컬럼 자동 추가 ---------- */
+function ensure_product_spec_columns(PDO $pdo): void
+{
+    $newColumns = [
+        'pattern_code'      => "VARCHAR(60) NULL COMMENT '패턴코드'",
+        'load_speed_rating' => "VARCHAR(30) NULL COMMENT '하중&속도규격'",
+        'width_mm'          => "INT NULL COMMENT '단면폭(mm)'",
+        'aspect_ratio'      => "INT NULL COMMENT '편평비(%)'",
+        'rim_diameter'      => "VARCHAR(10) NULL COMMENT '림직경(인치)'",
+        'pattern_name'      => "VARCHAR(100) NULL COMMENT '패턴명'",
+        'oem'               => "VARCHAR(100) NULL COMMENT 'OEM 인증'",
+        'tech'              => "VARCHAR(150) NULL COMMENT 'Tech.'",
+        'runflat'           => "VARCHAR(5) NULL COMMENT 'Runflat Y/N'",
+    ];
+    $existing = [];
+    foreach ($pdo->query("SHOW COLUMNS FROM tt_products")->fetchAll() as $row) {
+        $existing[$row['Field']] = true;
+    }
+    foreach ($newColumns as $col => $def) {
+        if (!isset($existing[$col])) {
+            $pdo->exec("ALTER TABLE tt_products ADD COLUMN {$col} {$def}");
+        }
+    }
+}
 ensure_product_main_images_table($pdo);
 ensure_product_detail_images_table($pdo);
+ensure_product_spec_columns($pdo);
 
-/* ---------- 공통 다중 이미지 업로드 검증/저장 ---------- */
+/* ---------- 공통 다중 이미지 업로드 처리/검증 ---------- */
 function admin_handle_multi_images_upload(array $files, int $maxSizeMb, string $subDir = 'products'): array {
     $result = ['ok' => true, 'files' => [], 'errors' => []];
     if (empty($files) || !isset($files['name']) || !is_array($files['name'])) {
-        return $result; // 새로 선택한 파일 없음
+        return $result; // 첨부 안했으면 통과
     }
     $allowed   = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
     $uploadDir = __DIR__ . '/../uploads/' . $subDir;
@@ -55,7 +80,7 @@ function admin_handle_multi_images_upload(array $files, int $maxSizeMb, string $
 
         if ($err !== UPLOAD_ERR_OK) {
             $result['ok'] = false;
-            $result['errors'][] = ($files['name'][$i] ?? '파일') . ': 업로드 오류(code=' . $err . ')';
+            $result['errors'][] = ($files['name'][$i] ?? '파일') . ': 업로드 중 오류(code=' . $err . ')';
             continue;
         }
         if (@getimagesize($files['tmp_name'][$i]) === false) {
@@ -66,12 +91,12 @@ function admin_handle_multi_images_upload(array $files, int $maxSizeMb, string $
         $ext = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
         if (!in_array($ext, $allowed, true)) {
             $result['ok'] = false;
-            $result['errors'][] = $files['name'][$i] . ': 지원하지 않는 형식입니다. (jpg, png, webp, gif만 가능)';
+            $result['errors'][] = $files['name'][$i] . ': 지원하지 않는 이미지 형식입니다. (jpg, png, webp, gif만 가능)';
             continue;
         }
         if ($files['size'][$i] > $maxSizeMb * 1024 * 1024) {
             $result['ok'] = false;
-            $result['errors'][] = $files['name'][$i] . ': 이미지 크기는 ' . $maxSizeMb . 'MB 이하만 가능합니다.';
+            $result['errors'][] = $files['name'][$i] . ': 이미지 용량이 ' . $maxSizeMb . 'MB 이하여야 합니다.';
             continue;
         }
         $filename = 'p_' . date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
@@ -86,7 +111,7 @@ function admin_handle_multi_images_upload(array $files, int $maxSizeMb, string $
     return $result;
 }
 
-/* ---------- 상태 초기화 ---------- */
+/* ---------- 상품 폼 데이터 로딩 ---------- */
 $productId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $isEdit    = $productId > 0;
 $errors      = [];
@@ -95,7 +120,10 @@ $fieldErrors = [];
 $product = [
     'category_id'=>'', 'brand_id'=>'', 'name'=>'', 'model'=>'', 'spec'=>'', 'origin'=>'',
     'dot_code'=>'', 'price_original'=>0, 'price_sale'=>0, 'supply_price'=>0,
-    'stock'=>0, 'status'=>'active', 'description'=>'', 'thumbnail_url'=>''
+    'stock'=>0, 'status'=>'active', 'description'=>'', 'thumbnail_url'=>'',
+    /* [신규] 타이어 스펙 기본값 */
+    'pattern_code'=>'', 'load_speed_rating'=>'', 'width_mm'=>'', 'aspect_ratio'=>'',
+    'rim_diameter'=>'', 'pattern_name'=>'', 'oem'=>'', 'tech'=>'', 'runflat'=>'N',
 ];
 $options      = [];
 $mainImages   = []; // [['id'=>, 'image_url'=>, 'sort_order'=>], ...]
@@ -155,13 +183,24 @@ if (is_post()) {
     $status        = ($_POST['status'] ?? 'active') === 'hidden' ? 'hidden' : 'active';
     $description   = trim($_POST['description'] ?? '');
 
+    /* [신규] 타이어 스펙 입력값 파싱 */
+    $patternCode     = trim($_POST['pattern_code'] ?? '');
+    $loadSpeedRating = trim($_POST['load_speed_rating'] ?? '');
+    $widthMm         = trim($_POST['width_mm'] ?? '') === '' ? null : (int)$_POST['width_mm'];
+    $aspectRatio     = trim($_POST['aspect_ratio'] ?? '') === '' ? null : (int)$_POST['aspect_ratio'];
+    $rimDiameter     = trim($_POST['rim_diameter'] ?? '');
+    $patternName     = trim($_POST['pattern_name'] ?? '');
+    $oem             = trim($_POST['oem'] ?? '');
+    $tech            = trim($_POST['tech'] ?? '');
+    $runflat         = ($_POST['runflat'] ?? 'N') === 'Y' ? 'Y' : 'N';
+
     if ($categoryId<=0) { $errors[]='카테고리를 선택해 주세요.'; $fieldErrors['category_id']=true; }
     if ($brandId<=0)    { $errors[]='브랜드를 선택해 주세요.';   $fieldErrors['brand_id']=true; }
     if ($name==='')     { $errors[]='상품명을 입력해 주세요.';   $fieldErrors['name']=true; }
     if ($priceOriginal<=0){ $errors[]='정상가(공장도가)를 입력해 주세요.'; $fieldErrors['price_original']=true; }
     if ($priceOriginal<0) $errors[]='정상가는 0 이상이어야 합니다.';
-    if ($priceSale<0)     $errors[]='판매가는 0 이상이어야 합니다.';
-    if ($priceSale>0 && $priceOriginal>0 && $priceSale>$priceOriginal) $errors[]='판매가는 정상가보다 클 수 없습니다.';
+    if ($priceSale<0)     $errors[]='대표판매가는 0 이상이어야 합니다.';
+    if ($priceSale>0 && $priceOriginal>0 && $priceSale>$priceOriginal) $errors[]='대표판매가는 정상가보다 클 수 없습니다.';
     if ($supplyPrice<0) $errors[]='공급가는 0 이상이어야 합니다.';
     if ($stock<0) $errors[]='재고는 0 이상이어야 합니다.';
 
@@ -200,7 +239,7 @@ if (is_post()) {
         if ($opt['stock_qty']<0)     { $errors[]='DOT '.$opt['dot_code'].': 재고는 0 이상이어야 합니다.'; }
     }
 
-    /* ---- 대표이미지: 삭제 체크 / 순서 / 신규 업로드 ---- */
+    /* ---- 대표이미지: 삭제 처리 / 순서 / 신규 업로드 ---- */
     $mainImgDelete = $_POST['main_img_delete'] ?? [];
     $mainImgOrder  = $_POST['main_img_order']  ?? [];
 
@@ -223,13 +262,13 @@ if (is_post()) {
 
     $totalMainImgCount = count($keptMainImages) + count($newMainImgResult['files']);
     if ($totalMainImgCount > MAIN_IMG_MAX_COUNT) {
-        $errors[] = '대표 이미지는 최대 '.MAIN_IMG_MAX_COUNT.'장까지만 등록할 수 있습니다. (현재 '.$totalMainImgCount.'장)';
+        $errors[] = '대표 이미지는 최대 '.MAIN_IMG_MAX_COUNT.'장까지 등록할 수 있습니다. (현재 '.$totalMainImgCount.'장)';
     }
     if ($totalMainImgCount === 0) {
         $errors[] = '대표 이미지를 최소 1장 이상 등록해 주세요.';
     }
 
-    /* ---- 상세페이지 이미지: 삭제 체크 / 순서 / 신규 업로드 ---- */
+    /* ---- 상세페이지 이미지: 삭제 처리 / 순서 / 신규 업로드 ---- */
     $detailImgDelete = $_POST['detail_img_delete'] ?? [];
     $detailImgOrder  = $_POST['detail_img_order']  ?? [];
 
@@ -252,7 +291,7 @@ if (is_post()) {
 
     $totalDetailImgCount = count($keptDetailImages) + count($newDetailImgResult['files']);
     if ($totalDetailImgCount > DETAIL_IMG_MAX_COUNT) {
-        $errors[] = '상세페이지 이미지는 최대 '.DETAIL_IMG_MAX_COUNT.'장까지만 등록할 수 있습니다. (현재 '.$totalDetailImgCount.'장)';
+        $errors[] = '상세페이지 이미지는 최대 '.DETAIL_IMG_MAX_COUNT.'장까지 등록할 수 있습니다. (현재 '.$totalDetailImgCount.'장)';
     }
 
     if (empty($errors)) {
@@ -265,7 +304,15 @@ if (is_post()) {
                 'origin'=>$origin!==''?$origin:null,'dot_code'=>$dotCode!==''?$dotCode:null,
                 'price_original'=>$priceOriginal,
                 'price_sale'=>$priceSale,'supply_price'=>$supplyPrice,'stock'=>$stock,
-                'status'=>$status,'description'=>$description!==''?$description:null
+                'status'=>$status,'description'=>$description!==''?$description:null,
+                /* [신규] 타이어 스펙 params */
+                'pattern_code'=>$patternCode!==''?$patternCode:null,
+                'load_speed_rating'=>$loadSpeedRating!==''?$loadSpeedRating:null,
+                'width_mm'=>$widthMm, 'aspect_ratio'=>$aspectRatio,
+                'rim_diameter'=>$rimDiameter!==''?$rimDiameter:null,
+                'pattern_name'=>$patternName!==''?$patternName:null,
+                'oem'=>$oem!==''?$oem:null, 'tech'=>$tech!==''?$tech:null,
+                'runflat'=>$runflat,
             ];
 
             if ($isEdit) {
@@ -273,12 +320,20 @@ if (is_post()) {
                 $pdo->prepare('UPDATE tt_products SET category_id=:category_id, brand_id=:brand_id, name=:name,
                     model=:model, spec=:spec, origin=:origin, dot_code=:dot_code,
                     price_original=:price_original, price_sale=:price_sale, supply_price=:supply_price,
-                    stock=:stock, status=:status, description=:description WHERE id=:id')->execute($params);
+                    stock=:stock, status=:status, description=:description,
+                    pattern_code=:pattern_code, load_speed_rating=:load_speed_rating,
+                    width_mm=:width_mm, aspect_ratio=:aspect_ratio, rim_diameter=:rim_diameter,
+                    pattern_name=:pattern_name, oem=:oem, tech=:tech, runflat=:runflat
+                    WHERE id=:id')->execute($params);
             } else {
                 $pdo->prepare('INSERT INTO tt_products (category_id,brand_id,name,model,spec,origin,dot_code,
-                    price_original,price_sale,supply_price,stock,status,description,created_at)
+                    price_original,price_sale,supply_price,stock,status,description,
+                    pattern_code, load_speed_rating, width_mm, aspect_ratio, rim_diameter,
+                    pattern_name, oem, tech, runflat, created_at)
                     VALUES (:category_id,:brand_id,:name,:model,:spec,:origin,:dot_code,
-                    :price_original,:price_sale,:supply_price,:stock,:status,:description,NOW())')->execute($params);
+                    :price_original,:price_sale,:supply_price,:stock,:status,:description,
+                    :pattern_code, :load_speed_rating, :width_mm, :aspect_ratio, :rim_diameter,
+                    :pattern_name, :oem, :tech, :runflat, NOW())')->execute($params);
                 $productId = (int)$pdo->lastInsertId();
             }
 
@@ -321,7 +376,7 @@ if (is_post()) {
                     ->execute(['id'=>$rid,'pid'=>$productId]);
             }
 
-            /* ---- 대표이미지 저장: 삭제 → 순서갱신 → 신규삽입 → 썸네일 동기화 ---- */
+            /* ---- 대표이미지 저장: 삭제 → 순서갱신 → 신규삽입 → 대표이미지 뽑아 썸네일 반영 ---- */
             if ($isEdit) {
                 foreach ($mainImages as $mi) {
                     $mid = (int)$mi['id'];
@@ -383,10 +438,14 @@ if (is_post()) {
         'category_id'=>$categoryId,'brand_id'=>$brandId,'name'=>$name,'model'=>$model,'spec'=>$spec,
         'origin'=>$origin,'dot_code'=>$dotCode,'price_original'=>$priceOriginal,'price_sale'=>$priceSale,
         'supply_price'=>$supplyPrice,'stock'=>$stock,'status'=>$status,'description'=>$description,
-        'thumbnail_url'=>$product['thumbnail_url'] ?? ''
+        'thumbnail_url'=>$product['thumbnail_url'] ?? '',
+        /* [신규] 실패 시 입력값 그대로 화면에 되돌리기 */
+        'pattern_code'=>$patternCode, 'load_speed_rating'=>$loadSpeedRating,
+        'width_mm'=>$widthMm, 'aspect_ratio'=>$aspectRatio, 'rim_diameter'=>$rimDiameter,
+        'pattern_name'=>$patternName, 'oem'=>$oem, 'tech'=>$tech, 'runflat'=>$runflat,
     ];
     $options = array_values(array_filter($parsedOptions, fn($o) => !$o['delete']));
-    // 검증 실패 시 이미지 목록은 최초 로드값 유지(신규 업로드 파일은 재선택 필요)
+    // 검증 실패 시 대표/상세 이미지는 되돌아온 목록 그대로 사용(신규 업로드 파일 재선택 요망)
 }
 
 $pageTitle = $isEdit ? '상품 수정' : '상품 등록';
@@ -431,7 +490,11 @@ require __DIR__ . '/includes/header.php';
 .pf-detail-desc{font-size:13px;color:#475569;white-space:pre-line;word-break:break-all;}
 .ph{font-size:26px;}
 
-/* ===== 상세페이지 이미지 모달 미리보기 ===== */
+/* ===== [신규] 스펙 필드 그리드 ===== */
+.admin-spec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 16px;}
+@media (max-width:760px){.admin-spec-grid{grid-template-columns:repeat(2,1fr);}}
+
+/* ===== 상세페이지 미리보기 모달 스타일 ===== */
 .admin-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;z-index:9999;opacity:0;visibility:hidden;transition:opacity .18s ease;}
 .admin-modal-overlay.active{opacity:1;visibility:visible;}
 .admin-modal-box{background:#fff;border-radius:16px;width:min(480px,92vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;transform:translateY(14px) scale(.97);transition:transform .18s ease;}
@@ -493,7 +556,7 @@ require __DIR__ . '/includes/header.php';
     </div>
     <div class="admin-form-row">
       <label>대표 DOT 코드(선택)</label>
-      <input type="text" name="dot_code" value="<?= h($product['dot_code']) ?>" placeholder="목록 카드에 안 쓰이면 비워도 됨">
+      <input type="text" name="dot_code" value="<?= h($product['dot_code']) ?>" placeholder="대표로 노출할 옵션 코드를 두면 됨">
     </div>
     <div class="admin-form-row">
       <label>상태</label>
@@ -501,6 +564,49 @@ require __DIR__ . '/includes/header.php';
         <option value="active" <?= $product['status']==='active'?'selected':'' ?>>노출</option>
         <option value="hidden" <?= $product['status']==='hidden'?'selected':'' ?>>숨김</option>
       </select>
+    </div>
+
+    <h3 class="admin-form-section-title">타이어 스펙</h3>
+    <div class="admin-spec-grid">
+      <div class="admin-form-row">
+        <label>패턴코드</label>
+        <input type="text" name="pattern_code" value="<?= h((string)$product['pattern_code']) ?>" placeholder="예: K127">
+      </div>
+      <div class="admin-form-row">
+        <label>하중&속도규격</label>
+        <input type="text" name="load_speed_rating" value="<?= h((string)$product['load_speed_rating']) ?>" placeholder="예: 94V">
+      </div>
+      <div class="admin-form-row">
+        <label>단면폭(mm)</label>
+        <input type="number" name="width_mm" value="<?= h((string)($product['width_mm'] ?? '')) ?>" placeholder="예: 235">
+      </div>
+      <div class="admin-form-row">
+        <label>편평비(%)</label>
+        <input type="number" name="aspect_ratio" value="<?= h((string)($product['aspect_ratio'] ?? '')) ?>" placeholder="예: 45">
+      </div>
+      <div class="admin-form-row">
+        <label>림직경(인치)</label>
+        <input type="text" name="rim_diameter" value="<?= h((string)$product['rim_diameter']) ?>" placeholder="예: 18">
+      </div>
+      <div class="admin-form-row">
+        <label>패턴명</label>
+        <input type="text" name="pattern_name" value="<?= h((string)$product['pattern_name']) ?>" placeholder="예: Ventus S1 evo3">
+      </div>
+      <div class="admin-form-row">
+        <label>OEM</label>
+        <input type="text" name="oem" value="<?= h((string)$product['oem']) ?>" placeholder="예: 벤츠 승인">
+      </div>
+      <div class="admin-form-row">
+        <label>Tech.</label>
+        <input type="text" name="tech" value="<?= h((string)$product['tech']) ?>" placeholder="예: Silent, EV등급">
+      </div>
+      <div class="admin-form-row">
+        <label>Runflat</label>
+        <select name="runflat">
+          <option value="N" <?= ($product['runflat'] ?? 'N')==='N'?'selected':'' ?>>N (일반)</option>
+          <option value="Y" <?= ($product['runflat'] ?? '')==='Y'?'selected':'' ?>>Y (런플랫)</option>
+        </select>
+      </div>
     </div>
 
     <h3 class="admin-form-section-title">가격 / 재고</h3>
@@ -568,7 +674,7 @@ require __DIR__ . '/includes/header.php';
       <input type="file" name="detail_images[]" id="detailImgFileInput" accept=".jpg,.jpeg,.png,.webp,.gif" multiple>
       <p class="admin-detail-img-count-info" id="detailImgCountInfo"></p>
       <div class="admin-detail-preview-btn-row">
-        <button type="button" class="btn-detail-preview" id="btnDetailPreview">🔍 상세페이지 미리보기</button>
+        <button type="button" class="btn-detail-preview" id="btnDetailPreview">🔍 상세페이지 이미지 미리보기</button>
       </div>
     </div>
 
@@ -592,7 +698,7 @@ require __DIR__ . '/includes/header.php';
             <input type="text" name="opt_dot_code[<?= $idx ?>]" value="<?= h($opt['dot_code'] ?? '') ?>" placeholder="예: 2026">
           </td>
           <td><input type="number" name="opt_price_sale[<?= $idx ?>]" value="<?= (int)($opt['price_sale'] ?? 0) ?>" min="0" step="10"></td>
-          <td><input type="text" name="opt_size[<?= $idx ?>]" value="<?= h($opt['size'] ?? '') ?>" placeholder="선택"></td>
+          <td><input type="text" name="opt_size[<?= $idx ?>]" value="<?= h($opt['size'] ?? '') ?>" placeholder="사이즈"></td>
           <td><input type="number" name="opt_stock_qty[<?= $idx ?>]" value="<?= (int)($opt['stock_qty'] ?? 0) ?>" min="0"></td>
           <td style="text-align:center">
             <input type="hidden" name="opt_is_active[<?= $idx ?>]" value="0">
@@ -605,7 +711,7 @@ require __DIR__ . '/includes/header.php';
         <tr>
           <td><input type="text" name="opt_dot_code[0]" placeholder="예: 2026"></td>
           <td><input type="number" name="opt_price_sale[0]" value="0" min="0" step="10"></td>
-          <td><input type="text" name="opt_size[0]" placeholder="선택"></td>
+          <td><input type="text" name="opt_size[0]" placeholder="사이즈"></td>
           <td><input type="number" name="opt_stock_qty[0]" value="0" min="0"></td>
           <td style="text-align:center">
             <input type="hidden" name="opt_is_active[0]" value="0">
@@ -617,7 +723,7 @@ require __DIR__ . '/includes/header.php';
       </tbody>
     </table>
     <input type="hidden" id="optIndexCounter" value="<?= $idx ?>">
-    <button type="button" id="btnAddOption" class="btn-admin-secondary">+ DOT 옵션 추가</button>
+    <button type="button" id="btnAddOption" class="btn-admin-secondary">+ DOT 옵션 줄 추가</button>
 
     <div class="admin-form-actions">
       <a href="<?= BASE_URL ?>/admin/products.php" class="btn-admin-secondary">취소</a>
@@ -656,11 +762,11 @@ require __DIR__ . '/includes/header.php';
   </div>
 </div>
 
-<!-- 상세페이지 이미지 미리보기 모달: 실제 product-detail.php의 .pd-detail-images 처럼 세로로 이어붙여 렌더 -->
+<!-- 상세페이지 이미지 미리보기 모달: 실제 product-detail.php의 .pd-detail-images 섹션 스타일과 유사한 카드 -->
 <div class="admin-modal-overlay" id="detailPreviewModalOverlay">
   <div class="admin-modal-box">
     <div class="admin-modal-header">
-      <h3>상세페이지 미리보기</h3>
+      <h3>상세페이지 이미지 미리보기</h3>
       <button type="button" class="admin-modal-close" id="detailPreviewModalClose" aria-label="닫기">&times;</button>
     </div>
     <div class="admin-modal-body" id="detailPreviewModalBody"></div>
@@ -700,7 +806,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   tr.innerHTML = `
     <td><input type="text" name="opt_dot_code[${optionIndex}]" placeholder="예: 2026"></td>
     <td><input type="number" name="opt_price_sale[${optionIndex}]" value="0" min="0" step="10"></td>
-    <td><input type="text" name="opt_size[${optionIndex}]" placeholder="선택"></td>
+    <td><input type="text" name="opt_size[${optionIndex}]" placeholder="사이즈"></td>
     <td><input type="number" name="opt_stock_qty[${optionIndex}]" value="0" min="0"></td>
     <td style="text-align:center">
       <input type="hidden" name="opt_is_active[${optionIndex}]" value="0">
@@ -770,7 +876,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
       detailThumbs.innerHTML = urls.map((u,i) => `<img src="${u}" data-i="${i}" class="${i===0?'active':''}">`).join('');
     }
     const total = keptExistingMainCount() + (mainImgFileInput.files ? mainImgFileInput.files.length : 0);
-    mainImgCountInfo.textContent = `현재 ${total} / ${MAX_MAIN_COUNT}장 등록됨`;
+    mainImgCountInfo.textContent = `총 ${total} / ${MAX_MAIN_COUNT}장 등록됨`;
   }
 
   function updatePreview(){
@@ -838,7 +944,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   mainImgFileInput.addEventListener('change', function(){
     const maxNew = Math.max(0, MAX_MAIN_COUNT - keptExistingMainCount());
     if (this.files.length > maxNew) {
-      alert(`대표 이미지는 최대 ${MAX_MAIN_COUNT}장까지 등록할 수 있습니다. 기존 이미지가 ${keptExistingMainCount()}장 있어 최대 ${maxNew}장만 추가로 선택할 수 있습니다.`);
+      alert(`대표 이미지는 최대 ${MAX_MAIN_COUNT}장까지만 등록할 수 있습니다. 기존 이미지가 ${keptExistingMainCount()}장 있어 최대 ${maxNew}장까지 추가로 첨부할 수 있습니다.`);
       const dt = new DataTransfer();
       Array.from(this.files).slice(0, maxNew).forEach(f => dt.items.add(f));
       this.files = dt.files;
@@ -856,7 +962,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   updatePreview();
 })();
 
-/* ================= 상세페이지 이미지 관리 + 모달 미리보기 ================= */
+/* ================= 상세페이지 이미지 관리 + 미리보기 모달 ================= */
 (function(){
   const detailImgList      = document.getElementById('detailImgList');
   const detailImgFileInput = document.getElementById('detailImgFileInput');
@@ -866,7 +972,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   const btnPreview   = document.getElementById('btnDetailPreview');
   const modalOverlay = document.getElementById('detailPreviewModalOverlay');
   const modalBody    = document.getElementById('detailPreviewModalBody');
-  const modalClose    = document.getElementById('detailPreviewModalClose');
+  const modalClose   = document.getElementById('detailPreviewModalClose');
 
   function keptExistingDetailCount(){
     return Array.from(detailImgList.querySelectorAll('.admin-detail-img-item'))
@@ -875,7 +981,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
 
   function updateDetailCountInfo(){
     const total = keptExistingDetailCount() + (detailImgFileInput.files ? detailImgFileInput.files.length : 0);
-    detailImgCountInfo.textContent = `현재 ${total} / ${MAX_DETAIL_COUNT}장 등록됨`;
+    detailImgCountInfo.textContent = `총 ${total} / ${MAX_DETAIL_COUNT}장 등록됨`;
   }
 
   detailImgList.addEventListener('change', (e) => {
@@ -903,7 +1009,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   detailImgFileInput.addEventListener('change', function(){
     const maxNew = Math.max(0, MAX_DETAIL_COUNT - keptExistingDetailCount());
     if (this.files.length > maxNew) {
-      alert(`상세페이지 이미지는 최대 ${MAX_DETAIL_COUNT}장까지 등록할 수 있습니다. 기존 이미지가 ${keptExistingDetailCount()}장 있어 최대 ${maxNew}장만 추가로 선택할 수 있습니다.`);
+      alert(`상세페이지 이미지는 최대 ${MAX_DETAIL_COUNT}장까지만 등록할 수 있습니다. 기존 이미지가 ${keptExistingDetailCount()}장 있어 최대 ${maxNew}장까지 추가로 첨부할 수 있습니다.`);
       const dt = new DataTransfer();
       Array.from(this.files).slice(0, maxNew).forEach(f => dt.items.add(f));
       this.files = dt.files;
@@ -911,7 +1017,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
     updateDetailCountInfo();
   });
 
-  /* 저장 전 실제 상품 상세페이지의 .pd-detail-images와 동일한 순서/모양으로 미리보기 렌더 */
+  /* 실제 상세페이지의 .pd-detail-images와 동일하게 이어붙여서 미리보기/모달 렌더링 */
   function currentDetailImageUrls(){
     const kept = Array.from(detailImgList.querySelectorAll('.admin-detail-img-item'))
       .filter(li => !li.querySelector('input[type="checkbox"]').checked)
