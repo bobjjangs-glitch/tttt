@@ -49,6 +49,20 @@ try {
     $options = [];
 }
 
+/* [NEW] 상세페이지에 이어 붙일 이미지 목록을 순서대로 조회 */
+$detailImages = [];
+try {
+    $diStmt = $pdo->prepare(
+        'SELECT image_url FROM tt_product_detail_images
+         WHERE product_id = :pid ORDER BY sort_order ASC, id ASC'
+    );
+    $diStmt->execute(['pid' => $productId]);
+    $detailImages = $diStmt->fetchAll(PDO::FETCH_COLUMN);
+} catch (Throwable $e) {
+    error_log('[product-detail images] ' . $e->getMessage());
+    $detailImages = [];
+}
+
 $isWished = false;
 if (Auth::isLoggedIn()) {
     $wStmt = $pdo->prepare("SELECT id FROM tt_wishlists WHERE user_id = :uid AND product_id = :pid LIMIT 1");
@@ -201,6 +215,10 @@ require __DIR__ . '/includes/header.php';
 }
 .pd-flash-msg.success { background: #ecfdf5; color: #047857; }
 .pd-flash-msg.error { background: #fef2f2; color: #b91c1c; }
+
+/* ===== [NEW] 상세페이지 이미지: 세로로 여백 없이 이어 붙는 전형적인 쇼핑몰 상세페이지 레이아웃 ===== */
+.pd-detail-images { margin-top: 24px; display: flex; flex-direction: column; }
+.pd-detail-images img { display: block; width: 100%; height: auto; }
 </style>
 
 <main class="tt-main">
@@ -317,6 +335,14 @@ require __DIR__ . '/includes/header.php';
       <div><?= nl2br(h($product['description'])) ?></div>
     <?php else: ?>
       <p style="color:var(--gray4);">등록된 상세 설명이 없습니다.</p>
+    <?php endif; ?>
+
+    <?php if (!empty($detailImages)): ?>
+      <div class="pd-detail-images">
+        <?php foreach ($detailImages as $imgUrl): ?>
+          <img src="<?= h($imgUrl) ?>" alt="상세페이지 이미지" loading="lazy">
+        <?php endforeach; ?>
+      </div>
     <?php endif; ?>
   </div>
 

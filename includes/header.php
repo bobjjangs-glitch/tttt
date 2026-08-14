@@ -157,7 +157,8 @@ window.ttSetCartCount = function(count) {
 <main class="tt-main">
   <?php if (!empty($activePopups)): ?>
 <style>
-.tt-popup-overlay-wrap { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
+/* [FIX-1] 헤더(z-index:9000)보다 위에 그려지도록 z-index를 올려 상단이 가려지는 문제 해결 */
+.tt-popup-overlay-wrap { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
 .tt-popup-box {
   position: absolute;
   background: #fff;
@@ -169,11 +170,11 @@ window.ttSetCartCount = function(count) {
   max-width: 92vw;
   max-height: 88vh;
 }
-@keyframes ttPopupIn { from { opacity:0; transform: translateY(10px) scale(.97); } to { opacity:1; transform: translateY(0) scale(1); } }
+/* [FIX-2] transform을 쓰지 않는 애니메이션으로 변경 — JS에서 위치 지정에 transform을 쓰기 때문에
+   애니메이션의 transform과 값이 서로 덮어써서 위치가 튀는 충돌을 방지 */
+@keyframes ttPopupIn { from { opacity:0; } to { opacity:1; } }
 
-/* [FIX] 링크 유무와 무관하게 이미지 영역 높이가 항상 "박스 전체 - 풋터 40px"로
-   고정되도록 별도 래퍼(.tt-popup-img-wrap)를 둔다. 이전에는 <a>에만 이 높이를 줘서
-   링크 없는 팝업의 img가 박스 전체 높이를 차지해 풋터를 밀어내고 잘리게 만들었다. */
+/* [FIX-3] 링크 유무와 무관하게 이미지 영역 높이가 항상 "박스 전체 - 풋터 40px"로 고정 */
 .tt-popup-img-wrap { display:block; width:100%; height:calc(100% - 40px); overflow:hidden; }
 .tt-popup-img-wrap a { display:block; width:100%; height:100%; }
 .tt-popup-img-wrap img { display:block; width:100%; height:100%; object-fit: contain; background:#f8fafc; }
@@ -211,7 +212,6 @@ window.ttSetCartCount = function(count) {
   <?php endforeach; ?>
 </div>
 
-
 <script>
 (function () {
   function getCookie(name) {
@@ -225,7 +225,6 @@ window.ttSetCartCount = function(count) {
   }
 
   const boxes = Array.from(document.querySelectorAll('.tt-popup-box'));
-  let visibleIndex = 0;
   const OFFSET = 24;
 
   function layout() {
@@ -234,8 +233,12 @@ window.ttSetCartCount = function(count) {
       const id = box.dataset.popupId;
       if (getCookie('tt_popup_hide_' + id)) { box.style.display = 'none'; return; }
       box.style.display = '';
-      box.style.left = (60 + shown * OFFSET) + 'px';
-      box.style.top  = (60 + shown * OFFSET) + 'px';
+      /* [FIX-4] 화면 정중앙(50%,50%) 기준에서 오른쪽으로 20px 이동한 지점에 배치.
+         translate(-50%,-50%)로 박스 자신의 크기만큼 되돌려 정확히 그 지점을 중심으로 맞춘다.
+         팝업이 여러 개면 대각선으로 OFFSET(24px)씩 추가로 밀어서 겹치지 않게 쌓는다. */
+      box.style.left = 'calc(50% + 20px)';
+      box.style.top  = '50%';
+      box.style.transform = `translate(calc(-50% + ${shown * OFFSET}px), calc(-50% + ${shown * OFFSET}px))`;
       shown++;
     });
     if (shown === 0) {
@@ -259,5 +262,6 @@ window.ttSetCartCount = function(count) {
   });
 })();
 </script>
+
 <?php endif; ?>
 
