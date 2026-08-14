@@ -43,6 +43,10 @@ function admin_nav_active(string $script, string $target): string {
       <?php if (AdminAuth::can('products')): ?>
       <a href="<?= BASE_URL ?>/admin/products.php" class="<?= admin_nav_active($currentScript, 'products.php') ?>">상품 관리</a>
       <?php endif; ?>
+      <?php if (AdminAuth::can('coupons')): ?>
+<a href="<?= BASE_URL ?>/admin/coupons.php" class="<?= admin_nav_active($currentScript, 'coupons.php') ?>">🎟️ 쿠폰 관리</a>
+<?php endif; ?>
+
 
       <?php if (AdminAuth::can('brands')): ?>
       <a href="<?= BASE_URL ?>/admin/brands.php" class="<?= admin_nav_active($currentScript, 'brands.php') ?>">브랜드 관리</a>

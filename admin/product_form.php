@@ -4,8 +4,10 @@ require_once __DIR__ . '/../core/bootstrap.php';
 AdminAuth::requirePermission('products');
 $pdo = Database::connection();
 
-if (!defined('MAIN_IMG_MAX_COUNT'))   define('MAIN_IMG_MAX_COUNT', 3);
-if (!defined('MAIN_IMG_MAX_SIZE_MB')) define('MAIN_IMG_MAX_SIZE_MB', 5);
+if (!defined('MAIN_IMG_MAX_COUNT'))     define('MAIN_IMG_MAX_COUNT', 3);
+if (!defined('MAIN_IMG_MAX_SIZE_MB'))   define('MAIN_IMG_MAX_SIZE_MB', 5);
+if (!defined('DETAIL_IMG_MAX_COUNT'))   define('DETAIL_IMG_MAX_COUNT', 15);
+if (!defined('DETAIL_IMG_MAX_SIZE_MB')) define('DETAIL_IMG_MAX_SIZE_MB', 5);
 
 /* ---------- 대표이미지 테이블 자동 생성 ---------- */
 function ensure_product_main_images_table(PDO $pdo): void {
@@ -20,16 +22,30 @@ function ensure_product_main_images_table(PDO $pdo): void {
             REFERENCES tt_products(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
+/* ---------- 상세페이지 이미지 테이블 자동 생성 ---------- */
+function ensure_product_detail_images_table(PDO $pdo): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS tt_product_detail_images (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        product_id INT NOT NULL,
+        image_url VARCHAR(255) NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_pdi_product (product_id),
+        CONSTRAINT fk_pdi_product FOREIGN KEY (product_id)
+            REFERENCES tt_products(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
 ensure_product_main_images_table($pdo);
+ensure_product_detail_images_table($pdo);
 
-/* ---------- 대표이미지 업로드 검증/저장 ---------- */
-function admin_handle_main_images_upload(array $files): array {
+/* ---------- 공통 다중 이미지 업로드 검증/저장 ---------- */
+function admin_handle_multi_images_upload(array $files, int $maxSizeMb, string $subDir = 'products'): array {
     $result = ['ok' => true, 'files' => [], 'errors' => []];
     if (empty($files) || !isset($files['name']) || !is_array($files['name'])) {
         return $result; // 새로 선택한 파일 없음
     }
     $allowed   = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
-    $uploadDir = __DIR__ . '/../uploads/products';
+    $uploadDir = __DIR__ . '/../uploads/' . $subDir;
     if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
 
     $count = count($files['name']);
@@ -53,9 +69,9 @@ function admin_handle_main_images_upload(array $files): array {
             $result['errors'][] = $files['name'][$i] . ': 지원하지 않는 형식입니다. (jpg, png, webp, gif만 가능)';
             continue;
         }
-        if ($files['size'][$i] > MAIN_IMG_MAX_SIZE_MB * 1024 * 1024) {
+        if ($files['size'][$i] > $maxSizeMb * 1024 * 1024) {
             $result['ok'] = false;
-            $result['errors'][] = $files['name'][$i] . ': 이미지 크기는 ' . MAIN_IMG_MAX_SIZE_MB . 'MB 이하만 가능합니다.';
+            $result['errors'][] = $files['name'][$i] . ': 이미지 크기는 ' . $maxSizeMb . 'MB 이하만 가능합니다.';
             continue;
         }
         $filename = 'p_' . date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
@@ -65,7 +81,7 @@ function admin_handle_main_images_upload(array $files): array {
             $result['errors'][] = $files['name'][$i] . ': 저장에 실패했습니다.';
             continue;
         }
-        $result['files'][] = BASE_URL . '/uploads/products/' . $filename;
+        $result['files'][] = BASE_URL . '/uploads/' . $subDir . '/' . $filename;
     }
     return $result;
 }
@@ -81,8 +97,9 @@ $product = [
     'dot_code'=>'', 'price_original'=>0, 'price_sale'=>0, 'supply_price'=>0,
     'stock'=>0, 'status'=>'active', 'description'=>'', 'thumbnail_url'=>''
 ];
-$options    = [];
-$mainImages = []; // [['id'=>, 'image_url'=>, 'sort_order'=>], ...]
+$options      = [];
+$mainImages   = []; // [['id'=>, 'image_url'=>, 'sort_order'=>], ...]
+$detailImages = []; // [['id'=>, 'image_url'=>, 'sort_order'=>], ...]
 
 if ($isEdit) {
     $stmt = $pdo->prepare('SELECT * FROM tt_products WHERE id=:id');
@@ -107,6 +124,10 @@ if ($isEdit) {
     $miStmt = $pdo->prepare('SELECT id, image_url, sort_order FROM tt_product_main_images WHERE product_id=:pid ORDER BY sort_order ASC, id ASC');
     $miStmt->execute(['pid'=>$productId]);
     $mainImages = $miStmt->fetchAll();
+
+    $diStmt = $pdo->prepare('SELECT id, image_url, sort_order FROM tt_product_detail_images WHERE product_id=:pid ORDER BY sort_order ASC, id ASC');
+    $diStmt->execute(['pid'=>$productId]);
+    $detailImages = $diStmt->fetchAll();
 }
 
 $categories = $pdo->query('SELECT id,name FROM tt_categories ORDER BY name ASC')->fetchAll();
@@ -180,8 +201,8 @@ if (is_post()) {
     }
 
     /* ---- 대표이미지: 삭제 체크 / 순서 / 신규 업로드 ---- */
-    $mainImgDelete = $_POST['main_img_delete'] ?? []; // [id => '1']
-    $mainImgOrder  = $_POST['main_img_order']  ?? []; // [id => 순서]
+    $mainImgDelete = $_POST['main_img_delete'] ?? [];
+    $mainImgOrder  = $_POST['main_img_order']  ?? [];
 
     $keptMainImages = [];
     if ($isEdit) {
@@ -197,15 +218,41 @@ if (is_post()) {
         usort($keptMainImages, fn($a,$b) => $a['sort_order'] <=> $b['sort_order']);
     }
 
-    $newImgResult = admin_handle_main_images_upload($_FILES['main_images'] ?? []);
-    foreach ($newImgResult['errors'] as $errMsg) { $errors[] = $errMsg; }
+    $newMainImgResult = admin_handle_multi_images_upload($_FILES['main_images'] ?? [], MAIN_IMG_MAX_SIZE_MB, 'products');
+    foreach ($newMainImgResult['errors'] as $errMsg) { $errors[] = $errMsg; }
 
-    $totalMainImgCount = count($keptMainImages) + count($newImgResult['files']);
+    $totalMainImgCount = count($keptMainImages) + count($newMainImgResult['files']);
     if ($totalMainImgCount > MAIN_IMG_MAX_COUNT) {
         $errors[] = '대표 이미지는 최대 '.MAIN_IMG_MAX_COUNT.'장까지만 등록할 수 있습니다. (현재 '.$totalMainImgCount.'장)';
     }
     if ($totalMainImgCount === 0) {
         $errors[] = '대표 이미지를 최소 1장 이상 등록해 주세요.';
+    }
+
+    /* ---- 상세페이지 이미지: 삭제 체크 / 순서 / 신규 업로드 ---- */
+    $detailImgDelete = $_POST['detail_img_delete'] ?? [];
+    $detailImgOrder  = $_POST['detail_img_order']  ?? [];
+
+    $keptDetailImages = [];
+    if ($isEdit) {
+        foreach ($detailImages as $di) {
+            $did = (int)$di['id'];
+            if (!empty($detailImgDelete[$did])) continue;
+            $keptDetailImages[] = [
+                'id'         => $did,
+                'image_url'  => $di['image_url'],
+                'sort_order' => isset($detailImgOrder[$did]) ? (int)$detailImgOrder[$did] : (int)$di['sort_order'],
+            ];
+        }
+        usort($keptDetailImages, fn($a,$b) => $a['sort_order'] <=> $b['sort_order']);
+    }
+
+    $newDetailImgResult = admin_handle_multi_images_upload($_FILES['detail_images'] ?? [], DETAIL_IMG_MAX_SIZE_MB, 'products/detail');
+    foreach ($newDetailImgResult['errors'] as $errMsg) { $errors[] = $errMsg; }
+
+    $totalDetailImgCount = count($keptDetailImages) + count($newDetailImgResult['files']);
+    if ($totalDetailImgCount > DETAIL_IMG_MAX_COUNT) {
+        $errors[] = '상세페이지 이미지는 최대 '.DETAIL_IMG_MAX_COUNT.'장까지만 등록할 수 있습니다. (현재 '.$totalDetailImgCount.'장)';
     }
 
     if (empty($errors)) {
@@ -235,14 +282,13 @@ if (is_post()) {
                 $productId = (int)$pdo->lastInsertId();
             }
 
-            /* ---- 옵션 저장 (기존 로직 유지) ---- */
+            /* ---- 옵션 저장 ---- */
             $existingOptIds = [];
             if ($isEdit) {
                 $existStmt = $pdo->prepare('SELECT id FROM tt_product_options WHERE product_id=:pid');
                 $existStmt->execute(['pid'=>$productId]);
                 $existingOptIds = array_column($existStmt->fetchAll(), 'id');
             }
-
             $keptOptIds = [];
             foreach ($parsedOptions as $opt) {
                 if ($opt['delete']) {
@@ -289,19 +335,38 @@ if (is_post()) {
                         ->execute(['so'=>$order, 'id'=>$mi['id'], 'pid'=>$productId]);
                 }
             }
-
-            $nextOrder = count($keptMainImages);
-            foreach ($newImgResult['files'] as $url) {
+            $nextMainOrder = count($keptMainImages);
+            foreach ($newMainImgResult['files'] as $url) {
                 $pdo->prepare('INSERT INTO tt_product_main_images (product_id, image_url, sort_order) VALUES (:pid,:url,:so)')
-                    ->execute(['pid'=>$productId, 'url'=>$url, 'so'=>$nextOrder]);
-                $nextOrder++;
+                    ->execute(['pid'=>$productId, 'url'=>$url, 'so'=>$nextMainOrder]);
+                $nextMainOrder++;
             }
-
             $firstImgStmt = $pdo->prepare('SELECT image_url FROM tt_product_main_images WHERE product_id=:pid ORDER BY sort_order ASC, id ASC LIMIT 1');
             $firstImgStmt->execute(['pid'=>$productId]);
             $firstImgUrl = $firstImgStmt->fetchColumn();
             $pdo->prepare('UPDATE tt_products SET thumbnail_url=:url WHERE id=:id')
                 ->execute(['url'=> $firstImgUrl !== false ? $firstImgUrl : null, 'id'=>$productId]);
+
+            /* ---- 상세페이지 이미지 저장: 삭제 → 순서갱신 → 신규삽입 ---- */
+            if ($isEdit) {
+                foreach ($detailImages as $di) {
+                    $did = (int)$di['id'];
+                    if (!empty($detailImgDelete[$did])) {
+                        $pdo->prepare('DELETE FROM tt_product_detail_images WHERE id=:id AND product_id=:pid')
+                            ->execute(['id'=>$did,'pid'=>$productId]);
+                    }
+                }
+                foreach ($keptDetailImages as $order => $di) {
+                    $pdo->prepare('UPDATE tt_product_detail_images SET sort_order=:so WHERE id=:id AND product_id=:pid')
+                        ->execute(['so'=>$order, 'id'=>$di['id'], 'pid'=>$productId]);
+                }
+            }
+            $nextDetailOrder = count($keptDetailImages);
+            foreach ($newDetailImgResult['files'] as $url) {
+                $pdo->prepare('INSERT INTO tt_product_detail_images (product_id, image_url, sort_order) VALUES (:pid,:url,:so)')
+                    ->execute(['pid'=>$productId, 'url'=>$url, 'so'=>$nextDetailOrder]);
+                $nextDetailOrder++;
+            }
 
             $pdo->commit();
             flash('admin_success', $isEdit ? '상품이 수정되었습니다.' : '상품이 등록되었습니다.');
@@ -321,7 +386,7 @@ if (is_post()) {
         'thumbnail_url'=>$product['thumbnail_url'] ?? ''
     ];
     $options = array_values(array_filter($parsedOptions, fn($o) => !$o['delete']));
-    // 검증 실패 시 대표이미지 목록은 최초 로드값 유지(신규 업로드 파일은 재선택 필요)
+    // 검증 실패 시 이미지 목록은 최초 로드값 유지(신규 업로드 파일은 재선택 필요)
 }
 
 $pageTitle = $isEdit ? '상품 수정' : '상품 등록';
@@ -332,14 +397,18 @@ require __DIR__ . '/includes/header.php';
 @media (max-width:1100px){.admin-pf-layout{grid-template-columns:1fr;}}
 .admin-pf-preview-sticky{position:sticky;top:16px;border:1px solid #e2e8f0;border-radius:16px;padding:18px;background:#fafbff;}
 .admin-form-hint{font-size:12px;color:#64748b;margin:4px 0 10px;}
-.admin-main-img-list{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:8px;}
-.admin-main-img-item{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;}
-.admin-main-img-item img{width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;}
+.admin-main-img-list,.admin-detail-img-list{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:8px;}
+.admin-main-img-item,.admin-detail-img-item{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;}
+.admin-main-img-item img,.admin-detail-img-item img{width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;}
 .admin-main-img-badge{font-size:11px;font-weight:700;color:#6366f1;background:#eef2ff;padding:3px 8px;border-radius:999px;white-space:nowrap;}
-.admin-main-img-actions{display:flex;align-items:center;gap:6px;margin-left:auto;}
-.admin-main-img-actions button{padding:4px 8px;font-size:12px;}
-.admin-main-img-del{font-size:12px;color:#64748b;display:flex;align-items:center;gap:4px;white-space:nowrap;}
-.admin-main-img-count-info{font-size:12px;color:#64748b;margin-top:6px;}
+.admin-detail-img-badge{font-size:11px;font-weight:700;color:#059669;background:#ecfdf5;padding:3px 8px;border-radius:999px;white-space:nowrap;}
+.admin-main-img-actions,.admin-detail-img-actions{display:flex;align-items:center;gap:6px;margin-left:auto;}
+.admin-main-img-actions button,.admin-detail-img-actions button{padding:4px 8px;font-size:12px;}
+.admin-main-img-del,.admin-detail-img-del{font-size:12px;color:#64748b;display:flex;align-items:center;gap:4px;white-space:nowrap;}
+.admin-main-img-count-info,.admin-detail-img-count-info{font-size:12px;color:#64748b;margin-top:6px;}
+.admin-detail-preview-btn-row{margin-top:10px;}
+.btn-detail-preview{background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;padding:8px 16px;border-radius:999px;font-weight:700;font-size:13px;cursor:pointer;}
+.btn-detail-preview:hover{background:#e0e7ff;}
 .pf-card-preview{display:flex;gap:12px;padding:12px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;margin-bottom:20px;}
 .pf-card-thumb{width:72px;height:72px;border-radius:10px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .pf-card-thumb img{width:100%;height:100%;object-fit:cover;}
@@ -361,6 +430,18 @@ require __DIR__ . '/includes/header.php';
 .pf-detail-price{font-size:18px;font-weight:800;color:#1e293b;margin-bottom:8px;}
 .pf-detail-desc{font-size:13px;color:#475569;white-space:pre-line;word-break:break-all;}
 .ph{font-size:26px;}
+
+/* ===== 상세페이지 이미지 모달 미리보기 ===== */
+.admin-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;z-index:9999;opacity:0;visibility:hidden;transition:opacity .18s ease;}
+.admin-modal-overlay.active{opacity:1;visibility:visible;}
+.admin-modal-box{background:#fff;border-radius:16px;width:min(480px,92vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;transform:translateY(14px) scale(.97);transition:transform .18s ease;}
+.admin-modal-overlay.active .admin-modal-box{transform:translateY(0) scale(1);}
+.admin-modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e2e8f0;flex-shrink:0;}
+.admin-modal-header h3{margin:0;font-size:16px;font-weight:800;}
+.admin-modal-close{background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;line-height:1;}
+.admin-modal-body{overflow-y:auto;padding:0;background:#f1f5f9;}
+.admin-modal-body img{display:block;width:100%;height:auto;}
+.admin-modal-empty{padding:40px 20px;text-align:center;color:#94a3b8;font-size:13px;}
 </style>
 <div class="admin-card">
   <h2 class="admin-page-title"><?= $pageTitle ?></h2>
@@ -467,6 +548,30 @@ require __DIR__ . '/includes/header.php';
       <textarea name="description" rows="6"><?= h($product['description']) ?></textarea>
     </div>
 
+    <h3 class="admin-form-section-title">상세페이지 이미지 (최대 <?= DETAIL_IMG_MAX_COUNT ?>장)</h3>
+    <p class="admin-form-hint">등록한 순서대로 상세페이지 하단에 세로로 이어붙어 표시됩니다. 장당 <?= DETAIL_IMG_MAX_SIZE_MB ?>MB 이하 (jpg, png, webp, gif)</p>
+    <div class="admin-form-row">
+      <ul id="detailImgList" class="admin-detail-img-list">
+        <?php foreach ($detailImages as $i => $di): ?>
+        <li class="admin-detail-img-item" data-id="<?= (int)$di['id'] ?>">
+          <span class="admin-detail-img-badge"><?= $i+1 ?>번</span>
+          <img src="<?= h($di['image_url']) ?>" alt="">
+          <input type="hidden" name="detail_img_order[<?= (int)$di['id'] ?>]" value="<?= $i ?>" class="detail-img-order-input">
+          <div class="admin-detail-img-actions">
+            <button type="button" class="btn-admin-secondary btn-detail-img-up">▲</button>
+            <button type="button" class="btn-admin-secondary btn-detail-img-down">▼</button>
+            <label class="admin-detail-img-del"><input type="checkbox" name="detail_img_delete[<?= (int)$di['id'] ?>]" value="1"> 삭제</label>
+          </div>
+        </li>
+        <?php endforeach; ?>
+      </ul>
+      <input type="file" name="detail_images[]" id="detailImgFileInput" accept=".jpg,.jpeg,.png,.webp,.gif" multiple>
+      <p class="admin-detail-img-count-info" id="detailImgCountInfo"></p>
+      <div class="admin-detail-preview-btn-row">
+        <button type="button" class="btn-detail-preview" id="btnDetailPreview">🔍 상세페이지 미리보기</button>
+      </div>
+    </div>
+
     <h3 class="admin-form-section-title">DOT 옵션 (제조연주차별 판매가/재고)</h3>
     <table class="admin-table-trendy admin-option-table" id="optionTable">
       <thead>
@@ -551,6 +656,17 @@ require __DIR__ . '/includes/header.php';
   </div>
 </div>
 
+<!-- 상세페이지 이미지 미리보기 모달: 실제 product-detail.php의 .pd-detail-images 처럼 세로로 이어붙여 렌더 -->
+<div class="admin-modal-overlay" id="detailPreviewModalOverlay">
+  <div class="admin-modal-box">
+    <div class="admin-modal-header">
+      <h3>상세페이지 미리보기</h3>
+      <button type="button" class="admin-modal-close" id="detailPreviewModalClose" aria-label="닫기">&times;</button>
+    </div>
+    <div class="admin-modal-body" id="detailPreviewModalBody"></div>
+  </div>
+</div>
+
 <script>
 document.getElementById('productForm').addEventListener('submit', function(e){
   const catSel = this.querySelector('[name="category_id"]');
@@ -563,13 +679,18 @@ document.getElementById('productForm').addEventListener('submit', function(e){
   if (!nameInp.value.trim()) { ok=false; nameInp.classList.add('input-error'); }
   if (!priceOrig.value || parseInt(priceOrig.value,10)<=0) { ok=false; priceOrig.classList.add('input-error'); }
 
-  const keptCount = Array.from(document.querySelectorAll('#mainImgList .admin-main-img-item'))
+  const keptMainCount = Array.from(document.querySelectorAll('#mainImgList .admin-main-img-item'))
     .filter(li => !li.querySelector('input[type="checkbox"]').checked).length;
-  const newCount = document.getElementById('mainImgFileInput').files.length;
-  if (keptCount + newCount === 0) { ok=false; alert('대표 이미지를 최소 1장 이상 등록해 주세요.'); }
-  if (keptCount + newCount > <?= MAIN_IMG_MAX_COUNT ?>) { ok=false; alert('대표 이미지는 최대 <?= MAIN_IMG_MAX_COUNT ?>장까지만 등록할 수 있습니다.'); }
+  const newMainCount = document.getElementById('mainImgFileInput').files.length;
+  if (keptMainCount + newMainCount === 0) { ok=false; alert('대표 이미지를 최소 1장 이상 등록해 주세요.'); }
+  if (keptMainCount + newMainCount > <?= MAIN_IMG_MAX_COUNT ?>) { ok=false; alert('대표 이미지는 최대 <?= MAIN_IMG_MAX_COUNT ?>장까지만 등록할 수 있습니다.'); }
 
-  if (!ok) { e.preventDefault(); if(catSel.value && brandSel.value && nameInp.value.trim() && priceOrig.value) {} else alert('필수 항목을 확인해 주세요.'); }
+  const keptDetailCount = Array.from(document.querySelectorAll('#detailImgList .admin-detail-img-item'))
+    .filter(li => !li.querySelector('input[type="checkbox"]').checked).length;
+  const newDetailCount = document.getElementById('detailImgFileInput').files.length;
+  if (keptDetailCount + newDetailCount > <?= DETAIL_IMG_MAX_COUNT ?>) { ok=false; alert('상세페이지 이미지는 최대 <?= DETAIL_IMG_MAX_COUNT ?>장까지만 등록할 수 있습니다.'); }
+
+  if (!ok) { e.preventDefault(); alert('필수 항목을 확인해 주세요.'); }
 });
 
 let optionIndex = parseInt(document.getElementById('optIndexCounter').value, 10);
@@ -592,7 +713,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   optionIndex++;
 });
 
-/* ================= 대표이미지 관리 + 실시간 미리보기 ================= */
+/* ================= 대표이미지 + 실시간 미리보기 ================= */
 (function(){
   const $ = (id) => document.getElementById(id);
   const nameInput      = document.querySelector('[name="name"]');
@@ -620,11 +741,11 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   const mainImgList      = $('mainImgList');
   const mainImgFileInput = $('mainImgFileInput');
   const mainImgCountInfo = $('mainImgCountInfo');
-  const MAX_COUNT = <?= MAIN_IMG_MAX_COUNT ?>;
+  const MAX_MAIN_COUNT = <?= MAIN_IMG_MAX_COUNT ?>;
 
   function fmt(n){ return (n||0).toLocaleString('ko-KR'); }
 
-  function keptExistingCount(){
+  function keptExistingMainCount(){
     return Array.from(mainImgList.querySelectorAll('.admin-main-img-item'))
       .filter(li => !li.querySelector('input[type="checkbox"]').checked).length;
   }
@@ -634,7 +755,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
       .filter(li => !li.querySelector('input[type="checkbox"]').checked)
       .map(li => li.querySelector('img').src);
     const newFiles = mainImgFileInput.files ? Array.from(mainImgFileInput.files).map(f => URL.createObjectURL(f)) : [];
-    return kept.concat(newFiles).slice(0, MAX_COUNT);
+    return kept.concat(newFiles).slice(0, MAX_MAIN_COUNT);
   }
 
   function renderGallery(){
@@ -648,8 +769,8 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
       detailMainImg.innerHTML = `<img src="${urls[0]}" alt="">`;
       detailThumbs.innerHTML = urls.map((u,i) => `<img src="${u}" data-i="${i}" class="${i===0?'active':''}">`).join('');
     }
-    const total = keptExistingCount() + (mainImgFileInput.files ? mainImgFileInput.files.length : 0);
-    mainImgCountInfo.textContent = `현재 ${total} / ${MAX_COUNT}장 등록됨`;
+    const total = keptExistingMainCount() + (mainImgFileInput.files ? mainImgFileInput.files.length : 0);
+    mainImgCountInfo.textContent = `현재 ${total} / ${MAX_MAIN_COUNT}장 등록됨`;
   }
 
   function updatePreview(){
@@ -715,9 +836,9 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   });
 
   mainImgFileInput.addEventListener('change', function(){
-    const maxNew = Math.max(0, MAX_COUNT - keptExistingCount());
+    const maxNew = Math.max(0, MAX_MAIN_COUNT - keptExistingMainCount());
     if (this.files.length > maxNew) {
-      alert(`대표 이미지는 최대 ${MAX_COUNT}장까지 등록할 수 있습니다. 기존 이미지가 ${keptExistingCount()}장 있어 최대 ${maxNew}장만 추가로 선택할 수 있습니다.`);
+      alert(`대표 이미지는 최대 ${MAX_MAIN_COUNT}장까지 등록할 수 있습니다. 기존 이미지가 ${keptExistingMainCount()}장 있어 최대 ${maxNew}장만 추가로 선택할 수 있습니다.`);
       const dt = new DataTransfer();
       Array.from(this.files).slice(0, maxNew).forEach(f => dt.items.add(f));
       this.files = dt.files;
@@ -733,6 +854,93 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   });
 
   updatePreview();
+})();
+
+/* ================= 상세페이지 이미지 관리 + 모달 미리보기 ================= */
+(function(){
+  const detailImgList      = document.getElementById('detailImgList');
+  const detailImgFileInput = document.getElementById('detailImgFileInput');
+  const detailImgCountInfo = document.getElementById('detailImgCountInfo');
+  const MAX_DETAIL_COUNT   = <?= DETAIL_IMG_MAX_COUNT ?>;
+
+  const btnPreview   = document.getElementById('btnDetailPreview');
+  const modalOverlay = document.getElementById('detailPreviewModalOverlay');
+  const modalBody    = document.getElementById('detailPreviewModalBody');
+  const modalClose    = document.getElementById('detailPreviewModalClose');
+
+  function keptExistingDetailCount(){
+    return Array.from(detailImgList.querySelectorAll('.admin-detail-img-item'))
+      .filter(li => !li.querySelector('input[type="checkbox"]').checked).length;
+  }
+
+  function updateDetailCountInfo(){
+    const total = keptExistingDetailCount() + (detailImgFileInput.files ? detailImgFileInput.files.length : 0);
+    detailImgCountInfo.textContent = `현재 ${total} / ${MAX_DETAIL_COUNT}장 등록됨`;
+  }
+
+  detailImgList.addEventListener('change', (e) => {
+    if (e.target.matches('input[type="checkbox"]')) updateDetailCountInfo();
+  });
+
+  detailImgList.addEventListener('click', function(e){
+    const li = e.target.closest('.admin-detail-img-item');
+    if (!li) return;
+    if (e.target.classList.contains('btn-detail-img-up')) {
+      const prev = li.previousElementSibling;
+      if (prev) li.parentNode.insertBefore(li, prev);
+    } else if (e.target.classList.contains('btn-detail-img-down')) {
+      const next = li.nextElementSibling;
+      if (next) li.parentNode.insertBefore(next, li);
+    } else {
+      return;
+    }
+    document.querySelectorAll('#detailImgList .admin-detail-img-item').forEach((item, idx) => {
+      item.querySelector('.detail-img-order-input').value = idx;
+      item.querySelector('.admin-detail-img-badge').textContent = (idx+1)+'번';
+    });
+  });
+
+  detailImgFileInput.addEventListener('change', function(){
+    const maxNew = Math.max(0, MAX_DETAIL_COUNT - keptExistingDetailCount());
+    if (this.files.length > maxNew) {
+      alert(`상세페이지 이미지는 최대 ${MAX_DETAIL_COUNT}장까지 등록할 수 있습니다. 기존 이미지가 ${keptExistingDetailCount()}장 있어 최대 ${maxNew}장만 추가로 선택할 수 있습니다.`);
+      const dt = new DataTransfer();
+      Array.from(this.files).slice(0, maxNew).forEach(f => dt.items.add(f));
+      this.files = dt.files;
+    }
+    updateDetailCountInfo();
+  });
+
+  /* 저장 전 실제 상품 상세페이지의 .pd-detail-images와 동일한 순서/모양으로 미리보기 렌더 */
+  function currentDetailImageUrls(){
+    const kept = Array.from(detailImgList.querySelectorAll('.admin-detail-img-item'))
+      .filter(li => !li.querySelector('input[type="checkbox"]').checked)
+      .map(li => li.querySelector('img').src);
+    const newFiles = detailImgFileInput.files ? Array.from(detailImgFileInput.files).map(f => URL.createObjectURL(f)) : [];
+    return kept.concat(newFiles);
+  }
+
+  function openDetailPreview(){
+    const urls = currentDetailImageUrls();
+    if (urls.length === 0) {
+      modalBody.innerHTML = '<p class="admin-modal-empty">등록된 상세페이지 이미지가 없습니다.</p>';
+    } else {
+      modalBody.innerHTML = urls.map(u => `<img src="${u}" alt="">`).join('');
+    }
+    modalOverlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeDetailPreview(){
+    modalOverlay.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  btnPreview.addEventListener('click', openDetailPreview);
+  modalClose.addEventListener('click', closeDetailPreview);
+  modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) closeDetailPreview(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modalOverlay.classList.contains('active')) closeDetailPreview(); });
+
+  updateDetailCountInfo();
 })();
 </script>
 <?php require __DIR__ . '/includes/footer.php'; ?>
