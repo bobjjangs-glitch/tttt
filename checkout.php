@@ -2,6 +2,7 @@
 // /checkout.php
 declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
+ensure_coupon_tables();
 
 if (!Auth::isLoggedIn()) redirect('/login.php');
 $pdo = Database::connection();
@@ -22,7 +23,6 @@ if ($mode === 'buynow') {
         redirect('/product-list.php');
     }
 
-    // 가격/재고는 세션 값이 아니라 지금 DB 값을 다시 읽는다 (변조 방지)
     $stmt = $pdo->prepare('
         SELECT :qty AS qty, p.id AS product_id, p.name, p.price_sale, p.stock AS product_stock,
                o.id AS option_id, o.size, o.extra_price, o.stock_qty AS option_stock
@@ -57,6 +57,22 @@ if ($mode === 'buynow') {
     if (!$items) redirect('/cart.php');
 }
 
+$subtotalPreview = array_sum(array_map(fn($i) => ((int)$i['price_sale'] + (int)($i['extra_price'] ?? 0)) * (int)$i['qty'], $items));
+
+/* ===== [NEW] 사용 가능한 쿠폰 목록 조회 (사용 안 함 + 기간 유효 + 최소금액 이하는 제외하지 않고 전부 보여준 뒤 JS로 비활성 처리) ===== */
+$couponListStmt = $pdo->prepare("
+    SELECT uc.id AS user_coupon_id, c.id AS coupon_id, c.name, c.discount_type, c.discount_value,
+           c.max_discount_amount, c.min_order_amount, c.valid_until
+    FROM tt_user_coupons uc
+    JOIN tt_coupons c ON c.id = uc.coupon_id
+    WHERE uc.user_id = :uid AND uc.status = 'unused'
+      AND (c.valid_until IS NULL OR c.valid_until >= NOW())
+      AND c.status = 'active'
+    ORDER BY c.min_order_amount ASC
+");
+$couponListStmt->execute(['uid' => $uid]);
+$availableCoupons = $couponListStmt->fetchAll(PDO::FETCH_ASSOC);
+
 if (is_post()) {
     if (!Csrf::verify($_POST['csrf_token'] ?? null)) {
         flash('error', '유효하지 않은 요청입니다.');
@@ -69,6 +85,7 @@ if (is_post()) {
     $address1       = trim($_POST['address1'] ?? '');
     $address2       = trim($_POST['address2'] ?? '');
     $memo           = trim($_POST['memo'] ?? '');
+    $userCouponId   = trim($_POST['user_coupon_id'] ?? '') === '' ? null : (int)$_POST['user_coupon_id'];
 
     $_SESSION['_old'] = [
         'recipient_name'  => $recipientName,
@@ -145,19 +162,61 @@ if (is_post()) {
                 ->execute(['q' => $it['qty'], 'id' => $it['product_id']]);
         }
 
+        /* ===== [NEW] 쿠폰 재검증 및 할인 계산 (서버가 최종 권위, 클라이언트 값은 신뢰하지 않음) ===== */
+        $discountAmount = 0;
+        $validUserCouponId = null;
+
+        if ($userCouponId !== null) {
+            $ucStmt = $pdo->prepare('
+                SELECT uc.id, uc.status, c.* , c.id AS coupon_id
+                FROM tt_user_coupons uc
+                JOIN tt_coupons c ON c.id = uc.coupon_id
+                WHERE uc.id = :ucid AND uc.user_id = :uid
+                FOR UPDATE
+            ');
+            $ucStmt->execute(['ucid' => $userCouponId, 'uid' => $uid]);
+            $ucRow = $ucStmt->fetch();
+
+            if (!$ucRow) {
+                throw new RuntimeException('선택한 쿠폰을 찾을 수 없습니다.');
+            }
+            if ($ucRow['status'] !== 'unused') {
+                throw new RuntimeException('이미 사용했거나 만료된 쿠폰입니다.');
+            }
+            if ($ucRow['status'] !== 'active' && $ucRow['status'] !== 'unused') {
+                // no-op, status checked above
+            }
+            if ($ucRow['valid_until'] && strtotime($ucRow['valid_until']) < time()) {
+                throw new RuntimeException('쿠폰 유효기간이 만료되었습니다.');
+            }
+            if ($total < (int)$ucRow['min_order_amount']) {
+                throw new RuntimeException('쿠폰 사용을 위한 최소 주문금액(' . number_format((int)$ucRow['min_order_amount']) . '원)을 충족하지 않습니다.');
+            }
+
+            $discountAmount = calc_coupon_discount($ucRow, $total);
+            $validUserCouponId = (int)$ucRow['id'];
+        }
+
         $shippingFee = $total >= FREE_SHIPPING_MIN ? 0 : SHIPPING_FEE_DEFAULT;
+        $payableAmount = max(0, $total + $shippingFee - $discountAmount);
         $orderNo = 'TT' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(4)));
 
         $pdo->prepare('
-            INSERT INTO tt_orders (order_no, user_id, total_amount, shipping_fee,
+            INSERT INTO tt_orders (order_no, user_id, total_amount, shipping_fee, discount_amount, user_coupon_id,
                                     recipient_name, recipient_phone, recipient_addr, memo, status)
-            VALUES (:no, :uid, :total, :ship, :rname, :rphone, :raddr, :memo, "pending")
+            VALUES (:no, :uid, :total, :ship, :discount, :ucid, :rname, :rphone, :raddr, :memo, "pending")
         ')->execute([
-            'no' => $orderNo, 'uid' => $uid, 'total' => $total + $shippingFee, 'ship' => $shippingFee,
+            'no' => $orderNo, 'uid' => $uid, 'total' => $payableAmount, 'ship' => $shippingFee,
+            'discount' => $discountAmount, 'ucid' => $validUserCouponId,
             'rname' => $recipientName, 'rphone' => $recipientPhone,
             'raddr' => $recipientAddr, 'memo' => $memo,
         ]);
         $orderId = (int)$pdo->lastInsertId();
+
+        if ($validUserCouponId !== null) {
+            $pdo->prepare("UPDATE tt_user_coupons SET status = 'used', used_at = NOW(), order_id = :oid WHERE id = :id")
+                ->execute(['oid' => $orderId, 'id' => $validUserCouponId]);
+        }
 
         $itemStmt = $pdo->prepare('
             INSERT INTO tt_order_items (order_id, product_id, option_id, product_name, price, qty)
@@ -173,7 +232,6 @@ if (is_post()) {
         $pdo->prepare('INSERT INTO tt_order_status_logs (order_id, status, memo) VALUES (:oid, "pending", "주문 생성")')
             ->execute(['oid' => $orderId]);
 
-        // 장바구니 주문일 때만 장바구니를 비운다. 바로구매는 장바구니를 절대 건드리지 않는다.
         if ($mode === 'cart') {
             $pdo->prepare('DELETE FROM tt_carts WHERE user_id = :uid')->execute(['uid' => $uid]);
         }
@@ -201,10 +259,24 @@ if (is_post()) {
 
 $pageTitle = '주문/결제';
 require __DIR__ . '/includes/header.php';
-$subtotal = array_sum(array_map(fn($i) => ((int)$i['price_sale'] + (int)($i['extra_price'] ?? 0)) * (int)$i['qty'], $items));
+$subtotal = $subtotalPreview;
 $shipFee = $subtotal >= FREE_SHIPPING_MIN ? 0 : SHIPPING_FEE_DEFAULT;
 $fieldErrors = json_decode(flash('errors') ?? '{}', true) ?: [];
 ?>
+<style>
+.coupon-select-box{
+  background:linear-gradient(135deg,#f5f3ff,#eef2ff); border:1px solid #ddd6fe;
+  border-radius:14px; padding:18px 20px; margin-top:6px;
+}
+.coupon-select-box label{display:block;font-size:13px;font-weight:800;color:#4f46e5;margin-bottom:10px}
+.coupon-select-box select{
+  width:100%; border:1px solid #ddd6fe; border-radius:10px; padding:11px 14px;
+  font-size:14px; background:#fff; font-weight:600;
+}
+.coupon-select-empty{font-size:12.5px;color:#94a3b8;margin-top:4px}
+.coupon-discount-line{color:#6366f1 !important;font-weight:800}
+</style>
+
 <div class="checkout-wrap">
   <h1 class="checkout-title">주문/결제</h1>
 
@@ -230,13 +302,44 @@ $fieldErrors = json_decode(flash('errors') ?? '{}', true) ?: [];
         <?php endforeach; ?>
       </tbody>
     </table>
-    <div class="checkout-total-row"><span>총 상품금액</span><strong><?= format_price($subtotal) ?></strong></div>
+    <div class="checkout-total-row"><span>총 상품금액</span><strong id="ckSubtotalDisp"><?= format_price($subtotal) ?></strong></div>
     <div class="checkout-total-row"><span>배송비</span><strong><?= $shipFee === 0 ? '무료' : format_price($shipFee) ?></strong></div>
+    <div class="checkout-total-row" id="ckDiscountRow" style="display:none">
+      <span>쿠폰 할인</span><strong class="coupon-discount-line" id="ckDiscountDisp">-0원</strong>
+    </div>
   </section>
 
   <form method="post" action="<?= BASE_URL ?>/checkout.php" id="checkoutForm" novalidate>
     <?= Csrf::field() ?>
     <input type="hidden" name="order_mode" value="<?= h($mode) ?>">
+
+    <section class="checkout-section">
+      <h2>🎟️ 쿠폰 사용</h2>
+      <div class="coupon-select-box">
+        <label>보유 쿠폰</label>
+        <?php if ($availableCoupons): ?>
+          <select name="user_coupon_id" id="couponSelect" data-subtotal="<?= (int)$subtotal ?>">
+            <option value="">쿠폰을 선택하세요</option>
+            <?php foreach ($availableCoupons as $ac): ?>
+              <?php
+                $label = $ac['discount_type'] === 'percent'
+                    ? ($ac['name'] . ' (' . (int)$ac['discount_value'] . '% / ' . number_format((int)$ac['min_order_amount']) . '원 이상)')
+                    : ($ac['name'] . ' (' . number_format((int)$ac['discount_value']) . '원 / ' . number_format((int)$ac['min_order_amount']) . '원 이상)');
+              ?>
+              <option value="<?= (int)$ac['user_coupon_id'] ?>"
+                      data-type="<?= h($ac['discount_type']) ?>"
+                      data-value="<?= (int)$ac['discount_value'] ?>"
+                      data-max="<?= (int)($ac['max_discount_amount'] ?? 0) ?>"
+                      data-min="<?= (int)$ac['min_order_amount'] ?>">
+                <?= h($label) ?>
+              </option>
+            <?php endforeach; ?>
+          </select>
+        <?php else: ?>
+          <p class="coupon-select-empty">사용 가능한 쿠폰이 없습니다. 마이페이지 &gt; 쿠폰함에서 확인해보세요.</p>
+        <?php endif; ?>
+      </div>
+    </section>
 
     <section class="checkout-section">
       <h2>배송 정보</h2>
@@ -287,7 +390,7 @@ $fieldErrors = json_decode(flash('errors') ?? '{}', true) ?: [];
     </section>
 
     <button type="submit" class="btn-primary-lg checkout-submit" id="checkoutSubmitBtn">
-      <?= format_price($subtotal + $shipFee) ?> 주문 완료하기
+      <span id="ckFinalAmount"><?= format_price($subtotal + $shipFee) ?></span> 주문 완료하기
     </button>
   </form>
 </div>
@@ -367,10 +470,56 @@ document.getElementById('checkoutForm')?.addEventListener('submit', function (e)
 
 ['fRecipientName', 'fRecipientPhone'].forEach(function (id) {
   document.getElementById(id)?.addEventListener('input', function () {
-    const row = this.closest('[data-field-row]');
+    const row = this.closest('[data-field-row"]');
     if (row) row.classList.remove('has-error');
   });
 });
+
+/* ===== [NEW] 쿠폰 선택 시 실시간 할인 계산 (화면 표시용, 최종 금액은 서버가 재계산) ===== */
+(function(){
+  const select = document.getElementById('couponSelect');
+  if (!select) return;
+
+  const subtotal   = parseInt(select.dataset.subtotal || '0', 10);
+  const shipFeeRaw  = <?= (int)$shipFee ?>;
+  const discountRow = document.getElementById('ckDiscountRow');
+  const discountDisp= document.getElementById('ckDiscountDisp');
+  const finalDisp    = document.getElementById('ckFinalAmount');
+
+  function fmt(n){ return Number(n).toLocaleString() + '원'; }
+
+  function recalc(){
+    const opt = select.options[select.selectedIndex];
+    if (!opt || !opt.value) {
+      discountRow.style.display = 'none';
+      finalDisp.textContent = fmt(subtotal + shipFeeRaw);
+      return;
+    }
+    const type = opt.dataset.type;
+    const value = parseInt(opt.dataset.value || '0', 10);
+    const max   = parseInt(opt.dataset.max || '0', 10);
+    const min   = parseInt(opt.dataset.min || '0', 10);
+
+    if (subtotal < min) {
+      alert('이 쿠폰은 ' + min.toLocaleString() + '원 이상 구매 시 사용할 수 있습니다.');
+      select.value = '';
+      discountRow.style.display = 'none';
+      finalDisp.textContent = fmt(subtotal + shipFeeRaw);
+      return;
+    }
+
+    let discount = type === 'percent' ? Math.floor(subtotal * (value / 100)) : value;
+    if (type === 'percent' && max > 0) discount = Math.min(discount, max);
+    discount = Math.min(discount, subtotal);
+
+    discountRow.style.display = '';
+    discountDisp.textContent = '-' + fmt(discount);
+    finalDisp.textContent = fmt(Math.max(0, subtotal + shipFeeRaw - discount));
+  }
+
+  select.addEventListener('change', recalc);
+  recalc();
+})();
 </script>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>

@@ -7,7 +7,7 @@ final class AdminAuth
 
     /** 역할별 접근 가능한 모듈 목록. super는 항상 통과(별도 처리). */
     private const PERMISSIONS = [
-        'product' => ['products', 'brands', 'category-icons', 'banners'],
+      'product' => ['products', 'brands', 'category-icons', 'banners', 'coupons'],
         'order'   => ['orders', 'stock-requests'],
         'cs'      => ['reviews', 'notices', 'users'],
     ];

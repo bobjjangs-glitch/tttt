@@ -19,6 +19,9 @@ if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
     define('REVIEW_WRITE_WINDOW_DAYS', 7);
 }
 
+/* [NEW-COUPON] 쿠폰 테이블/컬럼 자동 생성 보장 (core/functions.php 에 정의됨) */
+ensure_coupon_tables();
+
 /* =====================================================================
    [FIX-3] 비밀번호 변경 시도 쓰로틀링 (세션 기반, DB 스키마 변경 없음)
    ===================================================================== */
@@ -312,6 +315,33 @@ $myReviewsStmt = $pdo->prepare("
 $myReviewsStmt->execute(['uid' => $uid]);
 $myReviews = $myReviewsStmt->fetchAll(PDO::FETCH_ASSOC);
 
+/* =====================================================================
+   [NEW-COUPON] 마이페이지 쿠폰함 데이터 조회
+   - 미사용 쿠폰 중 유효기간이 지난 것은 조회 시점에 즉시 expired로 갱신한다.
+   - 정렬: 사용가능 쿠폰을 맨 위로, 그 안에서는 최근 발급순.
+   ===================================================================== */
+$couponStmt = $pdo->prepare("
+    SELECT uc.id AS user_coupon_id, uc.status, uc.issued_at, uc.used_at,
+           c.name, c.description, c.image_url, c.discount_type, c.discount_value,
+           c.max_discount_amount, c.min_order_amount, c.valid_until
+    FROM tt_user_coupons uc
+    JOIN tt_coupons c ON c.id = uc.coupon_id
+    WHERE uc.user_id = :uid
+    ORDER BY (uc.status = 'unused') DESC, uc.issued_at DESC
+");
+$couponStmt->execute(['uid' => $uid]);
+$myCoupons = $couponStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$nowForCoupon = new DateTime();
+foreach ($myCoupons as &$mc) {
+    if ($mc['status'] === 'unused' && $mc['valid_until'] && $nowForCoupon > new DateTime($mc['valid_until'])) {
+        $mc['status'] = 'expired';
+        $pdo->prepare("UPDATE tt_user_coupons SET status = 'expired' WHERE id = :id")
+            ->execute(['id' => $mc['user_coupon_id']]);
+    }
+}
+unset($mc);
+
 $statusLabel = [
     'pending'   => '주문접수',
     'paid'      => '결제완료',
@@ -394,6 +424,34 @@ require __DIR__ . '/includes/header.php';
 }
 .btn-review-delete:hover { background: #fee2e2; }
 
+/* ===== [NEW-COUPON] 마이페이지 쿠폰함 ===== */
+.coupon-box-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.my-coupon-card{
+  display:flex; background:#fff; border:1px solid #e2e8f0; border-radius:14px;
+  overflow:hidden; position:relative;
+}
+.my-coupon-card::after{
+  content:''; position:absolute; left:88px; top:0; bottom:0; width:0;
+  border-left:2px dashed #e2e8f0;
+}
+.my-coupon-card.status-used, .my-coupon-card.status-expired{ opacity:.5; }
+.mc-left{
+  width:88px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg,#6366f1,#8b5cf6); padding:10px;
+}
+.mc-img{width:100%;height:64px;object-fit:cover;border-radius:8px}
+.mc-img-ph{display:flex;align-items:center;justify-content:center;font-size:26px;background:rgba(255,255,255,.15);color:#fff}
+.mc-right{flex:1;padding:14px 16px;position:relative}
+.mc-name{font-size:13.5px;font-weight:800;color:#1e293b}
+.mc-discount{font-size:19px;font-weight:900;color:#6366f1;margin:4px 0}
+.mc-cond{font-size:12px;color:#64748b}
+.mc-expire{font-size:11.5px;color:#94a3b8;margin-top:4px}
+.mc-status-badge{
+  position:absolute; top:14px; right:14px; font-size:11px; font-weight:800;
+  padding:3px 10px; border-radius:999px; background:#eef2ff; color:#4f46e5;
+}
+.status-used .mc-status-badge, .status-expired .mc-status-badge{background:#f1f5f9;color:#94a3b8}
+
 /* ===== [NEW] 리뷰 작성 모달 (마이페이지 전용, product-detail.php와 동일 스타일) ===== */
 .review-modal-overlay {
   position: fixed; inset: 0;
@@ -453,6 +511,7 @@ require __DIR__ . '/includes/header.php';
       <a href="#orders">주문내역</a>
       <a href="#write-review">구매 후기 작성</a>
       <a href="#myreviews">내가 쓴 리뷰</a>
+      <a href="#coupons">쿠폰함</a>
       <a href="#wish">찜한 상품</a>
       <a href="#profile">회원정보 수정</a>
       <a href="#password">비밀번호 변경</a>
@@ -579,6 +638,47 @@ require __DIR__ . '/includes/header.php';
         </div>
       <?php else: ?>
         <p class="empty-msg">작성한 리뷰가 없습니다.</p>
+      <?php endif; ?>
+    </section>
+
+    <!-- [NEW-COUPON] 쿠폰함 -->
+    <section class="mypage-section" id="coupons">
+      <h2>쿠폰함</h2>
+      <?php if ($myCoupons): ?>
+        <div class="coupon-box-grid">
+          <?php foreach ($myCoupons as $mc): ?>
+            <?php
+              $discountLabel = $mc['discount_type'] === 'percent'
+                  ? (int)$mc['discount_value'] . '% 할인'
+                  : number_format((int)$mc['discount_value']) . '원 할인';
+            ?>
+            <div class="my-coupon-card status-<?= h($mc['status']) ?>">
+              <div class="mc-left">
+                <?php if ($mc['image_url']): ?>
+                  <img src="<?= h($mc['image_url']) ?>" class="mc-img" alt="">
+                <?php else: ?>
+                  <div class="mc-img mc-img-ph">🎟️</div>
+                <?php endif; ?>
+              </div>
+              <div class="mc-right">
+                <div class="mc-name"><?= h($mc['name']) ?></div>
+                <div class="mc-discount"><?= $discountLabel ?></div>
+                <div class="mc-cond">
+                  <?= number_format((int)$mc['min_order_amount']) ?>원 이상 구매 시
+                  <?php if ($mc['discount_type'] === 'percent' && $mc['max_discount_amount']): ?>
+                    (최대 <?= number_format((int)$mc['max_discount_amount']) ?>원)
+                  <?php endif; ?>
+                </div>
+                <div class="mc-expire">
+                  <?= $mc['valid_until'] ? h(date('Y.m.d', strtotime($mc['valid_until']))) . '까지' : '기간 제한 없음' ?>
+                </div>
+                <span class="mc-status-badge"><?= coupon_status_label($mc['status']) ?></span>
+              </div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php else: ?>
+        <p class="empty-msg">보유한 쿠폰이 없습니다.</p>
       <?php endif; ?>
     </section>
 

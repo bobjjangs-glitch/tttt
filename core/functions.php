@@ -137,3 +137,84 @@ function ensure_banner_size_columns(): void
         error_log('[ensure_banner_size_columns] ' . $e->getMessage());
     }
 }
+/* =====================================================================
+   [NEW] 쿠폰 시스템 테이블/컬럼 자동 생성
+   tt_coupons(쿠폰 원본) / tt_user_coupons(회원별 발급 내역) 을 최초 실행 시
+   자동으로 만들고, tt_orders 에 discount_amount / user_coupon_id 컬럼을
+   자동으로 보강한다. 수동 SQL 실행이 필요 없다.
+   ===================================================================== */
+function ensure_coupon_tables(): void
+{
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    try {
+        $pdo = Database::connection();
+
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_coupons (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            code VARCHAR(30) NULL,
+            name VARCHAR(100) NOT NULL,
+            description VARCHAR(255) NULL,
+            image_url VARCHAR(255) NULL,
+            discount_type ENUM('percent','fixed') NOT NULL DEFAULT 'fixed',
+            discount_value INT NOT NULL DEFAULT 0,
+            max_discount_amount INT NULL,
+            min_order_amount INT NOT NULL DEFAULT 0,
+            valid_from DATETIME NULL,
+            valid_until DATETIME NULL,
+            total_limit INT NULL,
+            issued_count INT NOT NULL DEFAULT 0,
+            status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_coupon_code (code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_user_coupons (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            coupon_id INT NOT NULL,
+            status ENUM('unused','used','expired') NOT NULL DEFAULT 'unused',
+            issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            used_at DATETIME NULL,
+            order_id INT NULL,
+            INDEX idx_uc_user (user_id),
+            INDEX idx_uc_coupon (coupon_id),
+            CONSTRAINT fk_uc_user FOREIGN KEY (user_id) REFERENCES tt_users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_uc_coupon FOREIGN KEY (coupon_id) REFERENCES tt_coupons(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $cols = $pdo->query("SHOW COLUMNS FROM tt_orders")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('discount_amount', $cols, true)) {
+            $pdo->exec("ALTER TABLE tt_orders ADD COLUMN discount_amount INT NOT NULL DEFAULT 0 AFTER shipping_fee");
+        }
+        if (!in_array('user_coupon_id', $cols, true)) {
+            $pdo->exec("ALTER TABLE tt_orders ADD COLUMN user_coupon_id INT NULL AFTER discount_amount");
+        }
+    } catch (Throwable $e) {
+        error_log('[ensure_coupon_tables] ' . $e->getMessage());
+    }
+}
+
+/** 쿠폰 1장의 할인액을 계산 (서버/클라 공통 로직, 서버가 최종 권위를 가짐) */
+function calc_coupon_discount(array $coupon, int $subtotal): int
+{
+    if ($subtotal < (int)$coupon['min_order_amount']) return 0;
+
+    if ($coupon['discount_type'] === 'percent') {
+        $discount = (int)floor($subtotal * ((int)$coupon['discount_value'] / 100));
+        if (!empty($coupon['max_discount_amount'])) {
+            $discount = min($discount, (int)$coupon['max_discount_amount']);
+        }
+    } else {
+        $discount = (int)$coupon['discount_value'];
+    }
+    return max(0, min($discount, $subtotal));
+}
+
+/** 쿠폰 상태 뱃지 라벨 */
+function coupon_status_label(string $status): string
+{
+    return ['unused' => '사용가능', 'used' => '사용완료', 'expired' => '기간만료'][$status] ?? $status;
+}
