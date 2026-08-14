@@ -16,6 +16,10 @@ function admin_delete_products(PDO $pdo, array $ids): int
         $pdo->prepare("DELETE FROM tt_wishlists WHERE product_id IN ({$placeholders})")->execute($ids);
         $pdo->prepare("DELETE FROM tt_carts WHERE product_id IN ({$placeholders})")->execute($ids);
         $pdo->prepare("DELETE FROM tt_product_options WHERE product_id IN ({$placeholders})")->execute($ids);
+        /* [FIX] 상품 삭제 시 상세페이지 이미지도 함께 정리한다.
+           tt_product_detail_images에 FK(ON DELETE CASCADE)를 걸어뒀다면 자동 삭제되지만,
+           FK가 없는 구버전 DB에서도 안전하게 동작하도록 명시적으로 삭제한다. */
+        $pdo->prepare("DELETE FROM tt_product_detail_images WHERE product_id IN ({$placeholders})")->execute($ids);
         $stmt = $pdo->prepare("DELETE FROM tt_products WHERE id IN ({$placeholders})");
         $stmt->execute($ids);
         $affected = $stmt->rowCount();
@@ -70,8 +74,23 @@ $offset = ($page - 1) * $perPage;
 $where = '1=1';
 $params = [];
 if ($keyword !== '') {
-    $where .= ' AND (p.name LIKE :kw OR p.model LIKE :kw OR p.dot_code LIKE :kw)';
-    $params['kw'] = '%' . $keyword . '%';
+    /* [FIX] 상품 대표 dot_code 하나만이 아니라, tt_product_options에 옵션 단위로
+       등록된 모든 DOT 코드까지 EXISTS 서브쿼리로 함께 검색한다.
+       named placeholder는 재사용하지 않고 각각 다른 이름(:kw1~:kw4)으로 분리해
+       PDO에서 값이 예기치 않게 뒤섞이는 문제를 방지한다. */
+    $where .= ' AND (
+        p.name LIKE :kw1
+        OR p.model LIKE :kw2
+        OR p.dot_code LIKE :kw3
+        OR EXISTS (
+            SELECT 1 FROM tt_product_options po
+            WHERE po.product_id = p.id AND po.dot_code LIKE :kw4
+        )
+    )';
+    $params['kw1'] = '%' . $keyword . '%';
+    $params['kw2'] = '%' . $keyword . '%';
+    $params['kw3'] = '%' . $keyword . '%';
+    $params['kw4'] = '%' . $keyword . '%';
 }
 if ($categoryId > 0) {
     $where .= ' AND p.category_id = :cat';

@@ -4,6 +4,24 @@ require_once __DIR__ . '/../core/bootstrap.php';
 AdminAuth::requirePermission('products');
 $pdo = Database::connection();
 
+/* [NEW] 상세페이지 이미지 테이블이 없으면 즉시 생성 (배포 시 마이그레이션을 빠뜻려도 최소 동작 보장) */
+function ensure_product_detail_images_table(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS tt_product_detail_images (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            product_id  INT NOT NULL,
+            image_url   VARCHAR(255) NOT NULL,
+            sort_order  INT NOT NULL DEFAULT 0,
+            created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+ensure_product_detail_images_table($pdo);
+
+const DETAIL_IMG_MAX_COUNT   = 15;   // 상품 1개당 상세 이미지 최대 장수
+const DETAIL_IMG_MAX_SIZE_MB = 5;    // 이미지 1장당 최대 용량(MB)
+
 /* ---------- 상태 초기화 ---------- */
 $productId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $isEdit    = $productId > 0;
@@ -16,6 +34,7 @@ $product = [
     'stock'=>0, 'status'=>'active', 'description'=>'', 'thumbnail_url'=>''
 ];
 $options = [];
+$detailImages = [];
 
 if ($isEdit) {
     $stmt = $pdo->prepare('SELECT * FROM tt_products WHERE id=:id');
@@ -40,6 +59,14 @@ if ($isEdit) {
     );
     $optStmt->execute(['pid'=>$productId]);
     $options = $optStmt->fetchAll();
+
+    /* [NEW] 등록된 상세페이지 이미지를 순서대로 불러온다. */
+    $detailImgStmt = $pdo->prepare(
+        'SELECT id, image_url, sort_order FROM tt_product_detail_images
+         WHERE product_id = :pid ORDER BY sort_order ASC, id ASC'
+    );
+    $detailImgStmt->execute(['pid' => $productId]);
+    $detailImages = $detailImgStmt->fetchAll();
 }
 
 $categories = $pdo->query('SELECT id,name FROM tt_categories ORDER BY name ASC')->fetchAll();
@@ -69,6 +96,52 @@ function admin_handle_thumbnail_upload(array $file): array {
     $target=$uploadDir.'/'.$filename;
     if (!move_uploaded_file($file['tmp_name'],$target)) return ['ok'=>false,'msg'=>'이미지 저장에 실패했습니다.'];
     return ['ok'=>true,'url'=>BASE_URL.'/uploads/products/'.$filename];
+}
+
+/* [NEW] 상세페이지용 이미지 여러 장을 한 번에 업로드 처리한다.
+   name="detail_images[]" 형태의 다중 파일 입력을 받아 각각 검증 후 저장한다. */
+function admin_handle_detail_images_upload(array $files): array
+{
+    $result = ['ok' => true, 'urls' => [], 'errors' => []];
+    if (empty($files['name'][0] ?? '')) return $result; // 새로 올린 파일 없음
+
+    $allowed = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+    $uploadDir = __DIR__ . '/../uploads/products/detail';
+    if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
+
+    $count = count($files['name']);
+    for ($i = 0; $i < $count; $i++) {
+        if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) continue;
+
+        if ($files['error'][$i] !== UPLOAD_ERR_OK) {
+            $result['errors'][] = ($i + 1) . '번째 이미지 업로드 오류(code=' . $files['error'][$i] . ')';
+            continue;
+        }
+        if (@getimagesize($files['tmp_name'][$i]) === false) {
+            $result['errors'][] = ($i + 1) . '번째 파일은 이미지가 아닙니다.';
+            continue;
+        }
+        $ext = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowed, true)) {
+            $result['errors'][] = ($i + 1) . '번째 이미지: 지원하지 않는 형식입니다.';
+            continue;
+        }
+        if ($files['size'][$i] > DETAIL_IMG_MAX_SIZE_MB * 1024 * 1024) {
+            $result['errors'][] = ($i + 1) . '번째 이미지: ' . DETAIL_IMG_MAX_SIZE_MB . 'MB를 초과했습니다.';
+            continue;
+        }
+
+        $filename = 'pd_' . date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $target = $uploadDir . '/' . $filename;
+        if (!move_uploaded_file($files['tmp_name'][$i], $target)) {
+            $result['errors'][] = ($i + 1) . '번째 이미지 저장에 실패했습니다.';
+            continue;
+        }
+        $result['urls'][] = BASE_URL . '/uploads/products/detail/' . $filename;
+    }
+
+    if (!empty($result['errors'])) $result['ok'] = false;
+    return $result;
 }
 
 /* ---------- POST 처리 ---------- */
@@ -145,6 +218,12 @@ if (is_post()) {
     $uploadResult = admin_handle_thumbnail_upload($_FILES['thumbnail'] ?? []);
     if (!$uploadResult['ok']) $errors[] = $uploadResult['msg'];
 
+    /* [NEW] 상세페이지 이미지 업로드 검증 */
+    $detailImageUpload = admin_handle_detail_images_upload($_FILES['detail_images'] ?? []);
+    if (!$detailImageUpload['ok']) {
+        foreach ($detailImageUpload['errors'] as $e) $errors[] = $e;
+    }
+
     if (empty($errors)) {
         try {
             $pdo->beginTransaction();
@@ -214,6 +293,36 @@ if (is_post()) {
             foreach (array_diff($existingOptIds, $keptOptIds) as $rid) {
                 $pdo->prepare('DELETE FROM tt_product_options WHERE id=:id AND product_id=:pid')
                     ->execute(['id'=>$rid,'pid'=>$productId]);
+            }
+
+            /* [NEW] 상세페이지 이미지: 삭제 체크된 기존 이미지 제거 → 남은 이미지 재정렬 → 신규 업로드 이미지를 뒤에 append */
+            $deleteDetailIds = array_map('intval', (array)($_POST['detail_existing_delete'] ?? []));
+            if (!empty($deleteDetailIds)) {
+                $delPlaceholders = implode(',', array_fill(0, count($deleteDetailIds), '?'));
+                $delParams = $deleteDetailIds;
+                $delParams[] = $productId;
+                $pdo->prepare("DELETE FROM tt_product_detail_images WHERE id IN ({$delPlaceholders}) AND product_id = ?")
+                    ->execute($delParams);
+            }
+
+            /* 남은 기존 이미지의 순서를 화면에서 조정한 순서(detail_existing_order[])대로 갱신 */
+            $existingDetailIds   = array_map('intval', (array)($_POST['detail_existing_id'] ?? []));
+            $existingDetailOrder = array_map('intval', (array)($_POST['detail_existing_order'] ?? []));
+            foreach ($existingDetailIds as $idx => $eid) {
+                if (in_array($eid, $deleteDetailIds, true)) continue; // 이미 삭제된 항목은 건너뜀
+                $pdo->prepare('UPDATE tt_product_detail_images SET sort_order = :ord WHERE id = :id AND product_id = :pid')
+                    ->execute(['ord' => $existingDetailOrder[$idx] ?? $idx, 'id' => $eid, 'pid' => $productId]);
+            }
+
+            /* 신규 업로드 이미지는 현재 최대 순번 다음부터 이어서 저장 */
+            $maxOrderStmt = $pdo->prepare('SELECT COALESCE(MAX(sort_order), -1) FROM tt_product_detail_images WHERE product_id = :pid');
+            $maxOrderStmt->execute(['pid' => $productId]);
+            $nextOrder = (int)$maxOrderStmt->fetchColumn() + 1;
+
+            foreach ($detailImageUpload['urls'] as $url) {
+                $pdo->prepare('INSERT INTO tt_product_detail_images (product_id, image_url, sort_order) VALUES (:pid, :url, :ord)')
+                    ->execute(['pid' => $productId, 'url' => $url, 'ord' => $nextOrder]);
+                $nextOrder++;
             }
 
             $pdo->commit();
@@ -332,6 +441,28 @@ require __DIR__ . '/includes/header.php';
       <textarea name="description" rows="6"><?= h($product['description']) ?></textarea>
     </div>
 
+    <h3 class="admin-form-section-title">상세페이지 이미지 (세로로 이어 붙여 노출됩니다)</h3>
+    <div class="admin-form-row admin-form-row-full">
+      <div id="detailImgList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+        <?php foreach ($detailImages as $di): ?>
+        <div class="detail-img-row" style="display:flex;align-items:center;gap:12px;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;">
+          <img src="<?= h($di['image_url']) ?>" style="width:70px;height:70px;object-fit:cover;border-radius:8px;">
+          <span style="flex:1;font-size:13px;color:#64748b;"><?= h(basename($di['image_url'])) ?></span>
+          <input type="hidden" name="detail_existing_id[]" value="<?= (int)$di['id'] ?>">
+          <input type="hidden" class="detail-order-input" name="detail_existing_order[]" value="<?= (int)$di['sort_order'] ?>">
+          <button type="button" class="btn-admin-secondary btn-move-up">▲</button>
+          <button type="button" class="btn-admin-secondary btn-move-down">▼</button>
+          <label style="font-size:12px;color:#ef4444;">
+            <input type="checkbox" name="detail_existing_delete[]" value="<?= (int)$di['id'] ?>"> 삭제
+          </label>
+        </div>
+        <?php endforeach; ?>
+      </div>
+      <label>새 이미지 추가 (여러 장 선택 가능, 선택한 순서대로 맨 아래에 이어 붙습니다)</label>
+      <input type="file" name="detail_images[]" accept=".jpg,.jpeg,.png,.webp,.gif" multiple>
+      <p style="font-size:12px;color:#94a3b8;margin-top:6px;">최대 <?= DETAIL_IMG_MAX_COUNT ?>장, 장당 <?= DETAIL_IMG_MAX_SIZE_MB ?>MB까지 업로드 가능합니다.</p>
+    </div>
+
     <h3 class="admin-form-section-title">DOT 옵션 (제조연주차별 판매가/재고)</h3>
     <table class="admin-table-trendy admin-option-table" id="optionTable">
       <thead>
@@ -418,6 +549,18 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   tbody.appendChild(tr);
   tr.querySelector('.btn-remove-new-option').addEventListener('click', () => tr.remove());
   optionIndex++;
+});
+
+/* [NEW] 상세페이지 이미지 순서 조정: ▲▼ 클릭 시 DOM 순서를 바꾸고, 바뀐 순서를 hidden input에 재기록 */
+document.getElementById('detailImgList')?.addEventListener('click', function (e) {
+  const row = e.target.closest('.detail-img-row');
+  if (!row) return;
+  if (e.target.classList.contains('btn-move-up') && row.previousElementSibling) {
+    row.parentNode.insertBefore(row, row.previousElementSibling);
+  } else if (e.target.classList.contains('btn-move-down') && row.nextElementSibling) {
+    row.parentNode.insertBefore(row.nextElementSibling, row);
+  }
+  document.querySelectorAll('.detail-order-input').forEach((el, idx) => { el.value = idx; });
 });
 </script>
 <?php require __DIR__ . '/includes/footer.php'; ?>
