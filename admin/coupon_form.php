@@ -19,7 +19,7 @@ if ($id > 0) {
     }
 }
 
-const_defined: if (!defined('COUPON_IMG_MAX_SIZE_MB')) define('COUPON_IMG_MAX_SIZE_MB', 5);
+if (!defined('COUPON_IMG_MAX_SIZE_MB')) define('COUPON_IMG_MAX_SIZE_MB', 5);
 
 function admin_handle_coupon_image_upload(array $file): ?string
 {
@@ -131,6 +131,57 @@ $v = fn(string $key, $default = '') => h((string)($_POST[$key] ?? $coupon[$key] 
 .coupon-preview-name{font-size:16px;font-weight:800;min-height:22px}
 .coupon-preview-discount{font-size:24px;font-weight:900;margin-top:6px}
 .coupon-preview-bottom{background:#fff;padding:16px 20px;font-size:12.5px;color:var(--adm-text-sub);line-height:1.7}
+
+/* ===== 유효기간 카드 (트렌디 버전) ===== */
+.coupon-period-card{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:linear-gradient(135deg,#f5f3ff 0%,#eef2ff 100%);
+  border:1px solid #e0e7ff;border-radius:16px;padding:16px 18px;
+  position:relative;
+}
+.period-field{
+  display:flex;align-items:center;gap:10px;
+  background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;
+  padding:10px 14px;flex:1;min-width:220px;
+  transition:border-color .15s, box-shadow .15s;
+}
+.period-field:hover{border-color:#c7d2fe}
+.period-field:focus-within{
+  border-color:#6366f1;
+  box-shadow:0 0 0 3px rgba(99,102,241,.15);
+}
+.period-dot{
+  width:9px;height:9px;border-radius:50%;flex:0 0 auto;
+}
+.period-dot.start{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+.period-dot.end{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.18)}
+.period-field-inner{display:flex;flex-direction:column;flex:1;min-width:0}
+.period-field-label{
+  font-size:11px;font-weight:800;color:#7c3aed;letter-spacing:.3px;margin-bottom:2px;
+}
+.period-field-inner input[type=datetime-local]{
+  border:none;padding:0;margin:0;font-size:14px;font-weight:700;color:#111827;
+  background:transparent;width:100%;font-family:inherit;
+}
+.period-field-inner input[type=datetime-local]:focus{outline:none}
+.period-field-inner input[type=datetime-local]::-webkit-calendar-picker-indicator{
+  filter:invert(0.42) sepia(1) saturate(6) hue-rotate(225deg);
+  cursor:pointer;opacity:.85;
+}
+.period-field-inner input[type=datetime-local]::-webkit-calendar-picker-indicator:hover{opacity:1}
+.period-arrow{
+  font-size:16px;color:#a5b4fc;font-weight:800;flex:0 0 auto;
+}
+.period-duration-badge{
+  margin-left:auto;background:#fff;border:1.5px solid #ddd6fe;color:#6d28d9;
+  font-size:12px;font-weight:800;padding:7px 14px;border-radius:999px;
+  white-space:nowrap;transition:color .15s, border-color .15s;
+}
+@media (max-width:640px){
+  .coupon-period-card{flex-direction:column;align-items:stretch}
+  .period-arrow{display:none}
+  .period-duration-badge{margin-left:0;align-self:flex-start}
+}
 </style>
 
 <form method="post" enctype="multipart/form-data" class="coupon-form-layout">
@@ -179,16 +230,29 @@ $v = fn(string $key, $default = '') => h((string)($_POST[$key] ?? $coupon[$key] 
         <input type="number" name="total_limit" min="1" value="<?= $v('total_limit', '') ?>" placeholder="비워두면 무제한">
       </div>
 
-      <div class="admin-form-row">
-        <label>유효기간 시작</label>
-        <input type="datetime-local" name="valid_from" id="fFrom"
-               value="<?= $coupon && $coupon['valid_from'] ? h(date('Y-m-d\TH:i', strtotime($coupon['valid_from']))) : '' ?>">
-      </div>
-
-      <div class="admin-form-row <?= isset($errors['valid_until']) ? 'has-error' : '' ?>">
-        <label>유효기간 종료</label>
-        <input type="datetime-local" name="valid_until" id="fUntil"
-               value="<?= $coupon && $coupon['valid_until'] ? h(date('Y-m-d\TH:i', strtotime($coupon['valid_until']))) : '' ?>">
+      <div class="admin-form-row admin-form-row-wide <?= isset($errors['valid_until']) ? 'has-error' : '' ?>">
+        <label>쿠폰 유효기간</label>
+        <div class="coupon-period-card">
+          <div class="period-field">
+            <span class="period-dot start"></span>
+            <div class="period-field-inner">
+              <span class="period-field-label">시작</span>
+              <input type="datetime-local" name="valid_from" id="fFrom"
+                     value="<?= $coupon && $coupon['valid_from'] ? h(date('Y-m-d\TH:i', strtotime($coupon['valid_from']))) : '' ?>">
+            </div>
+          </div>
+          <span class="period-arrow">→</span>
+          <div class="period-field">
+            <span class="period-dot end"></span>
+            <div class="period-field-inner">
+              <span class="period-field-label">종료</span>
+              <input type="datetime-local" name="valid_until" id="fUntil"
+                     value="<?= $coupon && $coupon['valid_until'] ? h(date('Y-m-d\TH:i', strtotime($coupon['valid_until']))) : '' ?>">
+            </div>
+          </div>
+          <span class="period-duration-badge" id="periodDurationBadge">상시 사용 가능</span>
+        </div>
+        <p class="admin-form-hint">시작/종료를 모두 비워두면 상시 발급·사용 가능한 쿠폰이 됩니다.</p>
         <?php if (isset($errors['valid_until'])): ?><p class="field-error-msg"><?= h($errors['valid_until']) ?></p><?php endif; ?>
       </div>
 
@@ -243,7 +307,8 @@ const fName=document.getElementById('fName'), fType=document.getElementById('fTy
       fUntil=document.getElementById('fUntil'), fImage=document.getElementById('fImage'),
       pvImg=document.getElementById('pvImg'), pvName=document.getElementById('pvName'),
       pvDiscount=document.getElementById('pvDiscount'), pvMin=document.getElementById('pvMin'),
-      pvPeriod=document.getElementById('pvPeriod'), fMaxDiscountRow=document.getElementById('fMaxDiscountRow');
+      pvPeriod=document.getElementById('pvPeriod'), fMaxDiscountRow=document.getElementById('fMaxDiscountRow'),
+      periodBadge=document.getElementById('periodDurationBadge');
 
 function fmt(n){ return Number(n||0).toLocaleString(); }
 
@@ -258,7 +323,36 @@ function renderPreview(){
   fMaxDiscountRow.style.display = fType.value === 'percent' ? '' : 'none';
 }
 
-[fName, fType, fValue, fMax, fMin, fFrom, fUntil].forEach(el => el.addEventListener('input', renderPreview));
+function updateDurationBadge(){
+  if (!fFrom.value && !fUntil.value) {
+    periodBadge.textContent = '상시 사용 가능';
+    periodBadge.style.color = '#059669';
+    periodBadge.style.borderColor = '#a7f3d0';
+    return;
+  }
+  if (fFrom.value && fUntil.value) {
+    const diffMs = new Date(fUntil.value) - new Date(fFrom.value);
+    if (diffMs < 0) {
+      periodBadge.textContent = '종료일이 시작일보다 빠름';
+      periodBadge.style.color = '#dc2626';
+      periodBadge.style.borderColor = '#fecaca';
+      return;
+    }
+    const days = Math.round(diffMs / 86400000);
+    periodBadge.textContent = `총 ${days}일간`;
+    periodBadge.style.color = '#6d28d9';
+    periodBadge.style.borderColor = '#ddd6fe';
+  } else {
+    periodBadge.textContent = '기간 일부 미설정';
+    periodBadge.style.color = '#d97706';
+    periodBadge.style.borderColor = '#fde68a';
+  }
+}
+
+[fName, fType, fValue, fMax, fMin, fFrom, fUntil].forEach(el => el.addEventListener('input', () => {
+  renderPreview();
+  updateDurationBadge();
+}));
 fType.addEventListener('change', renderPreview);
 
 fImage.addEventListener('change', function(){
@@ -269,6 +363,7 @@ fImage.addEventListener('change', function(){
 });
 
 renderPreview();
+updateDurationBadge();
 </script>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>

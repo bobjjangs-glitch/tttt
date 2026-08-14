@@ -243,24 +243,31 @@ $totalPages = max(1, (int)ceil($totalCount / $perPage));
 $pageTitle = '주문 관리';
 require __DIR__ . '/includes/header.php';
 ?>
-<form method="post" id="bulkDeleteForm" onsubmit="return confirm('선택한 주문을 정말 삭제하시겠습니까?\n삭제된 주문은 복구할 수 없습니다.');">
-<?= Csrf::field() ?>
-<input type="hidden" name="form_type" value="bulk_delete">
 
+<!--
+  중요: 상태 필터는 <form> 태그 없이 select의 onchange로 직접 페이지 이동시킵니다.
+  기존 코드는 이 select를 <form method="get">로 감싸서 bulkDeleteForm 내부에 중첩시켰는데,
+  HTML 스펙상 form 안에 form을 넣으면 브라우저가 안쪽 </form>을 만나는 순간
+  바깥쪽 bulkDeleteForm을 강제로 닫아버립니다.
+  그 결과 체크박스(order_ids[])가 실제로는 폼 바깥 요소로 파싱되어 전송되지 않았고,
+  이것이 "선택된 주문이 없습니다" 오류의 원인이었습니다.
+-->
 <div class="admin-toolbar">
-  <form method="get" class="admin-filter-form">
-    <select name="status" onchange="this.form.submit()">
-      <option value="">전체 상태</option>
-      <?php foreach ($statusLabels as $key => $label): ?>
-        <option value="<?= h($key) ?>" <?= $statusFilter === $key ? 'selected' : '' ?>><?= h($label) ?></option>
-      <?php endforeach; ?>
-    </select>
-  </form>
+  <select id="statusFilterSelect" onchange="location.href='<?= BASE_URL ?>/admin/orders.php?status=' + this.value">
+    <option value="">전체 상태</option>
+    <?php foreach ($statusLabels as $key => $label): ?>
+      <option value="<?= h($key) ?>" <?= $statusFilter === $key ? 'selected' : '' ?>><?= h($label) ?></option>
+    <?php endforeach; ?>
+  </select>
   <div class="admin-toolbar-right">
     <a href="<?= BASE_URL ?>/admin/orders_export.php?status=<?= h($statusFilter) ?>" class="btn-admin-excel">📊 엑셀 다운로드</a>
     <button type="submit" form="bulkDeleteForm" class="btn-admin-danger btn-bulk-delete" disabled>🗑 선택 삭제</button>
   </div>
 </div>
+
+<form method="post" id="bulkDeleteForm" onsubmit="return confirm('선택한 주문을 정말 삭제하시겠습니까?\n삭제된 주문은 복구할 수 없습니다.');">
+<?= Csrf::field() ?>
+<input type="hidden" name="form_type" value="bulk_delete">
 
 <div class="admin-card">
   <h2>주문 목록 <span class="admin-count-pill"><?= number_format($totalCount) ?>건</span></h2>

@@ -5,6 +5,18 @@ AdminAuth::requirePermission('brands');
 
 $pdo = Database::connection();
 
+/**
+ * 일괄 등록용 타이어 브랜드 목록 (국내 3사 + 해외 메이저 + 중소/보급형 브랜드 57개)
+ * 이미 등록된 브랜드명은 admin_bulk_seed_brands()에서 자동으로 건너뜁니다.
+ */
+const TIRE_BRAND_SEED_LIST = [
+    '금호', '한국', '넥센', '미쉐린', '피렐리', '콘티넨탈', '브리지스톤', '굿이어', '던롭', '요코하마',
+    'ARISUN', 'BFGOODRICH', 'DURUN', 'EVOLUXX', 'GiTi', 'GT', 'KENDA', 'KINFOREST', 'LANDSAIL', 'LASSA', 'RADAR', 'TOYO',
+    '굿라이드', '다반티', '더블스타', '라우펜', '레오', '로드마치', '로드엑스', '로드킹', '링롱', '마스터크래프트', '마일스타', '맥시스',
+    '베를린', '사일룬', '실언', '썬풀', '쎈타라', '쓰리에이', '아이링크', '아틀라스', '안나이트', '안치', '엑셀레라', '오타니', '윈런',
+    '제너럴', '제커', '쿠퍼', '트라이앵글', '파이어스톤', '팔켄', '페더럴', '하빌리드캡센', '하이다', '하이로',
+];
+
 function admin_generate_brand_slug(PDO $pdo, string $name, int $excludeId = 0): string {
     $base = strtolower(trim($name));
     $base = preg_replace('/[^a-z0-9]+/', '-', $base);
@@ -42,7 +54,65 @@ function admin_handle_logo_upload(array $file): array {
     return ['ok' => true, 'url' => BASE_URL . '/uploads/brands/' . $filename];
 }
 
+/**
+ * 여러 브랜드명을 한 번에 등록. 이미 존재하는 이름은 건너뛴다.
+ * @return array{ok:bool, added:int, skipped:int}
+ */
+function admin_bulk_seed_brands(PDO $pdo, array $names): array {
+    $added = 0;
+    $skipped = 0;
+
+    $pdo->beginTransaction();
+    try {
+        foreach ($names as $name) {
+            $name = trim((string)$name);
+            if ($name === '') continue;
+
+            $chk = $pdo->prepare('SELECT id FROM tt_brands WHERE name = :name LIMIT 1');
+            $chk->execute(['name' => $name]);
+            if ($chk->fetch()) {
+                $skipped++;
+                continue;
+            }
+
+            $slug = admin_generate_brand_slug($pdo, $name);
+            $pdo->prepare('INSERT INTO tt_brands (name, slug, logo_url, is_active) VALUES (:name, :slug, NULL, 1)')
+                ->execute(['name' => $name, 'slug' => $slug]);
+            $added++;
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        error_log('[admin/brands bulk_seed] ' . $e->getMessage());
+        return ['ok' => false, 'added' => 0, 'skipped' => 0];
+    }
+
+    return ['ok' => true, 'added' => $added, 'skipped' => $skipped];
+}
+
 $errors = [];
+
+if (is_post() && ($_POST['form_type'] ?? '') === 'bulk_seed_brands') {
+    if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
+        flash('admin_error', '잘못된 요청입니다.');
+        redirect('/admin/brands.php');
+    }
+
+    $result = admin_bulk_seed_brands($pdo, TIRE_BRAND_SEED_LIST);
+
+    if ($result['ok']) {
+        AdminAuth::log(
+            (int)AdminAuth::currentAdminId(),
+            'brand_bulk_seed',
+            "타이어 브랜드 일괄 등록: 신규 {$result['added']}건, 중복제외 {$result['skipped']}건"
+        );
+        flash('admin_success', "일괄 등록 완료: 신규 {$result['added']}개 추가, 기존 중복 {$result['skipped']}개 제외");
+    } else {
+        flash('admin_error', '일괄 등록 중 오류가 발생했습니다.');
+    }
+
+    redirect('/admin/brands.php');
+}
 
 if (is_post() && ($_POST['form_type'] ?? '') === 'save_brand') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
@@ -155,6 +225,30 @@ $brands = $pdo->query('
 $pageTitle = '제조사 관리';
 require __DIR__ . '/includes/header.php';
 ?>
+
+<div class="admin-card" style="background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #e0e7ff;">
+  <h2 class="admin-page-title" style="margin-bottom:6px;">🛞 타이어 브랜드 일괄 등록</h2>
+  <p class="admin-form-hint" style="margin-bottom:14px;">
+    국내·해외 타이어 제조사 <?= count(TIRE_BRAND_SEED_LIST) ?>개를 한 번에 등록합니다.
+    이미 등록된 브랜드명은 자동으로 건너뛰며, 로고 이미지는 일괄 등록에 포함되지 않으니
+    등록 후 아래 목록에서 개별 "수정"으로 업로드해 주세요.
+  </p>
+  <details style="margin-bottom:14px;">
+    <summary style="cursor:pointer;font-weight:700;color:#4f46e5;">등록될 브랜드 목록 보기 (<?= count(TIRE_BRAND_SEED_LIST) ?>개)</summary>
+    <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
+      <?php foreach (TIRE_BRAND_SEED_LIST as $bn): ?>
+        <span class="status-badge status-pending" style="font-weight:600;"><?= h($bn) ?></span>
+      <?php endforeach; ?>
+    </div>
+  </details>
+  <form method="post"
+        onsubmit="return confirm('타이어 브랜드 <?= count(TIRE_BRAND_SEED_LIST) ?>개를 일괄 등록하시겠습니까?\n이미 등록된 브랜드명은 자동으로 건너뜁니다.');">
+    <?= Csrf::field() ?>
+    <input type="hidden" name="form_type" value="bulk_seed_brands">
+    <button type="submit" class="btn-admin-primary">🛞 타이어 브랜드 <?= count(TIRE_BRAND_SEED_LIST) ?>개 일괄 등록</button>
+  </form>
+</div>
+
 <div class="admin-card">
   <h2 class="admin-page-title">제조사 등록</h2>
   <form method="post" enctype="multipart/form-data" class="admin-product-form" id="brandForm">
