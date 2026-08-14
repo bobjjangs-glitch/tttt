@@ -31,7 +31,6 @@ ensure_product_spec_columns($pdo);
 
 $isTemplate = ($_GET['template'] ?? '') === '1';
 
-/* 컬럼 순서는 표시용일 뿐이며, 업로드 시에는 이 순서와 무관하게 헤더 "이름"으로 매칭됩니다. */
 $headers = [
     '상품ID', '카테고리', '브랜드', '상품명', '패턴코드', '사이즈',
     '하중속도규격', '원산지', '단면폭', '편평비', '림직경',
@@ -48,7 +47,7 @@ header('Content-Disposition: attachment; filename="' . $filename . '"');
 header('Cache-Control: no-store, no-cache, must-revalidate');
 
 $out = fopen('php://output', 'w');
-fwrite($out, "\xEF\xBB\xBF"); // 엑셀 한글 깨짐 방지 UTF-8 BOM
+fwrite($out, "\xEF\xBB\xBF");
 fputcsv($out, $headers);
 
 if ($isTemplate) {
