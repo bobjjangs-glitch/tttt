@@ -240,6 +240,7 @@ require __DIR__ . '/includes/header.php';
     <a href="<?= BASE_URL ?>/admin/product_form.php" class="btn-admin-add">➕ 상품 등록</a>
     <a href="<?= BASE_URL ?>/admin/products_import.php" class="btn-admin-excel">📁 엑셀 일괄 업로드</a>
     <a href="<?= BASE_URL ?>/admin/products_export.php?<?= h($backQuery) ?>" class="btn-admin-excel">📊 엑셀 다운로드</a>
+    <a href="<?= BASE_URL ?>/admin/stock_update.php" class="btn-admin-excel">📦 재고 일괄 업데이트</a>
     <button type="submit" form="bulkDeleteForm" class="btn-bulk-delete" disabled>🗑 선택 삭제</button>
   </div>
 </div>
@@ -326,8 +327,6 @@ require __DIR__ . '/includes/header.php';
   </table>
 
   <?php if ($totalPages > 1): ?>
-  <!-- [수정] 페이지 수가 많아도 잘리지 않도록 flex-wrap을 인라인으로 강제 적용.
-       숫자는 admin_build_page_range()가 만든 순서(1, …, 현재-2 ~ 현재+2, …, 마지막)대로 그대로 출력한다. -->
   <div class="admin-pagination" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;overflow:visible;">
     <?php if ($page > 1): ?>
       <a href="?page=<?= $page - 1 ?>&kw=<?= h($keyword) ?>&category_id=<?= $categoryId ?>&brand_id=<?= $brandId ?>&status=<?= h($statusFilter) ?>">‹ 이전</a>
@@ -363,7 +362,6 @@ require __DIR__ . '/includes/header.php';
   updateBtn();
 })();
 
-// [신규] 전체 삭제 확인 문구 입력 검증: "전체삭제" 를 정확히 입력해야만 실행 버튼이 활성화된다.
 (function(){
   const input = document.getElementById('confirmAllText');
   const btn = document.getElementById('btnDeleteAll');

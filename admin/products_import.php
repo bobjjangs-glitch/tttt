@@ -87,6 +87,34 @@ function admin_parse_int_or_null(string $v): ?int
 }
 
 /**
+ * Runflat 원본 표기(ZP, EMT, SELFSEAL, RFT, MOE, SSR 등)를 시스템이 저장하는 Y/N으로 정규화한다.
+ * 정확히 일치하지 않아도 값 안에 런플랫 관련 토큰이 포함돼 있으면 'Y'로 인식한다.
+ * 어떤 규칙에도 안 걸리면 null을 반환해 상위에서 오류로 처리하게 한다.
+ */
+function admin_normalize_runflat(string $raw): ?string
+{
+    $v = mb_strtoupper(trim($raw));
+    if ($v === '') return 'N';
+
+    $yesTokens = [
+        'Y', 'YES', '예', 'O',
+        'ZP', 'EMT', 'SELFSEAL', 'SELF-SEAL', 'SELF SEAL',
+        'RFT', 'ROF', 'MOE', 'SSR', 'DSST',
+        'RUNFLAT', 'RUN FLAT', 'RUN-FLAT',
+    ];
+    $noTokens = ['N', 'NO', '아니오', 'X', '해당없음', '-'];
+
+    if (in_array($v, $yesTokens, true)) return 'Y';
+    if (in_array($v, $noTokens, true)) return 'N';
+
+    foreach ($yesTokens as $token) {
+        if ($token !== '' && mb_strpos($v, $token) !== false) return 'Y';
+    }
+
+    return null;
+}
+
+/**
  * 업로드한 CSV의 헤더와 시스템이 기대하는 컬럼을 비교해 매칭 리포트를 만든다.
  * "대칭 잡아서" 매칭되는지를 사람이 눈으로 확인할 수 있게 보여주는 용도.
  */
@@ -148,8 +176,8 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
         $patternName   = trim($r['패턴명'] ?? '');
         $oem           = trim($r['OEM'] ?? '');
         $tech          = trim($r['Tech'] ?? '');
-        $runflatRaw    = mb_strtoupper(trim($r['Runflat'] ?? ''));
-        $runflat       = in_array($runflatRaw, ['Y', 'YES', '예', 'O'], true) ? 'Y' : (in_array($runflatRaw, ['N', 'NO', '아니오', 'X', ''], true) ? 'N' : null);
+        $runflatRaw    = trim($r['Runflat'] ?? '');
+        $runflat       = admin_normalize_runflat($runflatRaw);
 
         $priceOriginal = admin_parse_int_money($r['정상가'] ?? '0');
         $priceSale     = admin_parse_int_money($r['판매가'] ?? '0');
@@ -159,7 +187,7 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
         $status        = ($statusRaw === '숨김' || $statusRaw === 'hidden') ? 'hidden' : 'active';
 
         if ($priceOriginal <= 0) {
-            $errors[] = "{$rowNo}행 [{$name}]: 정상가는 0보다 커야 합니다.";
+            $errors[] = "{$rowNo}행 [{$name}]: 정상가는 0보다 커야 합니다. (원본값: '" . ($r['정상가'] ?? '') . "')";
             continue;
         }
         if ($priceSale > 0 && $priceSale > $priceOriginal) {
