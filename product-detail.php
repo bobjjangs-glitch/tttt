@@ -90,10 +90,10 @@ if (Auth::isLoggedIn()) {
 
 $csrfToken = Csrf::token();
 
-/* ===== [수정 1] 마이페이지에서 구매확정 후 리다이렉트로 들어왔는지 여부 ===== */
+/* ===== 마이페이지에서 구매확정 후 리다이렉트로 들어왔는지 여부 ===== */
 $autoOpenReview = (($_GET['write_review'] ?? '') === '1');
 
-/* ===== [수정 2] 삭제 처리 후 세션 플래시 메시지 표시 ===== */
+/* ===== 삭제 처리 후 세션 플래시 메시지 표시 ===== */
 $flashMsg = null;
 if (!empty($_SESSION['flash'])) {
     $flashMsg = $_SESSION['flash'];
@@ -199,7 +199,6 @@ require __DIR__ . '/includes/header.php';
 }
 .btn-modal-submit:hover { transform: translateY(-1px); }
 
-/* ===== [수정 3] 리뷰 아이템 레이아웃 + 삭제 버튼 ===== */
 .pd-review-item {
   display: flex;
   flex-direction: column;
@@ -234,11 +233,9 @@ require __DIR__ . '/includes/header.php';
 .pd-flash-msg.success { background: #ecfdf5; color: #047857; }
 .pd-flash-msg.error { background: #fef2f2; color: #b91c1c; }
 
-/* ===== [NEW] 상세페이지 이미지: 세로로 여백 없이 이어 붙는 전형적인 쇼핑몰 상세페이지 레이아웃 ===== */
 .pd-detail-images { margin-top: 24px; display: flex; flex-direction: column; }
 .pd-detail-images img { display: block; width: 100%; height: auto; }
 
-/* ===== [NEW] 대표 이미지 갤러리 썸네일 스트립 ===== */
 .pd-thumb-strip { display: flex; gap: 8px; margin-top: 10px; }
 .pd-thumb-strip img {
   width: 64px; height: 64px; object-fit: cover; border-radius: 10px;
@@ -400,7 +397,6 @@ require __DIR__ . '/includes/header.php';
     $productReviews = $rvStmt->fetchAll(PDO::FETCH_ASSOC);
     $currentUid = Auth::isLoggedIn() ? (int)Auth::currentUserId() : 0;
 
-    /* 구매확정(confirmed_at) 후 7일 이내인지로 리뷰 작성 가능 여부를 판정한다. */
     $canWriteReview = false;
     $reviewDeadline = null;
     $reviewDaysLeft = 0;
@@ -465,7 +461,6 @@ require __DIR__ . '/includes/header.php';
                         </div>
 
                         <?php if ($currentUid && $currentUid === (int)$rv['user_id']): ?>
-                        <!-- [수정 4] 본인 리뷰에만 삭제 버튼 노출, return_to=product로 이 페이지로 되돌아옴 -->
                         <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('리뷰를 삭제하시겠습니까? 삭제 후에는 복구할 수 없습니다.');" style="margin:0;">
                             <?= Csrf::field() ?>
                             <input type="hidden" name="review_id" value="<?= (int)$rv['id'] ?>">
@@ -485,7 +480,6 @@ require __DIR__ . '/includes/header.php';
 </div>
 
 <?php if ($canWriteReview): ?>
-<!-- 리뷰 작성 모달 : 7일 창구 안에서는 버튼 클릭 시 언제든 열린다 -->
 <div class="review-modal-overlay" id="reviewModalOverlay">
   <div class="review-modal-box">
     <button type="button" class="review-modal-close" id="reviewModalClose" aria-label="닫기">&times;</button>
@@ -494,7 +488,6 @@ require __DIR__ . '/includes/header.php';
     <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form">
         <?= Csrf::field() ?>
         <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
-        <!-- [수정 5] 상품 상세페이지에서 제출한 것이므로 제출 후 이 페이지로 되돌아온다 -->
         <input type="hidden" name="return_to" value="product">
         <div class="star-rating">
             <?php for ($i = 5; $i >= 1; $i--): ?>
@@ -512,7 +505,6 @@ require __DIR__ . '/includes/header.php';
 </div>
 <?php endif; ?>
 
-<!-- 바로구매용 히든 폼: checkout.php로 페이지 이동시키는 용도, AJAX 아님 -->
 <form method="post" action="<?= BASE_URL ?>/buy-now.php" id="buyNowForm" style="display:none;">
   <?= Csrf::field() ?>
   <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
@@ -528,7 +520,7 @@ const csrfToken      = document.getElementById('csrfToken').value;
 const productId      = <?= (int)$productId ?>;
 const hasOptions     = <?= !empty($options) ? 'true' : 'false' ?>;
 const isLoggedIn     = <?= Auth::isLoggedIn() ? 'true' : 'false' ?>;
-const autoOpenReview = <?= $autoOpenReview ? 'true' : 'false' ?>; // [수정 6]
+const autoOpenReview = <?= $autoOpenReview ? 'true' : 'false' ?>;
 
 const qtyInput     = document.getElementById('pdQtyInput');
 const totalEl      = document.getElementById('pdTotalPrice');
@@ -539,7 +531,6 @@ const buyBtn       = document.getElementById('pdBuyNowBtn');
 const cartBtn      = document.getElementById('pdAddCartBtn');
 const wishBtn      = document.getElementById('pdWishBtn');
 
-/* ===== [NEW] 대표 이미지 갤러리: 썸네일 클릭 시 큰 이미지 교체 ===== */
 const pdThumbStrip = document.getElementById('pdThumbStrip');
 const pdMainImgTag = document.getElementById('pdMainImgTag');
 if (pdThumbStrip && pdMainImgTag) {
@@ -693,7 +684,6 @@ document.querySelectorAll('.pd-tab-btn').forEach(btn => {
   });
 });
 
-/* ===== 리뷰 작성 모달 열기/닫기 ===== */
 const reviewBtn     = document.getElementById('pdReviewWriteBtn');
 const reviewOverlay = document.getElementById('reviewModalOverlay');
 const reviewClose   = document.getElementById('reviewModalClose');
@@ -720,8 +710,6 @@ if (reviewBtn && reviewOverlay) {
   });
 }
 
-/* ===== [수정 7] 마이페이지 구매확정 → 이 페이지로 리다이렉트 됐을 때 자동으로
-   리뷰 탭 전환 + #review로 스크롤 + 모달 오픈까지 한 번에 처리 ===== */
 if (autoOpenReview) {
   const reviewTabBtn = document.querySelector('.pd-tab-btn[data-tab="review"]');
   const reviewPanel  = document.querySelector('.pd-tab-panel[data-panel="review"]');
@@ -734,11 +722,12 @@ if (autoOpenReview) {
   document.getElementById('review')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   if (reviewOverlay) {
-    // 스크롤 애니메이션과 겹치지 않도록 살짝 지연 후 오픈
     setTimeout(openReviewModal, 350);
   }
 }
 
+/* [수정] 재고 요청: 로그인 안 된 상태(401)면 로그인 페이지로 보낸다.
+   이름/연락처는 화면에서 입력받지 않고 회원가입 정보를 서버에서 그대로 사용한다. */
 const restockBtn = document.getElementById('pdRestockBtn');
 if (restockBtn) {
   restockBtn.addEventListener('click', async function(){
@@ -758,6 +747,13 @@ if (restockBtn) {
         method: 'POST',
         body: formData
       });
+
+      if (res.status === 401) {
+        alert('로그인이 필요합니다.');
+        location.href = BASE_URL + '/login.php';
+        return;
+      }
+
       const data = await res.json();
       if (data.success) {
         restockBtn.textContent = '✓ 요청 완료';
