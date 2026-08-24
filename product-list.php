@@ -112,10 +112,6 @@ $stmt->execute();
 $products = $stmt->fetchAll();
 
 /* ---------- DOT 옵션 배치 조회 (N+1 방지) ---------- */
-/* ★ 수정: DOT 코드는 "WWYY"(주차+연도) 4자리 문자열이므로 단순 문자열 DESC 정렬은
-   연도 경계(예: 52주/2025=5225, 1주/2026=0126)에서 최신순이 뒤틀린다.
-   → 연도(뒤 2자리) 우선, 주차(앞 2자리) 차순으로 명시 정렬해 항상 최신 DOT이 먼저 오게 한다.
-   4자리 숫자 형식이 아닌 비정상 값은 맨 뒤로 보내고 문자열 DESC로 안전하게 처리(fallback). */
 $dotOptionsByProduct = [];
 if (!empty($products)) {
     $productIds = array_column($products, 'id');
@@ -322,7 +318,6 @@ require __DIR__ . '/includes/header.php';
           <?php endforeach; ?>
         </div>
       <?php elseif ((int)($product['stock'] ?? 0) > 0): ?>
-        <!-- 옵션은 없지만 products.stock 에 재고가 있는 경우 -->
         <div class="tp-dot-row">
           <div class="tp-dot-box">
             <?php if (!empty($product['dot_code'])): ?>
@@ -333,7 +328,6 @@ require __DIR__ . '/includes/header.php';
           </div>
         </div>
       <?php else: ?>
-        <!-- 재고가 아예 없는 경우 -->
         <div class="tp-nostock">
           <p>판매중인 상품의 재고가 없습니다.</p>
           <div class="tp-restock-row">
@@ -360,6 +354,7 @@ require __DIR__ . '/includes/header.php';
 
 <script>
 const BASE_URL = "<?= BASE_URL ?>";
+const isLoggedIn = <?= Auth::isLoggedIn() ? 'true' : 'false' ?>;
 
 document.getElementById('brandMoreBtn')?.addEventListener('click', function () {
   const hidden = document.querySelectorAll('.fb-brand-hidden');
@@ -401,9 +396,17 @@ document.querySelectorAll('.tp-card').forEach(function(card){
   dcInput.addEventListener('blur', function(){ recalcPrice(card); });
 });
 
-// 재고 요청 버튼
+/* [수정] 재고 요청 버튼: 로그인 안 된 상태면 fetch를 보내지 않고 바로 로그인 페이지로 보낸다.
+   fetch가 성공해도 401이 오면 "로그인이 필요합니다" 안내를 명확히 보여준다.
+   res.json() 파싱이 깨지는 경우(HTML 응답)에는 원인을 알 수 있도록 콘솔에 로그를 남긴다. */
 document.querySelectorAll('.btn-restock-request').forEach(function(btn){
   btn.addEventListener('click', async function(){
+    if (!isLoggedIn) {
+      alert('로그인이 필요합니다.');
+      location.href = BASE_URL + '/login.php';
+      return;
+    }
+
     const productId = parseInt(btn.dataset.productId, 10);
     const dotCode   = btn.dataset.dotCode || '';
     const card      = btn.closest('.tp-card') || btn.closest('.tp-dot-box');
@@ -423,7 +426,24 @@ document.querySelectorAll('.btn-restock-request').forEach(function(btn){
         method: 'POST',
         body: formData
       });
-      const data = await res.json();
+
+      if (res.status === 401) {
+        alert('로그인이 필요합니다.');
+        location.href = BASE_URL + '/login.php';
+        return;
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        console.error('재고 요청 응답이 JSON이 아닙니다. (status=' + res.status + ')', parseErr);
+        alert('서버 응답을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+        btn.disabled = false;
+        btn.textContent = '재고 요청하기';
+        return;
+      }
+
       if (data.success) {
         btn.textContent = '✓ 요청 완료';
         btn.style.background = '#22c55e';
@@ -435,6 +455,7 @@ document.querySelectorAll('.btn-restock-request').forEach(function(btn){
         alert(data.message || '요청 중 오류가 발생했습니다.');
       }
     } catch (e) {
+      console.error('재고 요청 네트워크 오류', e);
       btn.disabled = false;
       btn.textContent = '재고 요청하기';
       alert('네트워크 오류가 발생했습니다.');
