@@ -30,6 +30,62 @@ function admin_stock_normalize_key(string $s): string
     return preg_replace('/\s+/u', '', $s) ?? $s;
 }
 
+/**
+ * 같은 브랜드를 가리키는 영문/한글/표기 변형을 하나의 그룹으로 묶어둔다.
+ * DB(tt_brands.name)에 어느 표기로 등록돼 있어도 매칭되게 하기 위함이다.
+ * products_import.php의 admin_import_brand_alias_groups()와 동일한 내용이다.
+ * 두 파일 중 하나에만 브랜드를 추가하면 다른 화면에서 다시 "찾을 수 없음"이 나므로,
+ * 브랜드를 하나 추가할 때는 반드시 두 파일 모두에 같은 줄을 넣어야 한다.
+ */
+function admin_stock_brand_alias_groups(): array
+{
+    static $groups = [
+        ['MICHELIN', '미쉐린', '미쉐린타이어'],
+        ['BFGOODRICH', 'BF-GOODRICH', 'BF GOODRICH', 'BF굿리치', 'BF굿리치타이어'],
+        ['CONTINENTAL', '콘티넨탈'],
+        ['BRIDGESTONE', '브릿지스톤', '브리지스톤'],
+        ['HANKOOK', 'HANKOOK TIRE', '한국타이어'],
+        ['KUMHO', 'KUMHO TIRE', '금호타이어', '금호'],
+        ['NEXEN', 'NEXEN TIRE', '넥센타이어', '넥센'],
+        ['GOODYEAR', '굿이어'],
+        ['PIRELLI', '피렐리'],
+        ['YOKOHAMA', '요코하마'],
+        ['DUNLOP', '던롭'],
+        ['TOYO', 'TOYO TIRES', '토요'],
+        ['FALKEN', '팔켄'],
+    ];
+    return $groups;
+}
+
+/**
+ * CSV 원본 브랜드 표기를 받아 실제 tt_brands에 등록된 브랜드 id를 찾는다.
+ * 1) DB 이름과 정규화 후 정확히 일치하면 바로 매칭
+ * 2) 별칭 그룹에 속해 있으면, 같은 그룹 안에서 실제 DB에 등록된 표기를 찾아 매칭
+ * 3) 둘 다 실패하면 null
+ */
+function admin_stock_resolve_brand_id(string $rawBrand, array $brandMap): ?int
+{
+    $normalized = admin_stock_normalize_key($rawBrand);
+    if ($normalized === '') return null;
+
+    if (isset($brandMap[$normalized])) {
+        return $brandMap[$normalized];
+    }
+
+    foreach (admin_stock_brand_alias_groups() as $group) {
+        $groupKeys = array_map('admin_stock_normalize_key', $group);
+        if (!in_array($normalized, $groupKeys, true)) continue;
+
+        foreach ($groupKeys as $key) {
+            if (isset($brandMap[$key])) {
+                return $brandMap[$key];
+            }
+        }
+    }
+
+    return null;
+}
+
 function admin_stock_parse_int(string $v): int
 {
     $v = preg_replace('/[^\d\-]/', '', $v);
@@ -127,12 +183,11 @@ function admin_stock_bulk_update(PDO $pdo, array $rows): array
             continue;
         }
 
-        $brandKey = admin_stock_normalize_key($brandRaw);
-        if (!isset($brandMap[$brandKey])) {
+        $brandId = admin_stock_resolve_brand_id($brandRaw, $brandMap);
+        if ($brandId === null) {
             $notFound[] = "{$rowNo}행: 브랜드 '{$brandRaw}'를 찾을 수 없습니다.";
             continue;
         }
-        $brandId = $brandMap[$brandKey];
 
         $sizeKey = admin_stock_normalize_key($sizeRaw);
         $indexKey = $brandId . '|' . $sizeKey;

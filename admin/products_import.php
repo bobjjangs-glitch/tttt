@@ -115,6 +115,70 @@ function admin_normalize_runflat(string $raw): ?string
 }
 
 /**
+ * 브랜드명 키 정규화: 공백 전부 제거 + 대문자 통일.
+ * "MICHELIN", "michelin", "  michelin  " 를 모두 동일 키로 만든다.
+ */
+function admin_import_normalize_brand_key(string $s): string
+{
+    $s = mb_strtoupper(trim($s));
+    return preg_replace('/\s+/u', '', $s) ?? $s;
+}
+
+/**
+ * 같은 브랜드를 가리키는 영문/한글/표기 변형을 하나의 그룹으로 묶어둔다.
+ * DB(tt_brands.name)에 어느 표기로 등록돼 있어도(영문이든 한글이든) 매칭되게 하기 위함이다.
+ * 그룹에 없는 완전히 새로운 브랜드는 여기 한 줄만 추가하면 된다.
+ */
+function admin_import_brand_alias_groups(): array
+{
+    static $groups = [
+        ['MICHELIN', '미쉐린', '미쉐린타이어'],
+        ['BFGOODRICH', 'BF-GOODRICH', 'BF GOODRICH', 'BF굿리치', 'BF굿리치타이어'],
+        ['CONTINENTAL', '콘티넨탈'],
+        ['BRIDGESTONE', '브릿지스톤', '브리지스톤'],
+        ['HANKOOK', 'HANKOOK TIRE', '한국타이어'],
+        ['KUMHO', 'KUMHO TIRE', '금호타이어', '금호'],
+        ['NEXEN', 'NEXEN TIRE', '넥센타이어', '넥센'],
+        ['GOODYEAR', '굿이어'],
+        ['PIRELLI', '피렐리'],
+        ['YOKOHAMA', '요코하마'],
+        ['DUNLOP', '던롭'],
+        ['TOYO', 'TOYO TIRES', '토요'],
+        ['FALKEN', '팔켄'],
+    ];
+    return $groups;
+}
+
+/**
+ * CSV 원본 브랜드 표기를 받아 실제 tt_brands에 등록된 브랜드 id를 찾는다.
+ * 1) DB 이름과 정규화 후 정확히 일치하면 바로 매칭
+ * 2) 별칭 그룹에 속해 있으면, 같은 그룹 안에서 실제 DB에 등록된 표기를 찾아 매칭
+ * 3) 둘 다 실패하면 null (완전히 새로운 브랜드이거나 DB에 아직 등록 안 된 경우)
+ */
+function admin_import_resolve_brand_id(string $rawBrand, array $brandMap): ?int
+{
+    $normalized = admin_import_normalize_brand_key($rawBrand);
+    if ($normalized === '') return null;
+
+    if (isset($brandMap[$normalized])) {
+        return $brandMap[$normalized];
+    }
+
+    foreach (admin_import_brand_alias_groups() as $group) {
+        $groupKeys = array_map('admin_import_normalize_brand_key', $group);
+        if (!in_array($normalized, $groupKeys, true)) continue;
+
+        foreach ($groupKeys as $key) {
+            if (isset($brandMap[$key])) {
+                return $brandMap[$key];
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
  * 업로드한 CSV의 헤더와 시스템이 기대하는 컬럼을 비교해 매칭 리포트를 만든다.
  * "대칭 잡아서" 매칭되는지를 사람이 눈으로 확인할 수 있게 보여주는 용도.
  */
@@ -135,7 +199,9 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
 
     $brandStmt = $pdo->query('SELECT id, name FROM tt_brands');
     $brandMap = [];
-    foreach ($brandStmt->fetchAll() as $b) $brandMap[mb_strtolower(trim($b['name']))] = (int)$b['id'];
+    foreach ($brandStmt->fetchAll() as $b) {
+        $brandMap[admin_import_normalize_brand_key($b['name'])] = (int)$b['id'];
+    }
 
     $successCount = 0;
     $updateCount  = 0;
@@ -153,19 +219,20 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
 
         $productId = (int)($r['상품ID'] ?? 0);
         $catName   = mb_strtolower(trim($r['카테고리'] ?? ''));
-        $brandName = mb_strtolower(trim($r['브랜드'] ?? ''));
+        $brandRaw  = trim($r['브랜드'] ?? '');
 
         if ($catName === '' || !isset($catMap[$catName])) {
             $errors[] = "{$rowNo}행 [{$name}]: 카테고리 '" . ($r['카테고리'] ?? '') . "'를 찾을 수 없습니다.";
             continue;
         }
-        if ($brandName === '' || !isset($brandMap[$brandName])) {
-            $errors[] = "{$rowNo}행 [{$name}]: 브랜드 '" . ($r['브랜드'] ?? '') . "'를 찾을 수 없습니다.";
+
+        $brandId = admin_import_resolve_brand_id($brandRaw, $brandMap);
+        if ($brandId === null) {
+            $errors[] = "{$rowNo}행 [{$name}]: 브랜드 '{$brandRaw}'를 찾을 수 없습니다.";
             continue;
         }
 
         $categoryId    = $catMap[$catName];
-        $brandId       = $brandMap[$brandName];
         $spec          = trim($r['사이즈'] ?? '');
         $origin        = trim($r['원산지'] ?? '');
         $patternCode   = trim($r['패턴코드'] ?? '');

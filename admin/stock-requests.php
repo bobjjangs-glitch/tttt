@@ -1,128 +1,179 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../core/bootstrap.php';
-AdminAuth::requirePermission('stock-requests');
+AdminAuth::requirePermission('products');
 $pdo = Database::connection();
 
-// 상태 변경
-if (is_post() && ($_POST['form_type'] ?? '') === 'update_status') {
+/**
+ * tt_stock_requests 테이블이 없으면 생성한다.
+ * 이 페이지에 처음 접속하는 순간 테이블이 만들어지므로, 반드시 이 파일이
+ * products.php보다 먼저(혹은 최소한 함께) 서버에 올라가 있어야 한다.
+ */
+function ensure_stock_requests_table(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS tt_stock_requests (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            product_id INT NULL COMMENT '연결된 상품ID (없으면 NULL)',
+            brand_text VARCHAR(100) NULL COMMENT '요청 브랜드(자유입력)',
+            size_text VARCHAR(60) NOT NULL COMMENT '요청 사이즈',
+            requested_qty INT NOT NULL DEFAULT 1 COMMENT '요청 수량',
+            customer_name VARCHAR(50) NOT NULL COMMENT '주문자명',
+            customer_phone VARCHAR(20) NOT NULL COMMENT '주문자 연락처',
+            customer_email VARCHAR(120) NULL COMMENT '주문자 이메일',
+            memo TEXT NULL COMMENT '고객 요청 메모',
+            status ENUM('pending','processing','done','cancelled') NOT NULL DEFAULT 'pending' COMMENT '처리 상태',
+            admin_memo TEXT NULL COMMENT '관리자 처리 메모',
+            processed_by INT NULL COMMENT '처리한 관리자 ID',
+            processed_at DATETIME NULL COMMENT '처리 완료 시각',
+            ip_address VARCHAR(45) NULL COMMENT '요청자 IP',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_status (status),
+            INDEX idx_product (product_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+ensure_stock_requests_table($pdo);
+
+const STOCK_REQUEST_STATUS_LABELS = [
+    'pending'    => '대기',
+    'processing' => '처리중',
+    'done'       => '완료',
+    'cancelled'  => '취소',
+];
+
+// 상태 변경 / 관리자 메모 저장 처리
+if (is_post() && isset($_POST['action']) && $_POST['action'] === 'update_status') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
         flash('admin_error', '잘못된 요청입니다.');
-        redirect('/admin/stock-requests.php');
+        redirect('/admin/stock_requests.php');
     }
-    $reqId = (int)($_POST['request_id'] ?? 0);
-    $status = $_POST['status'] ?? 'pending';
-    $allowed = ['pending', 'notified', 'closed'];
-    if (!in_array($status, $allowed, true)) $status = 'pending';
 
-    try {
-        $pdo->prepare('UPDATE tt_stock_requests SET status = :status WHERE id = :id')
-            ->execute(['status' => $status, 'id' => $reqId]);
-        flash('admin_success', '재고 요청 상태가 변경되었습니다.');
-    } catch (Throwable $e) {
-        flash('admin_error', '상태 변경 중 오류가 발생했습니다.');
+    $id = (int)($_POST['id'] ?? 0);
+    $status = (string)($_POST['status'] ?? '');
+    $adminMemo = trim((string)($_POST['admin_memo'] ?? ''));
+
+    if ($id <= 0 || !isset(STOCK_REQUEST_STATUS_LABELS[$status])) {
+        flash('admin_error', '요청 상태 값이 올바르지 않습니다.');
+        redirect('/admin/stock_requests.php');
     }
-    redirect('/admin/stock-requests.php');
+
+    $stmt = $pdo->prepare("
+        UPDATE tt_stock_requests
+        SET status = :status,
+            admin_memo = :memo,
+            processed_by = :admin_id,
+            processed_at = CASE WHEN :status2 IN ('done','cancelled') THEN NOW() ELSE processed_at END
+        WHERE id = :id
+    ");
+    $stmt->execute([
+        'status'   => $status,
+        'status2'  => $status,
+        'memo'     => $adminMemo !== '' ? $adminMemo : null,
+        'admin_id' => (int)AdminAuth::currentAdminId(),
+        'id'       => $id,
+    ]);
+
+    AdminAuth::log((int)AdminAuth::currentAdminId(), 'stock_request_update', "재고요청 #{$id} 상태를 '{$status}'로 변경");
+    flash('admin_success', "요청 #{$id} 처리 상태가 저장되었습니다.");
+    redirect('/admin/stock_requests.php' . (isset($_GET['status']) ? '?status=' . urlencode($_GET['status']) : ''));
 }
 
-// 재고 요청 목록 (테이블이 없어도 에러 안 나게 try-catch)
-$requests = [];
-$tableExists = false;
-try {
-    $tableExists = (bool)$pdo->query("SHOW TABLES LIKE 'tt_stock_requests'")->fetch();
-    if ($tableExists) {
-        $requests = $pdo->query("
-            SELECT sr.id, sr.product_id, sr.dot_code, sr.qty, sr.phone, sr.status, sr.created_at,
-                   p.name AS product_name, p.spec,
-                   u.email AS user_email, u.nickname AS user_name
-            FROM tt_stock_requests sr
-            LEFT JOIN tt_products p ON p.id = sr.product_id
-            LEFT JOIN tt_users u ON u.id = sr.user_id
-            ORDER BY sr.created_at DESC
-            LIMIT 100
-        ")->fetchAll();
-    }
-} catch (Throwable $e) {
-    error_log('[admin/stock-requests] ' . $e->getMessage());
-    $requests = [];
+// 목록 조회 (상태 필터 지원)
+$filterStatus = $_GET['status'] ?? '';
+$where = '';
+$params = [];
+if ($filterStatus !== '' && isset(STOCK_REQUEST_STATUS_LABELS[$filterStatus])) {
+    $where = 'WHERE r.status = :status';
+    $params['status'] = $filterStatus;
 }
 
-$statusLabels = ['pending' => '대기중', 'notified' => '안내완료', 'closed' => '종료'];
-$statusColors = ['pending' => '#f59e0b', 'notified' => '#22c55e', 'closed' => '#9ca3af'];
+$sql = "
+    SELECT r.*, p.name AS product_name
+    FROM tt_stock_requests r
+    LEFT JOIN tt_products p ON p.id = r.product_id
+    {$where}
+    ORDER BY r.created_at DESC
+    LIMIT 200
+";
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$requests = $stmt->fetchAll();
+
+$countStmt = $pdo->query("
+    SELECT status, COUNT(*) AS cnt FROM tt_stock_requests GROUP BY status
+");
+$statusCounts = ['pending'=>0,'processing'=>0,'done'=>0,'cancelled'=>0];
+foreach ($countStmt->fetchAll() as $c) $statusCounts[$c['status']] = (int)$c['cnt'];
 
 $pageTitle = '재고 요청 관리';
 require __DIR__ . '/includes/header.php';
 ?>
-<div class="admin-card">
-  <h2 class="admin-page-title">재고 요청 관리 <span class="admin-count-pill"><?= count($requests) ?>건</span></h2>
-  <p class="admin-mini-hint">고객이 품절 상품의 재고를 요청한 목록입니다. 입고 시 안내 후 상태를 "안내완료"로 변경하세요.</p>
 
-  <?php if (!$tableExists): ?>
-    <div class="admin-alert admin-alert-error" style="margin-bottom:16px;">
-      ⚠️ <strong>tt_stock_requests</strong> 테이블이 아직 DB에 없습니다. phpMyAdmin SQL 탭에서 아래를 실행해 주세요:
-      <pre style="margin-top:10px;background:#1e293b;color:#e2e8f0;padding:14px;border-radius:8px;font-size:12px;overflow-x:auto;">CREATE TABLE IF NOT EXISTS tt_stock_requests (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id BIGINT UNSIGNED NULL,
-  product_id BIGINT UNSIGNED NOT NULL,
-  dot_code VARCHAR(20) NULL,
-  qty INT NOT NULL DEFAULT 1,
-  phone VARCHAR(20) NULL,
-  status ENUM('pending','notified','closed') NOT NULL DEFAULT 'pending',
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;</pre>
-    </div>
-  <?php elseif (empty($requests)): ?>
-    <p class="admin-empty-row" style="padding:40px;text-align:center;color:#999;">
-      ✅ 테이블이 정상적으로 생성되었습니다. 아직 접수된 재고 요청이 없습니다.<br>
-      고객이 상품 페이지에서 "재고 요청하기" 버튼을 누르면 여기에 목록이 표시됩니다.
-    </p>
+<div class="admin-card" style="background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #e0e7ff;">
+  <h2 class="admin-page-title">📦 재고 요청 관리</h2>
+  <p class="admin-form-hint">고객이 메인 화면에서 접수한 재고 문의/요청 목록입니다. 주문자 정보를 확인하고 처리 상태를 변경하세요.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+    <a href="?status=" class="btn-admin-secondary <?= $filterStatus==='' ? 'active' : '' ?>">전체 (<?= array_sum($statusCounts) ?>)</a>
+    <?php foreach (STOCK_REQUEST_STATUS_LABELS as $key => $label): ?>
+      <a href="?status=<?= $key ?>" class="btn-admin-secondary <?= $filterStatus===$key ? 'active' : '' ?>"><?= $label ?> (<?= $statusCounts[$key] ?>)</a>
+    <?php endforeach; ?>
+  </div>
+</div>
+
+<div class="admin-card">
+  <?php if (empty($requests)): ?>
+    <p class="admin-form-hint">해당 조건의 재고 요청이 없습니다.</p>
   <?php else: ?>
-    <table class="admin-table-trendy">
-      <thead>
-        <tr>
-          <th style="width:60px">No</th>
-          <th>상품명</th>
-          <th style="width:80px">DOT</th>
-          <th style="width:60px">수량</th>
-          <th style="width:120px">회원</th>
-          <th style="width:120px">연락처</th>
-          <th style="width:100px">상태</th>
-          <th style="width:140px">요청일</th>
-          <th style="width:120px"></th>
-        </tr>
-      </thead>
-      <tbody>
+  <table class="admin-table" style="width:100%;font-size:13px;">
+    <thead>
+      <tr>
+        <th>접수시각</th>
+        <th>주문자명</th>
+        <th>연락처</th>
+        <th>이메일</th>
+        <th>요청 상품/사이즈</th>
+        <th>수량</th>
+        <th>고객 메모</th>
+        <th>상태 / 관리자 메모</th>
+      </tr>
+    </thead>
+    <tbody>
       <?php foreach ($requests as $r): ?>
-        <tr>
-          <td class="mono">#<?= (int)$r['id'] ?></td>
-          <td><strong><?= h($r['product_name'] ?? '상품#' . (int)$r['product_id']) ?></strong>
-              <?php if (!empty($r['spec'])): ?><br><span class="admin-text-sub"><?= h($r['spec']) ?></span><?php endif; ?>
-          </td>
-          <td class="mono"><?= h($r['dot_code'] ?: '-') ?></td>
-          <td class="mono"><?= (int)$r['qty'] ?>개</td>
-          <td><?= h($r['user_name'] ?? $r['user_email'] ?? '비회원') ?></td>
-          <td class="mono"><?= h($r['phone'] ?: '-') ?></td>
-          <td>
-            <span class="status-badge" style="background:<?= $statusColors[$r['status']] ?? '#999' ?>22;color:<?= $statusColors[$r['status']] ?? '#999' ?>">
-              <?= $statusLabels[$r['status']] ?? $r['status'] ?>
-            </span>
-          </td>
-          <td class="admin-text-sub"><?= h($r['created_at']) ?></td>
-          <td>
-            <form method="post" style="display:inline">
-              <?= Csrf::field() ?>
-              <input type="hidden" name="form_type" value="update_status">
-              <input type="hidden" name="request_id" value="<?= (int)$r['id'] ?>">
-              <select name="status" onchange="this.form.submit()" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #ddd;">
-                <option value="pending" <?= $r['status']==='pending'?'selected':'' ?>>대기중</option>
-                <option value="notified" <?= $r['status']==='notified'?'selected':'' ?>>안내완료</option>
-                <option value="closed" <?= $r['status']==='closed'?'selected':'' ?>>종료</option>
-              </select>
-            </form>
-          </td>
-        </tr>
+      <tr>
+        <td><?= h($r['created_at']) ?></td>
+        <td><?= h($r['customer_name']) ?></td>
+        <td><a href="tel:<?= h($r['customer_phone']) ?>"><?= h($r['customer_phone']) ?></a></td>
+        <td><?= $r['customer_email'] ? h($r['customer_email']) : '-' ?></td>
+        <td>
+          <?php if ($r['product_name']): ?>
+            <b><?= h($r['product_name']) ?></b> (#<?= (int)$r['product_id'] ?>)
+          <?php else: ?>
+            <?= $r['brand_text'] ? h($r['brand_text']) . ' ' : '' ?><?= h($r['size_text']) ?>
+            <span style="color:#b45309;">(미등록 상품)</span>
+          <?php endif; ?>
+        </td>
+        <td><?= (int)$r['requested_qty'] ?></td>
+        <td><?= $r['memo'] ? nl2br(h($r['memo'])) : '-' ?></td>
+        <td>
+          <form method="post" style="display:flex;flex-direction:column;gap:6px;min-width:180px;">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="action" value="update_status">
+            <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+            <select name="status">
+              <?php foreach (STOCK_REQUEST_STATUS_LABELS as $key => $label): ?>
+                <option value="<?= $key ?>" <?= $r['status']===$key ? 'selected' : '' ?>><?= $label ?></option>
+              <?php endforeach; ?>
+            </select>
+            <textarea name="admin_memo" rows="2" placeholder="처리 메모"><?= h($r['admin_memo'] ?? '') ?></textarea>
+            <button type="submit" class="btn-admin-primary" style="padding:5px 10px;font-size:12px;">저장</button>
+          </form>
+        </td>
+      </tr>
       <?php endforeach; ?>
-      </tbody>
-    </table>
+    </tbody>
+  </table>
   <?php endif; ?>
 </div>
+
+<?php require __DIR__ . '/includes/footer.php'; ?>

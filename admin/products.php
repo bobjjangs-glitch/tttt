@@ -79,6 +79,20 @@ function admin_build_page_range(int $current, int $total, int $window = 2): arra
     return $range;
 }
 
+/**
+ * 메인화면에서 접수된 재고 요청 중 '대기(pending)' 상태인 건수를 센다.
+ * tt_stock_requests 테이블이 아직 생성되지 않은 초기 상태(관리자가 재고요청 관리 화면을
+ * 한 번도 열어보지 않은 경우)에도 상품 목록 화면 전체가 죽지 않도록 예외를 방어적으로 처리한다.
+ */
+function admin_count_pending_stock_requests(PDO $pdo): int
+{
+    try {
+        return (int)$pdo->query("SELECT COUNT(*) FROM tt_stock_requests WHERE status = 'pending'")->fetchColumn();
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+
 if (is_post() && ($_POST['form_type'] ?? '') === 'toggle_status') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
         flash('admin_error', '잘못된 요청입니다.');
@@ -202,6 +216,7 @@ $pageRange  = admin_build_page_range($page, $totalPages, 2);
 
 $categories = $pdo->query("SELECT id, name FROM tt_categories ORDER BY name")->fetchAll();
 $brands     = $pdo->query("SELECT id, name FROM tt_brands ORDER BY name")->fetchAll();
+$pendingStockRequestCount = admin_count_pending_stock_requests($pdo);
 
 $backQuery = http_build_query(['kw' => $keyword, 'category_id' => $categoryId, 'brand_id' => $brandId, 'status' => $statusFilter, 'page' => $page]);
 
@@ -241,6 +256,14 @@ require __DIR__ . '/includes/header.php';
     <a href="<?= BASE_URL ?>/admin/products_import.php" class="btn-admin-excel">📁 엑셀 일괄 업로드</a>
     <a href="<?= BASE_URL ?>/admin/products_export.php?<?= h($backQuery) ?>" class="btn-admin-excel">📊 엑셀 다운로드</a>
     <a href="<?= BASE_URL ?>/admin/stock_update.php" class="btn-admin-excel">📦 재고 일괄 업데이트</a>
+    <a href="<?= BASE_URL ?>/admin/stock_requests.php" class="btn-admin-excel" style="position:relative;">
+      📥 재고 요청 관리
+      <?php if ($pendingStockRequestCount > 0): ?>
+        <span style="position:absolute;top:-8px;right:-8px;background:#d93025;color:#fff;border-radius:999px;font-size:11px;line-height:1;padding:3px 6px;font-weight:700;">
+          <?= $pendingStockRequestCount > 99 ? '99+' : $pendingStockRequestCount ?>
+        </span>
+      <?php endif; ?>
+    </a>
     <button type="submit" form="bulkDeleteForm" class="btn-bulk-delete" disabled>🗑 선택 삭제</button>
   </div>
 </div>
