@@ -7,7 +7,7 @@ $pdo = Database::connection();
 /**
  * tt_stock_requests 테이블이 없으면 생성한다.
  * 이 페이지에 처음 접속하는 순간 테이블이 만들어지므로, 반드시 이 파일이
- * products.php보다 먼저(혹은 최소한 함께) 서버에 올라가 있어야 한다.
+ * ajax-stock-request.php와 함께(혹은 그 이전에) 서버에 올라가 있어야 한다.
  */
 function ensure_stock_requests_table(PDO $pdo): void
 {
@@ -46,7 +46,7 @@ const STOCK_REQUEST_STATUS_LABELS = [
 if (is_post() && isset($_POST['action']) && $_POST['action'] === 'update_status') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
         flash('admin_error', '잘못된 요청입니다.');
-        redirect('/admin/stock_requests.php');
+        redirect('/admin/stock-requests.php');
     }
 
     $id = (int)($_POST['id'] ?? 0);
@@ -55,7 +55,7 @@ if (is_post() && isset($_POST['action']) && $_POST['action'] === 'update_status'
 
     if ($id <= 0 || !isset(STOCK_REQUEST_STATUS_LABELS[$status])) {
         flash('admin_error', '요청 상태 값이 올바르지 않습니다.');
-        redirect('/admin/stock_requests.php');
+        redirect('/admin/stock-requests.php');
     }
 
     $stmt = $pdo->prepare("
@@ -76,7 +76,7 @@ if (is_post() && isset($_POST['action']) && $_POST['action'] === 'update_status'
 
     AdminAuth::log((int)AdminAuth::currentAdminId(), 'stock_request_update', "재고요청 #{$id} 상태를 '{$status}'로 변경");
     flash('admin_success', "요청 #{$id} 처리 상태가 저장되었습니다.");
-    redirect('/admin/stock_requests.php' . (isset($_GET['status']) ? '?status=' . urlencode($_GET['status']) : ''));
+    redirect('/admin/stock-requests.php' . (isset($_GET['status']) ? '?status=' . urlencode($_GET['status']) : ''));
 }
 
 // 목록 조회 (상태 필터 지원)
@@ -112,7 +112,7 @@ require __DIR__ . '/includes/header.php';
 
 <div class="admin-card" style="background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #e0e7ff;">
   <h2 class="admin-page-title">📦 재고 요청 관리</h2>
-  <p class="admin-form-hint">고객이 메인 화면에서 접수한 재고 문의/요청 목록입니다. 주문자 정보를 확인하고 처리 상태를 변경하세요.</p>
+  <p class="admin-form-hint">회원이 상품 상세페이지에서 접수한 재고 요청 목록입니다. 회원가입 정보(이름/연락처/이메일)와 요청 상품을 확인하고 처리 상태를 변경하세요.</p>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
     <a href="?status=" class="btn-admin-secondary <?= $filterStatus==='' ? 'active' : '' ?>">전체 (<?= array_sum($statusCounts) ?>)</a>
     <?php foreach (STOCK_REQUEST_STATUS_LABELS as $key => $label): ?>
