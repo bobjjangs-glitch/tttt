@@ -256,7 +256,7 @@ require __DIR__ . '/includes/header.php';
     <a href="<?= BASE_URL ?>/admin/products_import.php" class="btn-admin-excel">📁 엑셀 일괄 업로드</a>
     <a href="<?= BASE_URL ?>/admin/products_export.php?<?= h($backQuery) ?>" class="btn-admin-excel">📊 엑셀 다운로드</a>
     <a href="<?= BASE_URL ?>/admin/stock_update.php" class="btn-admin-excel">📦 재고 일괄 업데이트</a>
-    <a href="<?= BASE_URL ?>/admin/stock_requests.php" class="btn-admin-excel" style="position:relative;">
+    <a href="<?= BASE_URL ?>/admin/stock-requests.php" class="btn-admin-excel" style="position:relative;">
       📥 재고 요청 관리
       <?php if ($pendingStockRequestCount > 0): ?>
         <span style="position:absolute;top:-8px;right:-8px;background:#d93025;color:#fff;border-radius:999px;font-size:11px;line-height:1;padding:3px 6px;font-weight:700;">
@@ -269,8 +269,6 @@ require __DIR__ . '/includes/header.php';
 </div>
 
 <?php if (AdminAuth::isSuper()): ?>
-<!-- [신규] 전체 삭제 영역: 최고관리자만 보이고, 확인 문구를 정확히 입력해야만 버튼이 활성화된다.
-     오탐/오클릭 방지를 위해 일반 툴바와 시각적으로 분리(경고색 박스)해두었다. -->
 <div class="admin-card" style="margin-top:14px;border:1px solid #f87171;background:#fff5f5;">
   <h2 style="color:#b91c1c;">⚠ 위험 구역: 상품 전체 삭제</h2>
   <p style="color:#7f1d1d;font-size:13px;line-height:1.6;">
