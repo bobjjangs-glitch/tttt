@@ -674,19 +674,19 @@ require __DIR__ . '/includes/header.php';
       <input type="file" name="detail_images[]" id="detailImgFileInput" accept=".jpg,.jpeg,.png,.webp,.gif" multiple>
       <p class="admin-detail-img-count-info" id="detailImgCountInfo"></p>
       <div class="admin-detail-preview-btn-row">
-        <button type="button" class="btn-detail-preview" id="btnDetailPreview">🔍 상세페이지 이미지 미리보기</button>
+        <button type="button" class="btn-detail-preview" id="btnDetailPreview">🔍 상세페이지 이미지 이어보기 미리보기</button>
       </div>
     </div>
 
-    <h3 class="admin-form-section-title">DOT 옵션 (제조연주차별 판매가/재고)</h3>
+    <h3 class="admin-form-section-title">DOT 옵션 (색상코드/재고 관리용 하위 옵션/재고)</h3>
     <table class="admin-table-trendy admin-option-table" id="optionTable">
       <thead>
         <tr>
           <th>DOT 코드 *</th>
           <th>판매가(원) *</th>
-          <th>사이즈(선택)</th>
-          <th>재고</th>
-          <th>활성화</th>
+          <th>사이즈</th>
+          <th>재고수량</th>
+          <th>노출</th>
           <th>삭제</th>
         </tr>
       </thead>
@@ -723,11 +723,11 @@ require __DIR__ . '/includes/header.php';
       </tbody>
     </table>
     <input type="hidden" id="optIndexCounter" value="<?= $idx ?>">
-    <button type="button" id="btnAddOption" class="btn-admin-secondary">+ DOT 옵션 줄 추가</button>
+    <button type="button" id="btnAddOption" class="btn-admin-secondary">+ DOT 옵션 추가</button>
 
     <div class="admin-form-actions">
-      <a href="<?= BASE_URL ?>/admin/products.php" class="btn-admin-secondary">취소</a>
-      <button type="submit" class="btn-admin-primary"><?= $isEdit ? '수정 저장' : '상품 등록' ?></button>
+      <a href="<?= BASE_URL ?>/admin/products.php" class="btn-admin-secondary">뒤로</a>
+      <button type="submit" class="btn-admin-primary"><?= $isEdit ? '수정 완료' : '상품 등록' ?></button>
     </div>
   </form>
 
@@ -739,7 +739,7 @@ require __DIR__ . '/includes/header.php';
         <div class="pf-card-thumb" id="pfCardThumb"><span class="ph">🛞</span></div>
         <div class="pf-card-body">
           <div class="pf-card-brand" id="pfCardBrand"></div>
-          <div class="pf-card-name" id="pfCardName">상품명을 입력하세요</div>
+          <div class="pf-card-name" id="pfCardName">상품명이 여기 표시됨</div>
           <div class="pf-card-price-row">
             <span class="pf-card-discount" id="pfCardDiscount" style="display:none;"></span>
             <span class="pf-card-price-sale" id="pfCardPriceSale">0원</span>
@@ -752,21 +752,21 @@ require __DIR__ . '/includes/header.php';
         <div class="pf-detail-main-img" id="pfDetailMainImg"><span class="ph">🛞</span></div>
         <div class="pf-detail-thumbs" id="pfDetailThumbs"></div>
         <p class="pf-detail-brand" id="pfDetailBrand"></p>
-        <h4 class="pf-detail-name" id="pfDetailName">상품명을 입력하세요</h4>
+        <h4 class="pf-detail-name" id="pfDetailName">상품명이 여기 표시됨</h4>
         <p class="pf-detail-model" id="pfDetailModel"></p>
         <div class="pf-detail-price" id="pfDetailPrice">0원</div>
-        <p class="pf-detail-desc" id="pfDetailDesc">상세 설명이 여기에 표시됩니다.</p>
+        <p class="pf-detail-desc" id="pfDetailDesc">상품 설명이 여기에 표시됩니다.</p>
       </div>
     </div>
   </aside>
   </div>
 </div>
 
-<!-- 상세페이지 이미지 미리보기 모달: 실제 product-detail.php의 .pd-detail-images 섹션 스타일과 유사한 카드 -->
+<!-- 상세페이지 이미지 이어보기 미리보기 모달: 실제 product-detail.php 의 .pd-detail-images 섹션 재현과 유사 -->
 <div class="admin-modal-overlay" id="detailPreviewModalOverlay">
   <div class="admin-modal-box">
     <div class="admin-modal-header">
-      <h3>상세페이지 이미지 미리보기</h3>
+      <h3>상세페이지 이미지 이어보기 미리보기</h3>
       <button type="button" class="admin-modal-close" id="detailPreviewModalClose" aria-label="닫기">&times;</button>
     </div>
     <div class="admin-modal-body" id="detailPreviewModalBody"></div>
@@ -819,7 +819,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   optionIndex++;
 });
 
-/* ================= 대표이미지 + 실시간 미리보기 ================= */
+/* ================ 대표이미지 + 실시간 미리보기 ================ */
 (function(){
   const $ = (id) => document.getElementById(id);
   const nameInput      = document.querySelector('[name="name"]');
@@ -837,12 +837,12 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   const cardPriceOrig  = $('pfCardPriceOrig');
 
   const detailMainImg  = $('pfDetailMainImg');
-  const detailThumbs   = $('pfDetailThumbs');
-  const detailBrand    = $('pfDetailBrand');
-  const detailName     = $('pfDetailName');
-  const detailModel    = $('pfDetailModel');
-  const detailPrice    = $('pfDetailPrice');
-  const detailDesc     = $('pfDetailDesc');
+  const detailThumbs    = $('pfDetailThumbs');
+  const detailBrand     = $('pfDetailBrand');
+  const detailName      = $('pfDetailName');
+  const detailModel     = $('pfDetailModel');
+  const detailPrice     = $('pfDetailPrice');
+  const detailDesc      = $('pfDetailDesc');
 
   const mainImgList      = $('mainImgList');
   const mainImgFileInput = $('mainImgFileInput');
@@ -880,7 +880,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   }
 
   function updatePreview(){
-    const name  = nameInput.value.trim() || '상품명을 입력하세요';
+    const name  = nameInput.value.trim() || '상품명이 여기 표시됨';
     const model = modelInput.value.trim();
     const brandOpt = brandSelect.options[brandSelect.selectedIndex];
     const brandText = (brandOpt && brandOpt.value) ? brandOpt.text : '';
@@ -908,7 +908,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
     detailName.textContent  = name;
     detailModel.textContent = model;
     detailPrice.textContent = fmt(priceSale > 0 ? priceSale : priceOrig) + '원';
-    detailDesc.textContent  = desc || '상세 설명이 여기에 표시됩니다.';
+    detailDesc.textContent  = desc || '상품 설명이 여기에 표시됩니다.';
 
     renderGallery();
   }
@@ -944,7 +944,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   mainImgFileInput.addEventListener('change', function(){
     const maxNew = Math.max(0, MAX_MAIN_COUNT - keptExistingMainCount());
     if (this.files.length > maxNew) {
-      alert(`대표 이미지는 최대 ${MAX_MAIN_COUNT}장까지만 등록할 수 있습니다. 기존 이미지가 ${keptExistingMainCount()}장 있어 최대 ${maxNew}장까지 추가로 첨부할 수 있습니다.`);
+      alert(`대표 이미지는 최대 ${MAX_MAIN_COUNT}장까지만 등록할 수 있습니다. 기존 이미지가 ${keptExistingMainCount()}장 있어 최대 ${maxNew}장까지 추가할 수 있습니다.`);
       const dt = new DataTransfer();
       Array.from(this.files).slice(0, maxNew).forEach(f => dt.items.add(f));
       this.files = dt.files;
@@ -962,7 +962,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   updatePreview();
 })();
 
-/* ================= 상세페이지 이미지 관리 + 미리보기 모달 ================= */
+/* ================ 상세페이지 이미지 갱신 + 미리보기 모달 ================ */
 (function(){
   const detailImgList      = document.getElementById('detailImgList');
   const detailImgFileInput = document.getElementById('detailImgFileInput');
@@ -1009,7 +1009,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
   detailImgFileInput.addEventListener('change', function(){
     const maxNew = Math.max(0, MAX_DETAIL_COUNT - keptExistingDetailCount());
     if (this.files.length > maxNew) {
-      alert(`상세페이지 이미지는 최대 ${MAX_DETAIL_COUNT}장까지만 등록할 수 있습니다. 기존 이미지가 ${keptExistingDetailCount()}장 있어 최대 ${maxNew}장까지 추가로 첨부할 수 있습니다.`);
+      alert(`상세페이지 이미지는 최대 ${MAX_DETAIL_COUNT}장까지만 등록할 수 있습니다. 기존 이미지가 ${keptExistingDetailCount()}장 있어 최대 ${maxNew}장까지 추가할 수 있습니다.`);
       const dt = new DataTransfer();
       Array.from(this.files).slice(0, maxNew).forEach(f => dt.items.add(f));
       this.files = dt.files;
@@ -1017,7 +1017,7 @@ document.getElementById('btnAddOption').addEventListener('click', () => {
     updateDetailCountInfo();
   });
 
-  /* 실제 상세페이지의 .pd-detail-images와 동일하게 이어붙여서 미리보기/모달 렌더링 */
+  /* 실제 상세페이지의 .pd-detail-images와 동일하게 세로로 이어붙여 보여주는 미리보기/모달 로직 */
   function currentDetailImageUrls(){
     const kept = Array.from(detailImgList.querySelectorAll('.admin-detail-img-item'))
       .filter(li => !li.querySelector('input[type="checkbox"]').checked)

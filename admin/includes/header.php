@@ -40,6 +40,10 @@ function admin_nav_active(string $script, string $target): string {
       <a href="<?= BASE_URL ?>/admin/orders.php" class="<?= admin_nav_active($currentScript, 'orders.php') ?>">주문 관리</a>
       <?php endif; ?>
 
+      <?php if (AdminAuth::can('shipping')): ?>
+      <a href="<?= BASE_URL ?>/admin/shipping.php" class="<?= admin_nav_active($currentScript, 'shipping.php') ?>">🚚 배송비 설정</a>
+      <?php endif; ?>
+
       <?php if (AdminAuth::can('products')): ?>
       <a href="<?= BASE_URL ?>/admin/products.php" class="<?= admin_nav_active($currentScript, 'products.php') ?>">상품 관리</a>
       <?php endif; ?>
