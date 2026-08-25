@@ -21,6 +21,7 @@ $stmt = $pdo->prepare(
             p.rating_avg, p.review_count, p.description, p.dot_code,
             p.pattern_code, p.load_speed_rating, p.width_mm, p.aspect_ratio,
             p.rim_diameter, p.pattern_name, p.oem, p.tech, p.runflat,
+            p.car_type, p.grade, p.feature_tags,
             b.name AS brand_name
      FROM tt_products p
      LEFT JOIN tt_brands b ON b.id = p.brand_id
@@ -51,7 +52,6 @@ try {
     $options = [];
 }
 
-/* 대표 이미지(최대 3개) – sort_order 순으로 가져오고, 없으면 thumbnail_url로 fallback */
 $mainImages = [];
 try {
     $miStmt = $pdo->prepare(
@@ -68,7 +68,6 @@ if (empty($mainImages) && !empty($product['thumbnail_url'])) {
     $mainImages = [$product['thumbnail_url']];
 }
 
-/* 상세페이지에 이어붙일 이미지 리스트 */
 $detailImages = [];
 try {
     $diStmt = $pdo->prepare(
@@ -90,7 +89,6 @@ if (Auth::isLoggedIn()) {
 }
 
 $csrfToken = Csrf::token();
-
 $autoOpenReview = (($_GET['write_review'] ?? '') === '1');
 
 $flashMsg = null;
@@ -104,7 +102,6 @@ if ((int)$product['price_original'] > 0) {
     $discountPct = (int)round((1 - ((int)$product['price_sale'] / (int)$product['price_original'])) * 100);
 }
 
-/* [신규] 히어로 카드용 사이즈 라벨 */
 $sizeLabel = '';
 if (!empty($product['width_mm']) && !empty($product['aspect_ratio']) && !empty($product['rim_diameter'])) {
     $sizeLabel = $product['width_mm'] . '/' . $product['aspect_ratio'] . 'R' . $product['rim_diameter'];
@@ -112,7 +109,6 @@ if (!empty($product['width_mm']) && !empty($product['aspect_ratio']) && !empty($
     $sizeLabel = $product['spec'];
 }
 
-/* [신규] 히어로 카드용 한 줄 서브카피 – description 첫 줄을 40자 이내로 자름 */
 $subtitle = '';
 if (!empty($product['description'])) {
     $firstLine = trim(strtok((string)$product['description'], "\n"));
@@ -121,16 +117,11 @@ if (!empty($product['description'])) {
     }
 }
 
-/* [신규] 우측 특징 태그 칩 – tech 컬럼을 , 또는 / 로 나눠서 사용 (없으면 패널 자체를 숨김) */
-$featureTags = [];
-if (!empty($product['tech'])) {
-    foreach (preg_split('/[,\/]+/u', (string)$product['tech']) as $tag) {
-        $tag = trim($tag);
-        if ($tag !== '') $featureTags[] = $tag;
-    }
-}
+/* [신규] 노출 배지 – 관리자에서 실제로 저장한 값만 사용. 값이 없으면 각 영역이 조용히 숨겨짐 */
+$badgeCarType = trim((string)($product['car_type'] ?? ''));
+$badgeGrade   = trim((string)($product['grade'] ?? ''));
+$featureTags  = array_values(array_filter(array_map('trim', explode(',', (string)($product['feature_tags'] ?? '')))));
 
-/* "상품 기본정보" 표(정보 탭) 구성 */
 $specRows = [];
 if (!empty($product['brand_name']))       $specRows[] = ['제조사', $product['brand_name']];
 if ($sizeLabel !== '')                     $specRows[] = ['크기', $sizeLabel];
@@ -148,16 +139,14 @@ require __DIR__ . '/includes/header.php';
 ?>
 
 <style>
-/* =====================================================
-   [신규] 상품 상세 히어로 카드 – 외부 전역 CSS와 충돌 방지를 위해
-   전부 pdh- 프리픽스로 독립 스타일링 (info / gallery / feature 3단 구성)
-   ===================================================== */
 .pdh-wrap{max-width:1200px;margin:0 auto;padding:24px 20px 0;}
-.pdh-grid{display:grid;grid-template-columns:1fr 1fr 240px;gap:36px;align-items:start;}
+.pdh-grid{display:grid;grid-template-columns:1fr 1.15fr;gap:36px;align-items:start;}
 @media (max-width:1000px){.pdh-grid{grid-template-columns:1fr;}}
 
 .pdh-brand{font-size:13px;color:#94a3b8;font-weight:700;margin:0 0 8px;}
-.pdh-size-chip{display:inline-block;border:1px solid #cbd5e1;border-radius:8px;padding:4px 12px;font-size:14px;font-weight:700;color:#334155;margin-bottom:12px;}
+.pdh-chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+.pdh-size-chip{display:inline-block;border:1px solid #cbd5e1;border-radius:8px;padding:4px 12px;font-size:14px;font-weight:700;color:#334155;}
+.pdh-cartype-chip{display:inline-block;background:#0f172a;color:#fff;border-radius:8px;padding:4px 12px;font-size:13px;font-weight:700;}
 .pdh-title{font-size:26px;font-weight:800;color:#0f172a;margin:0 0 6px;line-height:1.32;word-break:break-all;}
 .pdh-subtitle{font-size:13px;color:#94a3b8;margin:0 0 14px;}
 .pdh-rating-row{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;margin-bottom:20px;}
@@ -203,23 +192,30 @@ require __DIR__ . '/includes/header.php';
 .pdh-benefit-box{margin-top:16px;font-size:12px;color:#94a3b8;line-height:1.6;}
 
 .pdh-gallery{display:flex;flex-direction:column;gap:12px;}
+.pdh-gallery-row{display:flex;gap:14px;align-items:stretch;}
+
+.pdh-main-img-wrap{position:relative;flex:1;min-width:0;}
 .pdh-main-img{width:100%;aspect-ratio:1/1;background:#f1f5f9;border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
 .pdh-main-img img{width:100%;height:100%;object-fit:cover;}
 .pdh-main-img .ph{font-size:48px;}
+
+/* 특징 태그 오버레이 – feature_tags 컬럼 값이 있을 때만 렌더링 */
+.pdh-tag-overlay{position:absolute;top:14px;left:0;right:0;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:0 12px;z-index:2;pointer-events:none;}
+.pdh-tag-overlay .pdh-tag-chip{background:rgba(255,255,255,.95);border:1px solid #e2e8f0;border-radius:999px;padding:6px 14px;font-size:12px;font-weight:700;color:#334155;box-shadow:0 4px 10px rgba(15,23,42,.10);white-space:nowrap;}
+
+/* 등급/서비스 뱃지 사이드 카드 – grade 컬럼 값이 있을 때만 뱃지 노출, 배송/장착/상담은 항상 노출 */
+.pdh-badge-side{width:120px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:6px;}
+.pdh-badge-grade{width:100%;text-align:center;border:1px solid #cbd5e1;border-radius:14px;padding:12px 6px;font-size:17px;font-weight:800;color:#0f172a;background:#fff;box-shadow:0 4px 10px rgba(15,23,42,.06);}
+.pdh-badge-services{display:flex;flex-direction:column;gap:9px;width:100%;padding-top:2px;border-top:1px solid #e2e8f0;padding-top:12px;}
+.pdh-badge-services .pdh-service-item{display:flex;align-items:center;gap:6px;font-size:12px;color:#334155;font-weight:700;}
+.pdh-badge-services .pdh-service-item .ic{color:#0d9488;font-size:13px;}
+.pdh-badge-consult{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:#64748b;text-decoration:none;text-align:center;padding-top:10px;border-top:1px solid #e2e8f0;width:100%;}
+.pdh-badge-consult:hover{color:#0d9488;}
+
 .pdh-thumb-strip{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
 .pdh-thumb-strip img{width:56px;height:56px;object-fit:cover;border-radius:10px;cursor:pointer;border:2px solid transparent;transition:border-color .12s;}
 .pdh-thumb-strip img.active,.pdh-thumb-strip img:hover{border-color:#0d9488;}
 
-.pdh-feature-panel{border:1px solid #e2e8f0;border-radius:16px;padding:18px;background:#fafbff;}
-.pdh-tag-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;}
-.pdh-tag-chip{border:1px solid #e2e8f0;border-radius:10px;padding:9px 6px;text-align:center;font-size:13px;font-weight:700;color:#334155;background:#fff;}
-.pdh-service-list{display:flex;flex-direction:column;gap:9px;margin-bottom:14px;padding-top:14px;border-top:1px solid #e2e8f0;}
-.pdh-service-item{display:flex;align-items:center;gap:8px;font-size:13px;color:#334155;font-weight:700;}
-.pdh-service-item .ic{color:#0d9488;font-size:14px;}
-.pdh-consult-link{display:flex;align-items:center;gap:6px;font-size:12px;color:#64748b;text-decoration:none;padding-top:12px;border-top:1px solid #e2e8f0;}
-.pdh-consult-link:hover{color:#0d9488;}
-
-/* ===== 후기 작성 CTA / 모달 ===== */
 .pd-review-cta{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;}
 .btn-review-write{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;padding:12px 26px;border-radius:999px;font-weight:700;font-size:15px;cursor:pointer;box-shadow:0 6px 16px rgba(99,102,241,.35);transition:transform .15s ease,box-shadow .15s ease;display:inline-flex;align-items:center;gap:6px;}
 .btn-review-write:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(99,102,241,.45);}
@@ -263,7 +259,6 @@ require __DIR__ . '/includes/header.php';
 .pd-tab-panel{max-width:1200px;margin:0 auto;padding:24px 20px 60px;display:none;}
 .pd-tab-panel.active{display:block;}
 
-/* ===== 상품 기본정보 표 ===== */
 .pd-spec-box{margin-bottom:24px;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;}
 .pd-spec-box h3{margin:0;padding:14px 18px;font-size:15px;font-weight:800;background:#f8fafc;border-bottom:1px solid #e2e8f0;}
 .pd-spec-table{width:100%;border-collapse:collapse;font-size:14px;}
@@ -271,7 +266,6 @@ require __DIR__ . '/includes/header.php';
 .pd-spec-table th{width:34%;text-align:left;padding:12px 18px;color:#64748b;font-weight:600;background:#fafbff;white-space:nowrap;}
 .pd-spec-table td{padding:12px 18px;color:#1e293b;font-weight:600;word-break:break-all;}
 
-/* ===== 배송/반품 안내 탭 ===== */
 .pd-shipping-box{font-size:14px;color:#334155;line-height:1.7;}
 .pd-shipping-box h4{font-size:15px;font-weight:800;margin:22px 0 10px;color:#1e293b;}
 .pd-shipping-box h4:first-child{margin-top:0;}
@@ -287,14 +281,22 @@ require __DIR__ . '/includes/header.php';
   </div>
 
   <div class="pdh-grid">
-    <!-- ① 정보 컬럼 -->
     <div class="pdh-info">
       <?php if (!empty($product['brand_name'])): ?>
         <p class="pdh-brand"><?= h($product['brand_name']) ?></p>
       <?php endif; ?>
-      <?php if ($sizeLabel !== ''): ?>
-        <span class="pdh-size-chip"><?= h($sizeLabel) ?></span>
+
+      <?php if ($sizeLabel !== '' || $badgeCarType !== ''): ?>
+      <div class="pdh-chip-row">
+        <?php if ($badgeCarType !== ''): ?>
+          <span class="pdh-cartype-chip"><?= h($badgeCarType) ?></span>
+        <?php endif; ?>
+        <?php if ($sizeLabel !== ''): ?>
+          <span class="pdh-size-chip"><?= h($sizeLabel) ?></span>
+        <?php endif; ?>
+      </div>
       <?php endif; ?>
+
       <h1 class="pdh-title"><?= h($product['name']) ?></h1>
       <?php if ($subtitle !== ''): ?>
         <p class="pdh-subtitle"><?= h($subtitle) ?></p>
@@ -322,7 +324,7 @@ require __DIR__ . '/includes/header.php';
 
       <?php if (!empty($options)): ?>
       <div class="pdh-option-row">
-        <label for="pdOptionSelect">DOT 옵션 선택 (재고·년차 옵션)</label>
+        <label for="pdOptionSelect">DOT 옵션 선택 (재고·년차별 옵션)</label>
         <select id="pdOptionSelect">
           <option value="">옵션을 선택해주세요</option>
           <?php foreach ($options as $opt):
@@ -353,7 +355,7 @@ require __DIR__ . '/includes/header.php';
             <p class="pdh-stock-warn" style="display:block;">판매중인 상품의 재고가 없습니다.</p>
             <div class="pdh-restock-row">
               <input type="number" id="pdRestockQty" placeholder="수량" min="1" value="1">
-              <button type="button" class="btn-restock" id="pdRestockBtn" data-product-id="<?= (int)$productId ?>">재고 요청하기</button>
+              <button type="button" class="btn-restock" id="pdRestockBtn" data-product-id="<?= (int)$productId ?>">재고 입고요청</button>
             </div>
           <?php endif; ?>
         </div>
@@ -384,15 +386,37 @@ require __DIR__ . '/includes/header.php';
       <p class="pdh-benefit-box">표시된 가격은 부가세 포함가이며, DOT 옵션 선택 시 해당 재고 기준으로 결제가 진행됩니다.</p>
     </div>
 
-    <!-- ② 이미지 컬럼 -->
     <div class="pdh-gallery">
-      <div class="pdh-main-img" id="pdMainImgBox">
-        <?php if (!empty($mainImages)): ?>
-          <img id="pdMainImgTag" src="<?= h($mainImages[0]) ?>" alt="<?= h($product['name']) ?>">
-        <?php else: ?>
-          <span class="ph">🛞</span>
-        <?php endif; ?>
+      <div class="pdh-gallery-row">
+        <div class="pdh-main-img-wrap">
+          <?php if (!empty($featureTags)): ?>
+            <div class="pdh-tag-overlay">
+              <?php foreach ($featureTags as $tag): ?>
+                <span class="pdh-tag-chip"><?= h($tag) ?></span>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+          <div class="pdh-main-img" id="pdMainImgBox">
+            <?php if (!empty($mainImages)): ?>
+              <img id="pdMainImgTag" src="<?= h($mainImages[0]) ?>" alt="<?= h($product['name']) ?>">
+            <?php else: ?>
+              <span class="ph">🛞</span>
+            <?php endif; ?>
+          </div>
+        </div>
+
+        <div class="pdh-badge-side">
+          <?php if ($badgeGrade !== ''): ?>
+            <div class="pdh-badge-grade"><?= h($badgeGrade) ?></div>
+          <?php endif; ?>
+          <div class="pdh-badge-services">
+            <div class="pdh-service-item"><span class="ic">🚚</span> 무료배송</div>
+            <div class="pdh-service-item"><span class="ic">🔧</span> 무료장착</div>
+          </div>
+          <a class="pdh-badge-consult" href="tel:1877-9778">📞 브랜드 상담 문의</a>
+        </div>
       </div>
+
       <?php if (count($mainImages) > 1): ?>
       <div class="pdh-thumb-strip" id="pdThumbStrip">
         <?php foreach ($mainImages as $i => $imgUrl): ?>
@@ -401,28 +425,11 @@ require __DIR__ . '/includes/header.php';
       </div>
       <?php endif; ?>
     </div>
-
-    <!-- ③ 특징/서비스 컬럼 -->
-    <div class="pdh-feature-panel">
-      <?php if (!empty($featureTags)): ?>
-        <div class="pdh-tag-grid">
-          <?php foreach ($featureTags as $tag): ?>
-            <span class="pdh-tag-chip"><?= h($tag) ?></span>
-          <?php endforeach; ?>
-        </div>
-      <?php endif; ?>
-      <div class="pdh-service-list">
-        <div class="pdh-service-item"><span class="ic">🚚</span> 무료배송</div>
-        <div class="pdh-service-item"><span class="ic">🔧</span> 무료장착</div>
-      </div>
-      <a class="pdh-consult-link" href="tel:1877-9778">📞 브랜드 상담 문의</a>
-    </div>
   </div>
-</div>
 
   <div class="pd-tabs">
-    <button type="button" class="pd-tab-btn active" data-tab="info">상품정보</button>
-    <button type="button" class="pd-tab-btn" data-tab="shipping">배송/반품</button>
+    <button type="button" class="pd-tab-btn active" data-tab="info">상품 기본정보</button>
+    <button type="button" class="pd-tab-btn" data-tab="shipping">배송/장착</button>
     <button type="button" class="pd-tab-btn" data-tab="review">후기 (<?= (int)$product['review_count'] ?>)</button>
   </div>
 
@@ -475,7 +482,6 @@ require __DIR__ . '/includes/header.php';
         <li>고객님의 오 주문 및 단순한 변심에 의해 반품/교환 요청 시 왕복 배송 비용 발생 (제주 및 도서지역은 개당 11,000원 추가 발생)</li>
         <li>전자상거래 등에서의 소비자보호에 관한 법률에 규정되어 있는 소비자 청약 철회 가능 범위에 해당되는 경우</li>
       </ul>
-
       <p class="pd-shipping-sub">반품 / 교환 불가능한 경우</p>
       <ul>
         <li>본 제품의 특성상 장착 이후에는 반품 불가</li>
@@ -577,7 +583,7 @@ require __DIR__ . '/includes/header.php';
                         </div>
 
                         <?php if ($currentUid && $currentUid === (int)$rv['user_id']): ?>
-                            <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('후기를 삭제하시겠습니까? 삭제된 후엔 되돌릴 수 없습니다.');" style="margin:0;">
+                            <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('후기를 삭제하시겠습니까? 삭제된 후기는 되돌릴 수 없습니다.');" style="margin:0;">
                                 <?= Csrf::field() ?>
                                 <input type="hidden" name="review_id" value="<?= (int)$rv['id'] ?>">
                                 <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
@@ -609,9 +615,9 @@ require __DIR__ . '/includes/header.php';
                 <label for="star<?= $i ?>">★</label>
             <?php endfor; ?>
         </div>
-        <textarea name="content" rows="4" maxlength="1000" placeholder="상품을 사용해 보신 솔직한 후기를 남겨주세요." required></textarea>
+        <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 사용 후기를 남겨주세요." required></textarea>
         <div class="review-modal-actions">
-            <button type="button" class="btn-modal-cancel" id="reviewModalCancel">닫기</button>
+            <button type="button" class="btn-modal-cancel" id="reviewModalCancel">취소</button>
             <button type="submit" class="btn-modal-submit">등록하기</button>
         </div>
     </form>
@@ -716,7 +722,7 @@ wishBtn.addEventListener('click', async function () {
       return;
     }
     if (!data.success) {
-      alert(data.message || '처리 중 오류가 발생했습니다.');
+      alert(data.message || '찜 처리 중 오류가 발생했습니다.');
       return;
     }
 
@@ -759,7 +765,7 @@ cartBtn.addEventListener('click', async function () {
     if (typeof window.ttSetCartCount === 'function') {
       window.ttSetCartCount(data.data.cart_count);
     }
-    alert(data.data.message || '장바구니에 담았습니다.');
+    alert(data.data.message || '장바구니에 담겼습니다.');
   } catch (e) {
     alert('네트워크 오류가 발생했습니다.');
   }
