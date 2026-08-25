@@ -197,7 +197,10 @@ if (is_post()) {
             $validUserCouponId = (int)$ucRow['id'];
         }
 
-        $shippingFee = $total >= FREE_SHIPPING_MIN ? 0 : SHIPPING_FEE_DEFAULT;
+        /* [배송비 설정 반영] 관리자 설정값(tt_site_settings)을 우선 사용, 없으면 상수값을 기본값으로 사용 */
+        $freeShippingMin    = (int) get_setting('shipping_free_min', (string)FREE_SHIPPING_MIN);
+        $shippingFeeDefault = (int) get_setting('shipping_fee_default', (string)SHIPPING_FEE_DEFAULT);
+        $shippingFee = $total >= $freeShippingMin ? 0 : $shippingFeeDefault;
         $payableAmount = max(0, $total + $shippingFee - $discountAmount);
         $orderNo = 'TT' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(4)));
 
@@ -260,7 +263,10 @@ if (is_post()) {
 $pageTitle = '주문/결제';
 require __DIR__ . '/includes/header.php';
 $subtotal = $subtotalPreview;
-$shipFee = $subtotal >= FREE_SHIPPING_MIN ? 0 : SHIPPING_FEE_DEFAULT;
+/* [배송비 설정 반영] 화면 미리보기도 동일하게 설정값 기준으로 계산 */
+$freeShippingMinDisp    = (int) get_setting('shipping_free_min', (string)FREE_SHIPPING_MIN);
+$shippingFeeDefaultDisp = (int) get_setting('shipping_fee_default', (string)SHIPPING_FEE_DEFAULT);
+$shipFee = $subtotal >= $freeShippingMinDisp ? 0 : $shippingFeeDefaultDisp;
 $fieldErrors = json_decode(flash('errors') ?? '{}', true) ?: [];
 ?>
 <style>

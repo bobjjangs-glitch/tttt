@@ -3,7 +3,6 @@ declare(strict_types=1);
 // /ajax-stock-request.php — 재고 요청 (로그인 회원 전용, 회원가입 정보를 그대로 사용)
 // [중요] 이 파일은 어떤 상황(DB 오류, 로그인 안 됨, 잘못된 값)에서도
 // 절대 HTML을 응답하지 않고 반드시 JSON만 반환해야 한다.
-// 그래야 클라이언트 fetch의 res.json()이 깨지면서 "네트워크 오류"로 오인되는 문제가 재발하지 않는다.
 require_once __DIR__ . '/core/bootstrap.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -56,33 +55,10 @@ try {
         json_response(['success' => false, 'message' => '회원 정보를 확인할 수 없습니다. 다시 로그인해 주세요.'], 401);
     }
 
-    /**
-     * tt_stock_requests 테이블 스키마는 admin/stock-requests.php와 반드시 동일해야 한다.
-     * 컬럼이 다르면 INSERT가 실패하고, 여기서 예외를 못 잡으면 HTML 에러 페이지가 나가서
-     * 클라이언트에 "네트워크 오류"로 잘못 표시되는 문제가 재발한다. 그래서 전체를 최상위
-     * try/catch로 한 번 더 감싸둔다.
-     */
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS tt_stock_requests (
-            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            product_id INT NULL COMMENT '연결된 상품ID (없으면 NULL)',
-            brand_text VARCHAR(100) NULL COMMENT '요청 브랜드(자유입력)',
-            size_text VARCHAR(60) NOT NULL COMMENT '요청 사이즈',
-            requested_qty INT NOT NULL DEFAULT 1 COMMENT '요청 수량',
-            customer_name VARCHAR(50) NOT NULL COMMENT '주문자명',
-            customer_phone VARCHAR(20) NOT NULL COMMENT '주문자 연락처',
-            customer_email VARCHAR(120) NULL COMMENT '주문자 이메일',
-            memo TEXT NULL COMMENT '고객 요청 메모',
-            status ENUM('pending','processing','done','cancelled') NOT NULL DEFAULT 'pending' COMMENT '처리 상태',
-            admin_memo TEXT NULL COMMENT '관리자 처리 메모',
-            processed_by INT NULL COMMENT '처리한 관리자 ID',
-            processed_at DATETIME NULL COMMENT '처리 완료 시각',
-            ip_address VARCHAR(45) NULL COMMENT '요청자 IP',
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_status (status),
-            INDEX idx_product (product_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ");
+    // [FIX] 지역 함수 정의를 삭제하고, core/functions.php의 공용 함수를 사용한다.
+    // CREATE TABLE IF NOT EXISTS만으로는 예전 스키마가 남아있는 문제를 해결하지 못하므로,
+    // 부족한 컬럼을 자동으로 ALTER로 채워주는 함수로 교체했다.
+    ensure_stock_requests_table($pdo);
 
     // DOT 옵션 지정 요청이면 사이즈 정보에 DOT 코드를 같이 남겨서 관리자가 어떤 재고인지 구분할 수 있게 한다.
     $sizeText = $product['spec'] ?: ($product['name'] ?: '사이즈 정보 없음');

@@ -137,11 +137,9 @@ function ensure_banner_size_columns(): void
         error_log('[ensure_banner_size_columns] ' . $e->getMessage());
     }
 }
+
 /* =====================================================================
    [NEW] 쿠폰 시스템 테이블/컬럼 자동 생성
-   tt_coupons(쿠폰 원본) / tt_user_coupons(회원별 발급 내역) 을 최초 실행 시
-   자동으로 만들고, tt_orders 에 discount_amount / user_coupon_id 컬럼을
-   자동으로 보강한다. 수동 SQL 실행이 필요 없다.
    ===================================================================== */
 function ensure_coupon_tables(): void
 {
@@ -217,4 +215,99 @@ function calc_coupon_discount(array $coupon, int $subtotal): int
 function coupon_status_label(string $status): string
 {
     return ['unused' => '사용가능', 'used' => '사용완료', 'expired' => '기간만료'][$status] ?? $status;
+}
+
+/* =====================================================================
+   [FIX] tt_stock_requests 컬럼 자동 보강.
+   과거 여러 번의 스키마 변경 과정에서 CREATE TABLE IF NOT EXISTS만 사용했기 때문에,
+   운영 DB에 예전 버전의 컬럼 구성이 그대로 남아 있을 수 있다.
+   이 함수는 테이블이 없으면 최신 구조로 새로 만들고, 이미 있으면 부족한 컬럼만
+   찾아서 ALTER TABLE로 추가한다. 기존 데이터는 절대 삭제/변경하지 않는다.
+   [주의] 이 함수는 admin/stock-requests.php, ajax-stock-request.php 두 곳에서
+   공용으로 호출한다. 저 두 파일 안에 같은 이름의 함수를 절대 다시 선언하지 말 것
+   (PHP는 함수 중복 선언 시 Fatal error로 500을 낸다).
+   ===================================================================== */
+function ensure_stock_requests_table(PDO $pdo): void
+{
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_stock_requests (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                product_id INT NULL COMMENT '연결된 상품ID (없으면 NULL)',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $existingCols = $pdo->query("SHOW COLUMNS FROM tt_stock_requests")->fetchAll(PDO::FETCH_COLUMN);
+
+        $required = [
+            'brand_text'     => "ALTER TABLE tt_stock_requests ADD COLUMN brand_text VARCHAR(100) NULL COMMENT '요청 브랜드'",
+            'size_text'      => "ALTER TABLE tt_stock_requests ADD COLUMN size_text VARCHAR(60) NOT NULL DEFAULT '' COMMENT '요청 사이즈'",
+            'requested_qty'  => "ALTER TABLE tt_stock_requests ADD COLUMN requested_qty INT NOT NULL DEFAULT 1 COMMENT '요청 수량'",
+            'customer_name'  => "ALTER TABLE tt_stock_requests ADD COLUMN customer_name VARCHAR(50) NOT NULL DEFAULT '' COMMENT '주문자명'",
+            'customer_phone' => "ALTER TABLE tt_stock_requests ADD COLUMN customer_phone VARCHAR(20) NOT NULL DEFAULT '' COMMENT '주문자 연락처'",
+            'customer_email' => "ALTER TABLE tt_stock_requests ADD COLUMN customer_email VARCHAR(120) NULL COMMENT '주문자 이메일'",
+            'memo'           => "ALTER TABLE tt_stock_requests ADD COLUMN memo TEXT NULL COMMENT '고객 요청 메모'",
+            'status'         => "ALTER TABLE tt_stock_requests ADD COLUMN status ENUM('pending','processing','done','cancelled') NOT NULL DEFAULT 'pending' COMMENT '처리 상태'",
+            'admin_memo'     => "ALTER TABLE tt_stock_requests ADD COLUMN admin_memo TEXT NULL COMMENT '관리자 처리 메모'",
+            'processed_by'   => "ALTER TABLE tt_stock_requests ADD COLUMN processed_by INT NULL COMMENT '처리한 관리자 ID'",
+            'processed_at'   => "ALTER TABLE tt_stock_requests ADD COLUMN processed_at DATETIME NULL COMMENT '처리 완료 시각'",
+            'ip_address'     => "ALTER TABLE tt_stock_requests ADD COLUMN ip_address VARCHAR(45) NULL COMMENT '요청자 IP'",
+        ];
+
+        foreach ($required as $col => $alterSql) {
+            if (!in_array($col, $existingCols, true)) {
+                $pdo->exec($alterSql);
+                error_log("[ensure_stock_requests_table] 누락된 컬럼 '{$col}' 을 추가했습니다.");
+            }
+        }
+
+        try { $pdo->exec("ALTER TABLE tt_stock_requests ADD INDEX idx_status (status)"); } catch (Throwable $e) {}
+        try { $pdo->exec("ALTER TABLE tt_stock_requests ADD INDEX idx_product (product_id)"); } catch (Throwable $e) {}
+
+    } catch (Throwable $e) {
+        error_log('[ensure_stock_requests_table] ' . $e->getMessage());
+    }
+}
+
+/* =====================================================================
+   [FIX] tt_admin_logs 테이블 자동 생성.
+   AdminAuth::log()가 이 테이블에 INSERT하는데, 저장소 어디에도 이 테이블을
+   만드는 코드가 없어서 운영 DB에 테이블이 없을 경우 관리자 액션 시점에
+   500 오류가 발생할 수 있었다.
+   ===================================================================== */
+function ensure_admin_logs_table(PDO $pdo): void
+{
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_admin_logs (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                admin_id INT NOT NULL,
+                action VARCHAR(50) NOT NULL,
+                memo TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_admin (admin_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+    } catch (Throwable $e) {
+        error_log('[ensure_admin_logs_table] ' . $e->getMessage());
+    }
+}
+
+/** 재고 요청 상태 라벨 + 트렌디 UI용 색상/아이콘 매핑 (여러 파일에서 공용으로 사용) */
+function stock_request_status_meta(): array
+{
+    return [
+        'pending'    => ['label' => '대기',   'color' => '#f59e0b', 'bg' => '#fff7ed', 'icon' => '⏳'],
+        'processing' => ['label' => '처리중', 'color' => '#3b82f6', 'bg' => '#eff6ff', 'icon' => '🔧'],
+        'done'       => ['label' => '완료',   'color' => '#22c55e', 'bg' => '#f0fdf4', 'icon' => '✅'],
+        'cancelled'  => ['label' => '취소',   'color' => '#ef4444', 'bg' => '#fef2f2', 'icon' => '✕'],
+    ];
 }

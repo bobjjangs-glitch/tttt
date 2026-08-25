@@ -7,7 +7,7 @@ final class AdminAuth
 
     /** 역할별 접근 가능한 모듈 목록. super는 항상 통과(별도 처리). */
     private const PERMISSIONS = [
-      'product' => ['products', 'brands', 'category-icons', 'banners', 'coupons'],
+        'product' => ['products', 'brands', 'category-icons', 'banners', 'coupons', 'stock-requests'],
         'order'   => ['orders', 'stock-requests'],
         'cs'      => ['reviews', 'notices', 'users'],
     ];
@@ -100,10 +100,21 @@ final class AdminAuth
         session_regenerate_id(true);
     }
 
+    /**
+     * [FIX] 로그 기록 실패가 본 기능(로그인, 상태 변경 등)을 절대 막아서는 안 되므로
+     * try/catch로 감싸고, tt_admin_logs 테이블이 없으면 자동으로 생성한다.
+     * 예전에는 이 테이블을 만드는 코드가 어디에도 없어서, 테이블이 없는 서버에서는
+     * 관리자 액션 시점에 500 오류가 발생했다.
+     */
     public static function log(int $adminId, string $action, string $memo = ''): void
     {
-        $pdo = Database::connection();
-        $pdo->prepare('INSERT INTO tt_admin_logs (admin_id, action, memo, created_at) VALUES (:aid, :act, :memo, NOW())')
-            ->execute(['aid' => $adminId, 'act' => $action, 'memo' => $memo]);
+        try {
+            $pdo = Database::connection();
+            ensure_admin_logs_table($pdo);
+            $pdo->prepare('INSERT INTO tt_admin_logs (admin_id, action, memo, created_at) VALUES (:aid, :act, :memo, NOW())')
+                ->execute(['aid' => $adminId, 'act' => $action, 'memo' => $memo]);
+        } catch (Throwable $e) {
+            error_log('[AdminAuth::log] ' . $e->getMessage());
+        }
     }
 }

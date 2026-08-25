@@ -19,3 +19,25 @@
 [12-Aug-2026 17:40:19 Asia/Seoul] PHP Warning:  Undefined variable $pdo in /hosting/bobjjangs1231/html/tire/admin/orders.php on line 226
 [12-Aug-2026 17:40:19 Asia/Seoul] [UNCAUGHT] Call to a member function prepare() on null in /hosting/bobjjangs1231/html/tire/admin/orders.php:226
 #0 {main}
+[24-Aug-2026 14:57:40 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'brand_text' 을 추가했습니다.
+[24-Aug-2026 14:57:41 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'size_text' 을 추가했습니다.
+[24-Aug-2026 14:57:41 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'customer_email' 을 추가했습니다.
+[24-Aug-2026 14:57:41 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'memo' 을 추가했습니다.
+[24-Aug-2026 14:57:46 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 14:57:50 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 14:58:03 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:02:18 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:02:24 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:30:33 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:30:37 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 17:51:44 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 18:02:19 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:23 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:23 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:23 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:24 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
