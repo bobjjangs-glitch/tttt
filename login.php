@@ -33,9 +33,8 @@ if (is_post() && $formType === 'signup') {
     $bizNumber = trim($_POST['biz_number'] ?? '');
     $bizName   = trim($_POST['biz_name'] ?? '');
     $bizOwner  = trim($_POST['biz_owner_name'] ?? '');
-    $bizAddr   = trim($_POST['biz_address'] ?? '');
+    $bizAddr   = trim($_POST['biz_address'] ?? ''); // JS에서 base+detail 합쳐서 전송됨
 
-    // ★ 추가: 필수 약관 동의 여부
     $termsAgree   = isset($_POST['terms_agree']);
     $privacyAgree = isset($_POST['privacy_agree']);
 
@@ -43,6 +42,7 @@ if (is_post() && $formType === 'signup') {
         'email' => $email, 'password' => $password, 'name' => $name,
         'phone' => $phoneRaw, 'biz_number' => $bizNumber,
         'biz_name' => $bizName, 'biz_owner_name' => $bizOwner,
+        'biz_address' => $bizAddr, // ★ 추가: require 체크 대상에 포함
     ]);
     $v->require('email', '이메일')->email('email')
       ->require('password', '비밀번호')->passwordStrength('password')
@@ -50,7 +50,8 @@ if (is_post() && $formType === 'signup') {
       ->require('phone', '휴대폰 번호')->phone('phone')
       ->require('biz_number', '사업자등록번호')->bizNumber('biz_number')
       ->require('biz_name', '상호명')
-      ->require('biz_owner_name', '대표자명');
+      ->require('biz_owner_name', '대표자명')
+      ->require('biz_address', '사업자 주소'); // ★ 추가
 
     $pdo = Database::connection();
 
@@ -72,7 +73,6 @@ if (is_post() && $formType === 'signup') {
         $phoneVerified = (bool)$pv->fetch();
     }
 
-    // ★ 변경: 조건에 $termsAgree && $privacyAgree 추가
     if (!$v->fails() && !$dupEmail && $phoneVerified && $termsAgree && $privacyAgree) {
         $hash = password_hash($password, PASSWORD_DEFAULT);
         $stmt = $pdo->prepare(
@@ -100,7 +100,6 @@ if (is_post() && $formType === 'signup') {
     $errors = $v->errors();
     if ($dupEmail) $errors['email'] = '이미 가입된 이메일입니다.';
     if (!$phoneVerified && !$v->fails()) $errors['phone'] = '휴대폰 인증을 완료해주세요.';
-    // ★ 추가: 필수 동의 누락 에러
     if (!$termsAgree || !$privacyAgree) $errors['agree'] = '이용약관과 개인정보 수집·이용에 모두 동의해주셔야 가입할 수 있습니다.';
 
     $_SESSION['_old'] = [
@@ -143,9 +142,9 @@ $errorsSignup = json_decode(flash('errors_signup') ?? '{}', true);
       </div>
     </div>
 
-    <!-- ===== 회원가입 뷰 (같은 카드 안에서 전환) ===== -->
+    <!-- ===== 회원가입 뷰 (사업자 회원 전용) ===== -->
     <div class="auth-view" id="viewSignup">
-      <h1 class="auth-card-title">회원가입</h1>
+      <h1 class="auth-card-title">사업자 회원가입</h1>
       <?php if ($errorsSignup): ?>
         <ul class="error-list">
           <?php foreach ($errorsSignup as $msg): ?><li><?= h($msg) ?></li><?php endforeach; ?>
@@ -161,34 +160,40 @@ $errorsSignup = json_decode(flash('errors_signup') ?? '{}', true);
         <input type="password" name="password" class="auth-field" placeholder="비밀번호 (영문+숫자 8자 이상)" required>
         <input type="text" name="name" class="auth-field" value="<?= old('name') ?>" placeholder="이름" required>
 
-        <div class="phone-verify-row">
+        <!-- 휴대폰 인증 (기존 정상 동작 스타일 — 이 스타일을 기준으로 아래 두 항목을 통일함) -->
+        <div class="phone-verify-row inline-verify-row">
           <input type="text" name="phone" id="signupPhone" class="auth-field" value="<?= old('phone') ?>" placeholder="휴대폰 번호 (010-1234-5678)" required>
-          <button type="button" id="sendCodeBtn" class="btn-outline">인증번호 발송</button>
+          <button type="button" id="sendCodeBtn" class="btn-verify">인증번호 발송</button>
         </div>
-        <div class="phone-verify-row" id="codeInputRow" style="display:none">
+        <div class="phone-verify-row inline-verify-row" id="codeInputRow" style="display:none">
           <input type="text" id="signupCode" class="auth-field" placeholder="인증번호 6자리" maxlength="6">
-          <button type="button" id="verifyCodeBtn" class="btn-outline">확인</button>
+          <button type="button" id="verifyCodeBtn" class="btn-verify">확인</button>
           <span id="codeTimer" class="code-timer"></span>
         </div>
         <p id="phoneVerifyMsg" class="verify-msg"></p>
 
-       <hr class="auth-divider">
-<p class="biz-title">사업자 정보</p>
-<input type="text" name="biz_number" class="auth-field" value="<?= old('biz_number') ?>" placeholder="사업자등록번호 (000-00-00000)" required>
-<input type="text" name="biz_name" class="auth-field" value="<?= old('biz_name') ?>" placeholder="상호명" required>
-<input type="text" name="biz_owner_name" class="auth-field" value="<?= old('biz_owner_name') ?>" placeholder="대표자명" required>
+        <hr class="auth-divider">
+        <p class="biz-title">사업자 정보</p>
 
-<!-- 주소 찾기 (다음 우편번호 서비스) -->
-<div class="address-row">
-  <input type="text" name="biz_zonecode" id="bizZonecode" class="auth-field addr-zonecode" placeholder="우편번호" readonly>
-  <button type="button" id="addrSearchBtn" class="btn-outline">주소 찾기</button>
-</div>
-<input type="text" name="biz_address_base" id="bizAddressBase" class="auth-field" placeholder="기본주소 (주소 찾기로 자동 입력)" readonly>
-<input type="text" name="biz_address_detail" id="bizAddressDetail" class="auth-field" placeholder="상세주소를 입력해주세요">
-<!-- 최종 전송용 hidden: base + detail을 합쳐서 서버로 전송 -->
-<input type="hidden" name="biz_address" id="bizAddressFull">
+        <input type="text" name="biz_name" class="auth-field" value="<?= old('biz_name') ?>" placeholder="상호명" required>
+        <input type="text" name="biz_owner_name" class="auth-field" value="<?= old('biz_owner_name') ?>" placeholder="대표자명" required>
 
-        <!-- ★ 변경: 마케팅 동의 한 줄 → 필수 약관동의 박스로 교체 -->
+        <!-- 사업자등록번호 + 확인 버튼 (휴대폰 인증과 동일한 스타일로 통일) -->
+        <div class="inline-verify-row">
+          <input type="text" name="biz_number" id="bizNumberInput" class="auth-field" value="<?= old('biz_number') ?>" placeholder="사업자등록번호 (000-00-00000)" maxlength="12" required>
+          <button type="button" id="bizNumberCheckBtn" class="btn-verify">번호 확인</button>
+        </div>
+        <p id="bizNumberMsg" class="verify-msg"></p>
+
+        <!-- 주소 찾기 (다음 우편번호 서비스 — 우편번호 입력창은 제거, 도로명주소만 사용) -->
+        <div class="inline-verify-row">
+          <input type="text" id="bizAddressBase" class="auth-field" placeholder="주소 찾기를 눌러 주소를 입력해주세요" readonly>
+          <button type="button" id="addrSearchBtn" class="btn-verify">주소 찾기</button>
+        </div>
+        <input type="text" id="bizAddressDetail" class="auth-field" placeholder="상세주소를 입력해주세요">
+        <!-- 최종 전송용 hidden: base + detail을 합쳐서 서버로 전송 -->
+        <input type="hidden" name="biz_address" id="bizAddressFull">
+
         <div class="terms-agree-box">
           <label class="checkbox-line"><input type="checkbox" id="agreeAll"><strong>전체 동의</strong></label>
           <hr class="agree-divider">
@@ -219,7 +224,7 @@ $errorsSignup = json_decode(flash('errors_signup') ?? '{}', true);
 
 <script>
 (function(){
-  /* ===== 로그인/회원가입 카드 내 전환 (연결식) ===== */
+  /* ===== 로그인/회원가입 카드 내 전환 ===== */
   const views = {
     login: document.getElementById('viewLogin'),
     signup: document.getElementById('viewSignup'),
@@ -239,7 +244,6 @@ $errorsSignup = json_decode(flash('errors_signup') ?? '{}', true);
     });
   });
 
-  // 새로고침 없이 #signup으로 진입하면 회원가입 뷰부터 시작
   if (window.location.hash === '#signup') {
     showView('signup');
   }
@@ -323,6 +327,7 @@ $errorsSignup = json_decode(flash('errors_signup') ?? '{}', true);
         timerEl.textContent = '';
         codeInput.disabled = true;
         verifyBtn.disabled = true;
+        verifyBtn.classList.add('confirmed');
         sendBtn.disabled = true;
       } else {
         msgEl.className = 'verify-msg error';
@@ -330,7 +335,56 @@ $errorsSignup = json_decode(flash('errors_signup') ?? '{}', true);
     });
   });
 
-  /* ★ 추가: 전체 동의 토글 */
+  /* ===== 사업자등록번호 형식+체크섬 확인 (클라이언트 측 즉시 확인용, 서버도 이중 검증함) ===== */
+  const bizNumberInput = document.getElementById('bizNumberInput');
+  const bizNumberBtn   = document.getElementById('bizNumberCheckBtn');
+  const bizNumberMsg   = document.getElementById('bizNumberMsg');
+
+  function isValidBizNumber(raw) {
+    const v = raw.replace(/[^0-9]/g, '');
+    if (v.length !== 10) return false;
+    const weights = [1, 3, 7, 1, 3, 7, 1, 3, 5];
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += Number(v[i]) * weights[i];
+    sum += Math.floor((Number(v[8]) * 5) / 10);
+    const checkDigit = (10 - (sum % 10)) % 10;
+    return checkDigit === Number(v[9]);
+  }
+
+  bizNumberBtn.addEventListener('click', function () {
+    const raw = bizNumberInput.value.trim();
+    if (!raw) { alert('사업자등록번호를 입력해주세요.'); return; }
+
+    if (isValidBizNumber(raw)) {
+      bizNumberMsg.textContent = '올바른 형식의 사업자등록번호입니다. (국세청 진위확인은 가입 후 관리자가 확인합니다)';
+      bizNumberMsg.className = 'verify-msg success';
+      bizNumberBtn.classList.add('confirmed');
+    } else {
+      bizNumberMsg.textContent = '사업자등록번호 형식이 올바르지 않습니다. 다시 확인해주세요.';
+      bizNumberMsg.className = 'verify-msg error';
+      bizNumberBtn.classList.remove('confirmed');
+    }
+  });
+
+  /* ===== 주소 찾기 (다음 우편번호 서비스) ===== */
+  const addrSearchBtn   = document.getElementById('addrSearchBtn');
+  const bizAddressBase  = document.getElementById('bizAddressBase');
+  const bizAddressDetail= document.getElementById('bizAddressDetail');
+
+  addrSearchBtn.addEventListener('click', function () {
+    if (typeof daum === 'undefined' || !daum.Postcode) {
+      alert('주소 검색 서비스를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    new daum.Postcode({
+      oncomplete: function (data) {
+        bizAddressBase.value = data.roadAddress || data.jibunAddress;
+        bizAddressDetail.focus();
+      }
+    }).open();
+  });
+
+  /* ===== 전체 동의 토글 ===== */
   const agreeAll = document.getElementById('agreeAll');
   const agreeRequired = document.querySelectorAll('.agree-required');
   const marketingChk = document.querySelector('input[name="marketing_agree"]');
@@ -341,8 +395,18 @@ $errorsSignup = json_decode(flash('errors_signup') ?? '{}', true);
     });
   }
 
-  /* ★ 변경: 제출 시 휴대폰 인증 + 필수 약관동의 둘 다 체크 */
+  /* ===== 제출 시: 주소 합치기 + 각종 필수 확인 ===== */
   document.getElementById('signupForm').addEventListener('submit', function (e) {
+    // base + detail 을 합쳐서 hidden 필드에 채운다 (기존에는 이 단계가 없어서 항상 빈 값이 전송됐음)
+    const base = bizAddressBase.value.trim();
+    const detail = bizAddressDetail.value.trim();
+    document.getElementById('bizAddressFull').value = base && detail ? (base + ' ' + detail) : base;
+
+    if (!base) {
+      e.preventDefault();
+      alert('주소 찾기를 눌러 사업자 주소를 입력해주세요.');
+      return;
+    }
     if (verifiedFlag.value !== '1') {
       e.preventDefault();
       alert('휴대폰 인증을 먼저 완료해주세요.');

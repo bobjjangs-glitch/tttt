@@ -311,3 +311,46 @@ function stock_request_status_meta(): array
         'cancelled'  => ['label' => '취소',   'color' => '#ef4444', 'bg' => '#fef2f2', 'icon' => '✕'],
     ];
 }
+/* =====================================================================
+   [NEW] tt_users 테이블에 사업자/휴대폰인증/약관동의 관련 컬럼 자동 보강.
+   기존 스키마(sql/sql-data-fixed)에는 이 컬럼들이 없는데 login.php가
+   INSERT 시점에 이 컬럼들을 사용하고 있어서, 컬럼이 없으면 회원가입이
+   SQL 오류로 그대로 죽는다. 다른 admin 폼들과 동일한 "자동 보강" 패턴 사용.
+   ===================================================================== */
+function ensure_user_extra_columns(PDO $pdo): void
+{
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM tt_users")->fetchAll(PDO::FETCH_COLUMN);
+
+        $required = [
+            'user_type'         => "ALTER TABLE tt_users ADD COLUMN user_type ENUM('personal','business') NOT NULL DEFAULT 'personal' COMMENT '일반/사업자 구분' AFTER name",
+            'biz_number'        => "ALTER TABLE tt_users ADD COLUMN biz_number VARCHAR(20) NULL COMMENT '사업자등록번호' AFTER user_type",
+            'biz_name'          => "ALTER TABLE tt_users ADD COLUMN biz_name VARCHAR(100) NULL COMMENT '상호명' AFTER biz_number",
+            'biz_owner_name'    => "ALTER TABLE tt_users ADD COLUMN biz_owner_name VARCHAR(50) NULL COMMENT '대표자명' AFTER biz_name",
+            'biz_address'       => "ALTER TABLE tt_users ADD COLUMN biz_address VARCHAR(255) NULL COMMENT '사업장 주소' AFTER biz_owner_name",
+            'biz_verified'      => "ALTER TABLE tt_users ADD COLUMN biz_verified TINYINT(1) NOT NULL DEFAULT 0 COMMENT '국세청 진위확인 통과여부' AFTER biz_address",
+            'biz_verified_at'   => "ALTER TABLE tt_users ADD COLUMN biz_verified_at DATETIME NULL AFTER biz_verified",
+            'phone_verified'    => "ALTER TABLE tt_users ADD COLUMN phone_verified TINYINT(1) NOT NULL DEFAULT 0 AFTER phone",
+            'phone_verified_at' => "ALTER TABLE tt_users ADD COLUMN phone_verified_at DATETIME NULL AFTER phone_verified",
+            'terms_agreed_at'   => "ALTER TABLE tt_users ADD COLUMN terms_agreed_at DATETIME NULL",
+            'privacy_agreed_at' => "ALTER TABLE tt_users ADD COLUMN privacy_agreed_at DATETIME NULL",
+        ];
+
+        foreach ($required as $col => $sql) {
+            if (!in_array($col, $cols, true)) {
+                try {
+                    $pdo->exec($sql);
+                    error_log("[ensure_user_extra_columns] 누락된 컬럼 '{$col}' 을 추가했습니다.");
+                } catch (Throwable $e) {
+                    error_log("[ensure_user_extra_columns] 컬럼 '{$col}' 추가 실패: " . $e->getMessage());
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('[ensure_user_extra_columns] ' . $e->getMessage());
+    }
+}

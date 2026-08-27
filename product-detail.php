@@ -8,6 +8,93 @@ if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
 
 $pdo = Database::connection();
 
+/* ==========================================================================
+   [신규] 상세설명 리치텍스트(HTML) 렌더링
+   - admin/product_form.php 에서 저장 시점에 이미 한 번 화이트리스트 정제를 거치지만,
+     DB 직접 수정 등 다른 경로로 들어온 데이터까지 감안해 출력 시점에도 한 번 더 필터링한다.
+   - [주의] admin_sanitize_description_html() 과 로직이 거의 동일하다. 나중에 허용 태그를
+     바꿀 일이 생기면 반드시 양쪽 모두 수정해야 한다. (이상적으로는 core/ 공용 파일로 통합 권장)
+   ========================================================================== */
+function pd_sanitize_style_attr(string $style): string
+{
+    $allowedProps = ['color', 'background-color', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-decoration', 'text-align'];
+    $out = [];
+    foreach (explode(';', $style) as $decl) {
+        $decl = trim($decl);
+        if ($decl === '') continue;
+        $parts = explode(':', $decl, 2);
+        if (count($parts) !== 2) continue;
+        $prop = strtolower(trim($parts[0]));
+        $val  = trim($parts[1]);
+        if (!in_array($prop, $allowedProps, true)) continue;
+        if (preg_match('/(javascript:|expression\(|url\(|@import)/i', $val)) continue;
+        $out[] = $prop . ':' . $val;
+    }
+    return implode(';', $out);
+}
+
+function pd_sanitize_description_html(string $html): string
+{
+    if ($html === '') return '';
+
+    $allowedTags = '<b><strong><i><em><u><s><span><div><p><br><ul><ol><li><a><font><h3><h4><blockquote>';
+    $clean = strip_tags($html, $allowedTags);
+
+    $prevErr = libxml_use_internal_errors(true);
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $dom->loadHTML('<?xml encoding="UTF-8">' . '<div id="__root__">' . $clean . '</div>');
+    libxml_clear_errors();
+    libxml_use_internal_errors($prevErr);
+
+    $xpath = new DOMXPath($dom);
+    $rootList = $xpath->query('//div[@id="__root__"]');
+    if ($rootList === false || $rootList->length === 0) return '';
+    $root = $rootList->item(0);
+
+    $walk = function (DOMNode $node) use (&$walk): void {
+        if ($node->nodeType === XML_ELEMENT_NODE && $node instanceof DOMElement) {
+            $tag = strtolower($node->nodeName);
+            $toRemove = [];
+            foreach ($node->attributes as $attr) {
+                $attrName = strtolower($attr->name);
+                if ($attrName === 'style') {
+                    $node->setAttribute('style', pd_sanitize_style_attr($attr->value));
+                } elseif ($tag === 'a' && $attrName === 'href') {
+                    if (preg_match('/^\s*(javascript:|data:)/i', $attr->value)) $toRemove[] = 'href';
+                } elseif ($tag === 'a' && $attrName === 'target') {
+                    if ($attr->value !== '_blank') $toRemove[] = 'target';
+                } elseif ($tag === 'font' && in_array($attrName, ['color', 'face', 'size'], true)) {
+                    /* 허용 */
+                } else {
+                    $toRemove[] = $attr->name;
+                }
+            }
+            foreach ($toRemove as $a) $node->removeAttribute($a);
+        }
+        foreach (iterator_to_array($node->childNodes) as $child) {
+            $walk($child);
+        }
+    };
+    $walk($root);
+
+    $result = '';
+    foreach ($root->childNodes as $child) {
+        $result .= $dom->saveHTML($child);
+    }
+    return trim($result);
+}
+
+function pd_render_description(string $desc): string
+{
+    if ($desc === '') return '';
+    /* 리치에디터 도입 전에 저장된 순수 텍스트는 태그가 전혀 없으므로,
+       그 경우는 기존 방식(이스케이프 + 줄바꿈 변환)을 그대로 유지한다. */
+    if (strip_tags($desc) === $desc) {
+        return nl2br(h($desc), false);
+    }
+    return pd_sanitize_description_html($desc);
+}
+
 $productId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($productId <= 0) {
     http_response_code(404);
@@ -113,11 +200,16 @@ $subtitle = '';
 if (!empty($product['description'])) {
     $firstLine = trim(strtok((string)$product['description'], "\n"));
     if ($firstLine !== '') {
-        $subtitle = mb_strlen($firstLine) > 40 ? mb_substr($firstLine, 0, 40) . '…' : $firstLine;
+        /* [주의] description이 이제 HTML을 포함할 수 있으므로, 한 줄 미리보기용 텍스트는
+           strip_tags로 태그를 제거한 뒤 잘라낸다. (subtitle에 태그가 섞여 나오는 걸 방지) */
+        $firstLinePlain = trim(strip_tags($firstLine));
+        if ($firstLinePlain !== '') {
+            $subtitle = mb_strlen($firstLinePlain) > 40 ? mb_substr($firstLinePlain, 0, 40) . '…' : $firstLinePlain;
+        }
     }
 }
 
-/* [신규] 노출 배지 – 관리자에서 실제로 저장한 값만 사용. 값이 없으면 각 영역이 조용히 숨겨짐 */
+/* [노출 배지] 관리자에서 실제로 저장한 값만 사용. 값이 없으면 각 영역이 조용히 숨겨짐 */
 $badgeCarType = trim((string)($product['car_type'] ?? ''));
 $badgeGrade   = trim((string)($product['grade'] ?? ''));
 $featureTags  = array_values(array_filter(array_map('trim', explode(',', (string)($product['feature_tags'] ?? '')))));
@@ -199,13 +291,15 @@ require __DIR__ . '/includes/header.php';
 .pdh-main-img img{width:100%;height:100%;object-fit:cover;}
 .pdh-main-img .ph{font-size:48px;}
 
-/* 특징 태그 오버레이 – feature_tags 컬럼 값이 있을 때만 렌더링 */
-.pdh-tag-overlay{position:absolute;top:14px;left:0;right:0;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:0 12px;z-index:2;pointer-events:none;}
-.pdh-tag-overlay .pdh-tag-chip{background:rgba(255,255,255,.95);border:1px solid #e2e8f0;border-radius:999px;padding:6px 14px;font-size:12px;font-weight:700;color:#334155;box-shadow:0 4px 10px rgba(15,23,42,.10);white-space:nowrap;}
-
-/* 등급/서비스 뱃지 사이드 카드 – grade 컬럼 값이 있을 때만 뱃지 노출, 배송/장착/상담은 항상 노출 */
-.pdh-badge-side{width:120px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:6px;}
+/* [수정] 등급/특징태그/서비스 뱃지 사이드 카드 – 이미지 오버레이(.pdh-tag-overlay)는 삭제하고
+   태그를 이 카드 안에서 함께 표시하도록 통합. 너비를 120px→150px로 확장 */
+.pdh-badge-side{width:150px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:6px;}
 .pdh-badge-grade{width:100%;text-align:center;border:1px solid #cbd5e1;border-radius:14px;padding:12px 6px;font-size:17px;font-weight:800;color:#0f172a;background:#fff;box-shadow:0 4px 10px rgba(15,23,42,.06);}
+
+/* [신규] 특징 태그 – 이미지 위 오버레이에서 뱃지 카드 안으로 이전 */
+.pdh-badge-tags{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:100%;}
+.pdh-badge-tags .pdh-tag-chip{background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:5px 10px;font-size:11px;font-weight:700;color:#334155;white-space:nowrap;}
+
 .pdh-badge-services{display:flex;flex-direction:column;gap:9px;width:100%;padding-top:2px;border-top:1px solid #e2e8f0;padding-top:12px;}
 .pdh-badge-services .pdh-service-item{display:flex;align-items:center;gap:6px;font-size:12px;color:#334155;font-weight:700;}
 .pdh-badge-services .pdh-service-item .ic{color:#0d9488;font-size:13px;}
@@ -249,6 +343,13 @@ require __DIR__ . '/includes/header.php';
 .pd-flash-msg{padding:12px 16px;border-radius:12px;margin-bottom:16px;font-size:14px;}
 .pd-flash-msg.success{background:#ecfdf5;color:#047857;}
 .pd-flash-msg.error{background:#fef2f2;color:#b91c1c;}
+
+/* [신규] 리치텍스트 상세설명 렌더링 영역 – 관리자 에디터에서 저장한 굵기/색상/폰트/정렬 서식이 그대로 반영됨 */
+.pd-desc-html{font-size:15px;line-height:1.75;color:#334155;word-break:break-word;margin-bottom:20px;}
+.pd-desc-html a{color:#4338ca;text-decoration:underline;}
+.pd-desc-html ul,.pd-desc-html ol{padding-left:20px;margin:10px 0;}
+.pd-desc-html blockquote{margin:12px 0;padding:10px 16px;border-left:3px solid #cbd5e1;background:#f8fafc;color:#475569;}
+.pd-desc-html h3,.pd-desc-html h4{margin:16px 0 8px;color:#0f172a;}
 
 .pd-detail-images{margin-top:24px;display:flex;flex-direction:column;}
 .pd-detail-images img{display:block;width:100%;height:auto;}
@@ -389,13 +490,6 @@ require __DIR__ . '/includes/header.php';
     <div class="pdh-gallery">
       <div class="pdh-gallery-row">
         <div class="pdh-main-img-wrap">
-          <?php if (!empty($featureTags)): ?>
-            <div class="pdh-tag-overlay">
-              <?php foreach ($featureTags as $tag): ?>
-                <span class="pdh-tag-chip"><?= h($tag) ?></span>
-              <?php endforeach; ?>
-            </div>
-          <?php endif; ?>
           <div class="pdh-main-img" id="pdMainImgBox">
             <?php if (!empty($mainImages)): ?>
               <img id="pdMainImgTag" src="<?= h($mainImages[0]) ?>" alt="<?= h($product['name']) ?>">
@@ -408,6 +502,13 @@ require __DIR__ . '/includes/header.php';
         <div class="pdh-badge-side">
           <?php if ($badgeGrade !== ''): ?>
             <div class="pdh-badge-grade"><?= h($badgeGrade) ?></div>
+          <?php endif; ?>
+          <?php if (!empty($featureTags)): ?>
+            <div class="pdh-badge-tags">
+              <?php foreach ($featureTags as $tag): ?>
+                <span class="pdh-tag-chip"><?= h($tag) ?></span>
+              <?php endforeach; ?>
+            </div>
           <?php endif; ?>
           <div class="pdh-badge-services">
             <div class="pdh-service-item"><span class="ic">🚚</span> 무료배송</div>
@@ -449,7 +550,9 @@ require __DIR__ . '/includes/header.php';
     <?php endif; ?>
 
     <?php if (!empty($product['description'])): ?>
-      <div><?= nl2br(h($product['description'])) ?></div>
+      <!-- [변경] nl2br(h(...)) → pd_render_description() : 관리자 에디터에서 저장한 굵기/색상/폰트/정렬 서식을 실제로 반영해서 출력한다.
+           순수 텍스트로 저장된 예전 데이터는 함수 내부에서 자동으로 이스케이프 + <br> 처리되어 하위호환이 유지된다. -->
+      <div class="pd-desc-html"><?= pd_render_description((string)$product['description']) ?></div>
     <?php else: ?>
       <p style="color:var(--gray4);">등록된 상세 설명이 없습니다.</p>
     <?php endif; ?>

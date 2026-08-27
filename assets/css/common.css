@@ -933,3 +933,69 @@ button{cursor:pointer;font-family:inherit}
   .category-icon-sec,.promo-grid-sec,.besttop-banner-sec{padding:14px 14px 0;}
   .besttop-banner-title{font-size:17px;}
 }
+/* ===== 회원가입/로그인 인증 카드 (신규 — 기존 파일에 누락되어 있던 스타일) ===== */
+.auth-page{max-width:480px;margin:60px auto;padding:0 20px}
+.auth-card{background:#fff;border-radius:var(--radius-lg);box-shadow:var(--shadow-md);padding:40px 36px}
+.auth-card-title{font-size:22px;font-weight:900;color:var(--gray1);text-align:center;margin-bottom:24px}
+
+.auth-view{display:none}
+.auth-view.active{display:block}
+
+.auth-field{
+  width:100%;height:46px;border:1px solid var(--gray5);border-radius:var(--radius-sm);
+  padding:0 14px;font-size:14px;margin-bottom:12px;background:#fff;color:var(--gray1);
+}
+.auth-field:focus{outline:none;border-color:var(--primary)}
+.auth-field[readonly]{background:var(--gray6);color:var(--gray3);cursor:default}
+
+.btn-auth-primary{
+  width:100%;height:50px;background:var(--primary);color:#fff;border:none;
+  border-radius:var(--radius-sm);font-weight:800;font-size:15px;margin-top:8px;
+}
+.btn-auth-primary:hover{background:var(--primary-dark)}
+
+.auth-links-row{display:flex;justify-content:center;align-items:center;gap:10px;margin-top:18px;font-size:13px;color:var(--gray3)}
+.auth-links-row a{color:var(--gray3)}
+.auth-links-row a:hover{color:var(--primary)}
+.auth-links-divider{color:var(--gray5)}
+.auth-switch-link{color:var(--primary) !important;font-weight:700}
+.auth-divider{border:none;border-top:1px solid var(--gray5);margin:20px 0}
+.biz-title{font-size:14px;font-weight:800;color:var(--gray1);margin-bottom:12px}
+
+/* 인라인 확인 버튼 행 — 휴대폰 인증/사업자번호 확인/주소찾기 공용 스타일 */
+.inline-verify-row{display:flex;gap:8px;margin-bottom:10px}
+.inline-verify-row .auth-field{margin-bottom:0;flex:1;min-width:0}
+
+.btn-verify{
+  flex-shrink:0;height:46px;padding:0 16px;border:1px solid var(--gray1);border-radius:var(--radius-sm);
+  background:#fff;color:var(--gray1);font-weight:700;font-size:13px;white-space:nowrap;
+  transition:background .15s,color .15s;
+}
+.btn-verify:hover{background:var(--gray1);color:#fff}
+.btn-verify:disabled{opacity:.5;cursor:not-allowed}
+.btn-verify.confirmed{background:#dcfce7;border-color:#22c55e;color:#15803d}
+.btn-verify.confirmed:hover{background:#dcfce7;color:#15803d}
+
+.phone-verify-row{display:flex;gap:8px;margin-bottom:10px}
+.phone-verify-row .auth-field{margin-bottom:0}
+.code-timer{align-self:center;font-size:12px;color:var(--primary);white-space:nowrap}
+
+.verify-msg{font-size:12px;color:var(--gray3);margin:-4px 0 10px 2px;min-height:14px}
+.verify-msg.success{color:#15803d;font-weight:700}
+.verify-msg.error{color:var(--primary-dark);font-weight:700}
+
+.terms-agree-box{background:var(--gray6);border-radius:var(--radius-sm);padding:16px;margin:18px 0}
+.checkbox-line{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--gray3);padding:6px 0}
+.checkbox-line a{color:var(--gray1);text-decoration:underline}
+.agree-divider{border:none;border-top:1px solid var(--gray5);margin:6px 0}
+
+.error-list{
+  background:#fef2f2;border-radius:var(--radius-sm);padding:12px 16px 12px 32px;
+  margin-bottom:16px;color:var(--primary-dark);font-size:13px;list-style:disc;
+}
+
+@media (max-width:480px){
+  .auth-card{padding:32px 22px}
+  .inline-verify-row{flex-direction:column}
+  .btn-verify{height:44px;width:100%}
+}

@@ -2,6 +2,14 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../config/constants.php';
+require_once __DIR__ . '/functions.php';
+require_once __DIR__ . '/Database.php';
+require_once __DIR__ . '/Csrf.php';
+require_once __DIR__ . '/Validator.php';
+require_once __DIR__ . '/Auth.php';
+require_once __DIR__ . '/AdminAuth.php';
+require_once __DIR__ . '/../Sms.php';   // [FIX] 이 줄이 누락되어 있어 Sms 클래스 호출 시 Fatal Error(500) 발생 → "발송 중 오류가 발생했습니다"로 이어졌음
+
 
 /* =====================================================================
    [FIX] 운영/개발 환경에 따라 에러 노출 방식을 분리한다.
