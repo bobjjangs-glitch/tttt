@@ -13,6 +13,13 @@ function redirect(string $path): never {
     if (!preg_match('#^https?://#i', $path)) {
         $path = BASE_URL . $path;
     }
+    /* [FIX] 혹시 buy-now.php처럼 리다이렉트 직전에 어떤 이유로든 화면에
+       이미 출력이 조금 나가 있는 상태라면(BOM, 공백, 디버그 echo 등),
+       header()가 실패하지 않도록 header() 호출 직전에 버퍼를 한 번 더 비운다.
+       bootstrap.php 최상단의 ob_start()와 이중 안전장치 역할을 한다. */
+    if (ob_get_level()) {
+        ob_clean();
+    }
     header('Location: ' . $path);
     exit;
 }
@@ -115,9 +122,7 @@ function ensure_promo_placement_column(): void
 }
 
 /* =====================================================================
-   [NEW] tt_banners.target_w / target_h 컬럼 자동 보강
-   메인 배너를 "풀블리드 히어로"가 아니라 "카드 슬라이드"로 바꾸면서
-   배너별로 카드 크기를 다르게 지정할 수 있도록 추가.
+   tt_banners.target_w / target_h 컬럼 자동 보강
    ===================================================================== */
 function ensure_banner_size_columns(): void
 {
@@ -139,7 +144,12 @@ function ensure_banner_size_columns(): void
 }
 
 /* =====================================================================
-   [NEW] 쿠폰 시스템 테이블/컬럼 자동 생성
+   쿠폰 시스템 테이블/컬럼 자동 생성 + 보강.
+   과거 sql/sql-data-fixed 스크립트로 운영 DB를 먼저 세팅한 이력이 있는
+   서버에서는 tt_coupons / tt_user_coupons 테이블이 예전 컬럼 구성으로
+   이미 존재할 수 있어, CREATE TABLE IF NOT EXISTS만으로는 최신 컬럼이
+   보장되지 않는다. tt_stock_requests / tt_admin_logs / tt_users에 이미
+   적용된 것과 동일한 "컬럼 자동 보강" 패턴을 동일하게 적용한다.
    ===================================================================== */
 function ensure_coupon_tables(): void
 {
@@ -183,6 +193,54 @@ function ensure_coupon_tables(): void
             CONSTRAINT fk_uc_coupon FOREIGN KEY (coupon_id) REFERENCES tt_coupons(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        $couponCols = $pdo->query("SHOW COLUMNS FROM tt_coupons")->fetchAll(PDO::FETCH_COLUMN);
+        $couponRequired = [
+            'name'                 => "ALTER TABLE tt_coupons ADD COLUMN name VARCHAR(100) NOT NULL DEFAULT '' AFTER code",
+            'description'          => "ALTER TABLE tt_coupons ADD COLUMN description VARCHAR(255) NULL AFTER name",
+            'image_url'            => "ALTER TABLE tt_coupons ADD COLUMN image_url VARCHAR(255) NULL AFTER description",
+            'discount_type'        => "ALTER TABLE tt_coupons ADD COLUMN discount_type ENUM('percent','fixed') NOT NULL DEFAULT 'fixed' AFTER image_url",
+            'discount_value'       => "ALTER TABLE tt_coupons ADD COLUMN discount_value INT NOT NULL DEFAULT 0 AFTER discount_type",
+            'max_discount_amount'  => "ALTER TABLE tt_coupons ADD COLUMN max_discount_amount INT NULL AFTER discount_value",
+            'min_order_amount'     => "ALTER TABLE tt_coupons ADD COLUMN min_order_amount INT NOT NULL DEFAULT 0 AFTER max_discount_amount",
+            'valid_from'           => "ALTER TABLE tt_coupons ADD COLUMN valid_from DATETIME NULL AFTER min_order_amount",
+            'valid_until'          => "ALTER TABLE tt_coupons ADD COLUMN valid_until DATETIME NULL AFTER valid_from",
+            'total_limit'          => "ALTER TABLE tt_coupons ADD COLUMN total_limit INT NULL AFTER valid_until",
+            'issued_count'         => "ALTER TABLE tt_coupons ADD COLUMN issued_count INT NOT NULL DEFAULT 0 AFTER total_limit",
+            'status'               => "ALTER TABLE tt_coupons ADD COLUMN status ENUM('active','inactive') NOT NULL DEFAULT 'active' AFTER issued_count",
+            'created_at'           => "ALTER TABLE tt_coupons ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        ];
+        foreach ($couponRequired as $col => $sql) {
+            if (!in_array($col, $couponCols, true)) {
+                try {
+                    $pdo->exec($sql);
+                    error_log("[ensure_coupon_tables] tt_coupons 누락 컬럼 '{$col}' 추가");
+                } catch (Throwable $e) {
+                    error_log("[ensure_coupon_tables] tt_coupons 컬럼 '{$col}' 추가 실패: " . $e->getMessage());
+                }
+            }
+        }
+        try { $pdo->exec("ALTER TABLE tt_coupons MODIFY COLUMN code VARCHAR(30) NULL"); } catch (Throwable $e) {}
+
+        $ucCols = $pdo->query("SHOW COLUMNS FROM tt_user_coupons")->fetchAll(PDO::FETCH_COLUMN);
+        $ucRequired = [
+            'status'     => "ALTER TABLE tt_user_coupons ADD COLUMN status ENUM('unused','used','expired') NOT NULL DEFAULT 'unused' AFTER coupon_id",
+            'issued_at'  => "ALTER TABLE tt_user_coupons ADD COLUMN issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER status",
+            'used_at'    => "ALTER TABLE tt_user_coupons ADD COLUMN used_at DATETIME NULL AFTER issued_at",
+            'order_id'   => "ALTER TABLE tt_user_coupons ADD COLUMN order_id INT NULL AFTER used_at",
+        ];
+        foreach ($ucRequired as $col => $sql) {
+            if (!in_array($col, $ucCols, true)) {
+                try {
+                    $pdo->exec($sql);
+                    error_log("[ensure_coupon_tables] tt_user_coupons 누락 컬럼 '{$col}' 추가");
+                } catch (Throwable $e) {
+                    error_log("[ensure_coupon_tables] tt_user_coupons 컬럼 '{$col}' 추가 실패: " . $e->getMessage());
+                }
+            }
+        }
+        try { $pdo->exec("ALTER TABLE tt_user_coupons ADD INDEX idx_uc_user (user_id)"); } catch (Throwable $e) {}
+        try { $pdo->exec("ALTER TABLE tt_user_coupons ADD INDEX idx_uc_coupon (coupon_id)"); } catch (Throwable $e) {}
+
         $cols = $pdo->query("SHOW COLUMNS FROM tt_orders")->fetchAll(PDO::FETCH_COLUMN);
         if (!in_array('discount_amount', $cols, true)) {
             $pdo->exec("ALTER TABLE tt_orders ADD COLUMN discount_amount INT NOT NULL DEFAULT 0 AFTER shipping_fee");
@@ -218,14 +276,7 @@ function coupon_status_label(string $status): string
 }
 
 /* =====================================================================
-   [FIX] tt_stock_requests 컬럼 자동 보강.
-   과거 여러 번의 스키마 변경 과정에서 CREATE TABLE IF NOT EXISTS만 사용했기 때문에,
-   운영 DB에 예전 버전의 컬럼 구성이 그대로 남아 있을 수 있다.
-   이 함수는 테이블이 없으면 최신 구조로 새로 만들고, 이미 있으면 부족한 컬럼만
-   찾아서 ALTER TABLE로 추가한다. 기존 데이터는 절대 삭제/변경하지 않는다.
-   [주의] 이 함수는 admin/stock-requests.php, ajax-stock-request.php 두 곳에서
-   공용으로 호출한다. 저 두 파일 안에 같은 이름의 함수를 절대 다시 선언하지 말 것
-   (PHP는 함수 중복 선언 시 Fatal error로 500을 낸다).
+   tt_stock_requests 컬럼 자동 보강.
    ===================================================================== */
 function ensure_stock_requests_table(PDO $pdo): void
 {
@@ -275,10 +326,7 @@ function ensure_stock_requests_table(PDO $pdo): void
 }
 
 /* =====================================================================
-   [FIX] tt_admin_logs 테이블 자동 생성.
-   AdminAuth::log()가 이 테이블에 INSERT하는데, 저장소 어디에도 이 테이블을
-   만드는 코드가 없어서 운영 DB에 테이블이 없을 경우 관리자 액션 시점에
-   500 오류가 발생할 수 있었다.
+   tt_admin_logs 테이블 자동 생성.
    ===================================================================== */
 function ensure_admin_logs_table(PDO $pdo): void
 {
@@ -301,7 +349,7 @@ function ensure_admin_logs_table(PDO $pdo): void
     }
 }
 
-/** 재고 요청 상태 라벨 + 트렌디 UI용 색상/아이콘 매핑 (여러 파일에서 공용으로 사용) */
+/** 재고 요청 상태 라벨 + 트렌디 UI용 색상/아이콘 매핑 */
 function stock_request_status_meta(): array
 {
     return [
@@ -311,11 +359,9 @@ function stock_request_status_meta(): array
         'cancelled'  => ['label' => '취소',   'color' => '#ef4444', 'bg' => '#fef2f2', 'icon' => '✕'],
     ];
 }
+
 /* =====================================================================
-   [NEW] tt_users 테이블에 사업자/휴대폰인증/약관동의 관련 컬럼 자동 보강.
-   기존 스키마(sql/sql-data-fixed)에는 이 컬럼들이 없는데 login.php가
-   INSERT 시점에 이 컬럼들을 사용하고 있어서, 컬럼이 없으면 회원가입이
-   SQL 오류로 그대로 죽는다. 다른 admin 폼들과 동일한 "자동 보강" 패턴 사용.
+   tt_users 테이블에 사업자/휴대폰인증/약관동의 관련 컬럼 자동 보강.
    ===================================================================== */
 function ensure_user_extra_columns(PDO $pdo): void
 {
