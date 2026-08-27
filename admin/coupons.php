@@ -27,7 +27,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'issue') {
         flash('admin_error', '쿠폰을 찾을 수 없습니다.');
         redirect('/admin/coupons.php');
     }
-    if ($coupon['status'] !== 'active') {
+    if (($coupon['status'] ?? 'inactive') !== 'active') {
         flash('admin_error', '비활성 쿠폰은 발송할 수 없습니다.');
         redirect('/admin/coupons.php');
     }
@@ -41,9 +41,21 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'issue') {
         redirect('/admin/coupons.php');
     }
 
+    // [FIX] AdminAuth::log()는 내부에서 ensure_admin_logs_table()을 통해
+    // "CREATE TABLE IF NOT EXISTS"라는 DDL 문을 실행한다.
+    // MySQL/InnoDB는 DDL 실행 시 진행 중인 트랜잭션을 강제로 암묵적 커밋해버리기 때문에,
+    // 트랜잭션 도중(beginTransaction ~ commit 사이)에 로그 기록 함수를 호출하면
+    // 실제로는 이미 커밋된 상태에서 나중에 $pdo->commit()이 호출되어
+    // PDOException("There is no active transaction")이 발생한다.
+    // → 로그 테이블을 트랜잭션 시작 "전"에 미리 보장해 두어 트랜잭션 내부에서
+    //    DDL이 실행될 가능성을 원천적으로 제거한다.
+    ensure_admin_logs_table($pdo);
+
+    $inserted = 0;
     try {
+        set_time_limit(120); // 대량 발송 시 실행시간 초과로 인한 500 방지
+
         $pdo->beginTransaction();
-        $inserted = 0;
 
         if ($issueMode === 'all') {
             $sql = "INSERT INTO tt_user_coupons (user_id, coupon_id)
@@ -86,14 +98,20 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'issue') {
                 ->execute(['n' => $inserted, 'id' => $couponId]);
         }
 
-        AdminAuth::log($adminId, 'coupon_issue', "쿠폰#{$couponId} {$inserted}건 발송");
+        // [FIX] 순수 DML(INSERT/UPDATE)만 커밋한다. 여기까지는 DDL이 전혀 없으므로
+        // 이 commit()은 항상 "활성 트랜잭션이 있는" 정상 상태에서 호출된다.
         $pdo->commit();
+
+        // [FIX] 로그 기록은 트랜잭션이 완전히 끝난 "이후"에 실행한다.
+        // 이제는 ensure_admin_logs_table()이 이미 위에서 실행되어 테이블이 보장된 상태이므로
+        // 이 안에서 추가 DDL이 발생하지 않는다.
+        AdminAuth::log($adminId, 'coupon_issue', "쿠폰#{$couponId} {$inserted}건 발송");
 
         flash('admin_success', "쿠폰이 {$inserted}명에게 발송되었습니다.");
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) $pdo->rollBack();
         error_log('[coupon issue] ' . $e->getMessage());
-        flash('admin_error', '쿠폰 발송 중 오류가 발생했습니다.');
+        flash('admin_error', '쿠폰 발송 중 오류가 발생했습니다. [' . $e->getMessage() . ']');
     }
     redirect('/admin/coupons.php');
 }
