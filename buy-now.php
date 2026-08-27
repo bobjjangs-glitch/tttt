@@ -34,15 +34,19 @@ if (!$product || $product['status'] !== 'active') {
 }
 
 if ($optionId !== null) {
+    // [FIX] tt_product_options 테이블에는 'status' 컬럼이 존재하지 않음.
+    //       실제 스키마 기준 판매 상태 컬럼은 'is_active' (TINYINT, 1=활성/0=비활성).
+    //       'status'로 SELECT 시 SQLSTATE[42S22] Unknown column 예외가 발생하여
+    //       try/catch 없이 그대로 전역 핸들러까지 전파 → 500 에러의 원인이었음.
     $optStmt = $pdo->prepare('
-        SELECT id, stock_qty, status
+        SELECT id, stock_qty, is_active
         FROM tt_product_options
         WHERE id = :id AND product_id = :pid
     ');
     $optStmt->execute(['id' => $optionId, 'pid' => $productId]);
     $optionRow = $optStmt->fetch();
 
-    if (!$optionRow || $optionRow['status'] !== 'active') {
+    if (!$optionRow || (int)$optionRow['is_active'] !== 1) {
         flash('error', '선택하신 옵션은 판매 중이 아닙니다.');
         redirect('/product-detail.php?id=' . $productId);
     }
