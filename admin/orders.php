@@ -29,7 +29,9 @@ function admin_delete_orders(PDO $pdo, array $ids): int
         $pdo->commit();
         return $affected;
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         error_log('[admin/orders delete] ' . $e->getMessage());
         return -1;
     }
@@ -50,8 +52,33 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'change_status') {
         redirect('/admin/orders.php?id=' . $orderId);
     }
 
+    /*
+     * [FIX] 500 에러 근본 원인 수정
+     * ------------------------------------------------------------------
+     * 기존 코드는 beginTransaction() ~ commit() 사이에서 AdminAuth::log()를
+     * 호출했다. AdminAuth::log() 내부는 ensure_admin_logs_table()을 통해
+     * "CREATE TABLE IF NOT EXISTS tt_admin_logs (...)" 라는 DDL을 실행하는데,
+     * MySQL/MariaDB의 InnoDB는 DDL이 실행되는 순간 (테이블 존재 여부와 무관하게)
+     * 현재 진행 중인 트랜잭션을 강제로 암시적 커밋(implicit commit) 시켜버린다.
+     *
+     * 그 결과:
+     *   1) beginTransaction() 이후 UPDATE/INSERT까지는 정상 실행됨
+     *   2) AdminAuth::log() 안에서 CREATE TABLE 실행 → 트랜잭션이 여기서 이미 커밋됨
+     *   3) 뒤이어 나오는 $pdo->commit() 호출 시 "there is no active transaction"
+     *      PDOException 발생
+     *   4) catch(Throwable $e) 블록에서 다시 $pdo->rollBack()을 호출하지만,
+     *      이미 트랜잭션이 없는 상태이므로 rollBack()도 예외를 던지며 그대로
+     *      전역 예외 핸들러 밖으로 튀어나가 500 에러(서버 관리자 root@localhost
+     *      안내 문구가 뜨는 Apache 기본 에러 페이지)로 이어졌다.
+     *
+     * 해결책: 핵심 주문 데이터 변경(UPDATE + 상태 로그 INSERT)만 트랜잭션으로
+     * 묶고, commit()을 완전히 마친 뒤 트랜잭션 바깥에서 AdminAuth::log()를
+     * 호출한다. catch 블록에서도 rollBack() 호출 전 inTransaction()으로
+     * 실제 열려 있는 트랜잭션이 있는지 확인해 이중 예외를 방지한다.
+     */
     try {
         $pdo->beginTransaction();
+
         $upd = $pdo->prepare('UPDATE tt_orders SET status = :s WHERE id = :id');
         $upd->execute(['s' => $newStatus, 'id' => $orderId]);
 
@@ -62,11 +89,16 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'change_status') {
             'memo' => $memo !== '' ? $memo : ($statusLabels[$newStatus] . '로 변경'),
         ]);
 
-        AdminAuth::log((int)AdminAuth::currentAdminId(), 'order_status_change', "주문#{$orderId} 상태를 {$statusLabels[$newStatus]}로 변경");
         $pdo->commit();
+
+        // [FIX] 관리자 활동 로그는 핵심 트랜잭션 commit 이후, 완전히 분리된 시점에 기록한다.
+        AdminAuth::log((int)AdminAuth::currentAdminId(), 'order_status_change', "주문#{$orderId} 상태를 {$statusLabels[$newStatus]}로 변경");
+
         flash('admin_success', '주문 상태가 변경되었습니다.');
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         error_log('[admin/orders] ' . $e->getMessage());
         flash('admin_error', '상태 변경 중 오류가 발생했습니다.');
     }
@@ -244,14 +276,6 @@ $pageTitle = '주문 관리';
 require __DIR__ . '/includes/header.php';
 ?>
 
-<!--
-  중요: 상태 필터는 <form> 태그 없이 select의 onchange로 직접 페이지 이동시킵니다.
-  기존 코드는 이 select를 <form method="get">로 감싸서 bulkDeleteForm 내부에 중첩시켰는데,
-  HTML 스펙상 form 안에 form을 넣으면 브라우저가 안쪽 </form>을 만나는 순간
-  바깥쪽 bulkDeleteForm을 강제로 닫아버립니다.
-  그 결과 체크박스(order_ids[])가 실제로는 폼 바깥 요소로 파싱되어 전송되지 않았고,
-  이것이 "선택된 주문이 없습니다" 오류의 원인이었습니다.
--->
 <div class="admin-toolbar">
   <select id="statusFilterSelect" onchange="location.href='<?= BASE_URL ?>/admin/orders.php?status=' + this.value">
     <option value="">전체 상태</option>

@@ -7,6 +7,7 @@ $pdo = Database::connection();
 ensure_settings_table();
 ensure_promo_placement_column();
 ensure_banner_size_columns();
+ensure_brand_best_sections_table(); // ← [NEW] 브랜드 베스트 섹션 테이블 보장
 
 function redirect_tab(string $tab): never {
     redirect('/admin/banners.php?tab=' . $tab);
@@ -49,8 +50,6 @@ function admin_resize_banner_cover(string $srcPath, string $destPath, string $ex
 
     $dest = imagecreatetruecolor($targetW, $targetH);
 
-    /* [FIX-1] PNG/GIF/WebP는 알파 채널을 보존해야 투명 배경이 검은색으로
-       깨지지 않는다. caticon_resize_rect() / promo_resize_cover()와 동일한 처리. */
     if (in_array($ext, ['png', 'gif', 'webp'], true)) {
         imagealphablending($dest, false);
         imagesavealpha($dest, true);
@@ -60,8 +59,6 @@ function admin_resize_banner_cover(string $srcPath, string $destPath, string $ex
 
     imagecopyresampled($dest, $src, $offsetX, $offsetY, 0, 0, $scaledW, $scaledH, $srcW, $srcH);
 
-    /* [FIX-1] 무조건 imagejpeg()로 저장하던 것을 확장자별로 분기.
-       파일명 확장자(.png 등)와 실제 저장 포맷이 항상 일치하도록 보장한다. */
     $ok = false;
     switch ($ext) {
         case 'jpg': case 'jpeg': $ok = imagejpeg($dest, $destPath, 92); break;
@@ -80,7 +77,6 @@ function admin_handle_banner_upload(array $file, int $targetW, int $targetH): ar
     $imageInfo = @getimagesize($file['tmp_name']);
     if ($imageInfo === false) return ['ok' => false, 'msg' => '이미지 파일만 업로드할 수 있습니다.'];
 
-    /* [FIX-2] 초고해상도 이미지로 인한 GD 메모리 고갈(DoS) 방지 */
     if ($imageInfo[0] > MAX_UPLOAD_PIXEL_W || $imageInfo[1] > MAX_UPLOAD_PIXEL_H) {
         return ['ok' => false, 'msg' => "이미지 해상도가 너무 큽니다. (최대 " . MAX_UPLOAD_PIXEL_W . "×" . MAX_UPLOAD_PIXEL_H . "px, 업로드한 이미지는 {$imageInfo[0]}×{$imageInfo[1]}px)"];
     }
@@ -159,7 +155,6 @@ function caticon_handle_upload(array $file): array
     $imageInfo = @getimagesize($file['tmp_name']);
     if ($imageInfo === false) return ['ok' => false, 'msg' => '이미지 파일만 업로드할 수 있습니다.'];
 
-    /* [FIX-2] 초고해상도 이미지 방어 (아이콘도 동일하게 적용) */
     if ($imageInfo[0] > MAX_UPLOAD_PIXEL_W || $imageInfo[1] > MAX_UPLOAD_PIXEL_H) {
         return ['ok' => false, 'msg' => "이미지 해상도가 너무 큽니다. (최대 " . MAX_UPLOAD_PIXEL_W . "×" . MAX_UPLOAD_PIXEL_H . "px)"];
     }
@@ -234,7 +229,6 @@ function promo_handle_upload(array $file, string $placement = 'grid'): array
     $imageInfo = @getimagesize($file['tmp_name']);
     if ($imageInfo === false) return ['ok' => false, 'msg' => '이미지 파일만 업로드할 수 있습니다.'];
 
-    /* [FIX-2] 초고해상도 이미지 방어 (프로모 배너도 동일하게 적용) */
     if ($imageInfo[0] > MAX_UPLOAD_PIXEL_W || $imageInfo[1] > MAX_UPLOAD_PIXEL_H) {
         return ['ok' => false, 'msg' => "이미지 해상도가 너무 큽니다. (최대 " . MAX_UPLOAD_PIXEL_W . "×" . MAX_UPLOAD_PIXEL_H . "px)"];
     }
@@ -490,6 +484,80 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'save_product_name') {
 }
 
 /* =====================================================================
+   POST 핸들러 — [NEW] 브랜드별 베스트셀러 섹션
+   ===================================================================== */
+if (is_post() && ($_POST['form_type'] ?? '') === 'save_brand_best') {
+    if (!Csrf::verify($_POST['csrf_token'] ?? '')) { flash('admin_error', '잘못된 요청입니다.'); redirect_tab('brandbest'); }
+
+    $sectionId    = (int)($_POST['section_id'] ?? 0);
+    $brandIdRaw   = trim($_POST['brand_id'] ?? '');
+    $brandId      = $brandIdRaw === '' ? null : (int)$brandIdRaw;
+    $sectionTitle = trim($_POST['section_title'] ?? '');
+    $kickerText   = trim($_POST['kicker_text'] ?? '');
+    $viewAllText  = trim($_POST['view_all_text'] ?? '') ?: '전체보기';
+    $viewAllUrl   = trim($_POST['view_all_url'] ?? '');
+    $subText      = trim($_POST['sub_text'] ?? '');
+    $periodDays   = max(1, (int)($_POST['period_days'] ?? 30));
+    $displayLimit = max(1, min(5, (int)($_POST['display_limit'] ?? 5))); // 한 줄 최대 5개 강제
+    $sortOrder    = (int)($_POST['sort_order'] ?? 0);
+
+    if ($sectionTitle === '') { flash('admin_error', '섹션 제목을 입력해 주세요.'); redirect_tab('brandbest'); }
+
+    try {
+        if ($sectionId > 0) {
+            $pdo->prepare('
+                UPDATE tt_brand_best_sections
+                SET brand_id=:bid, section_title=:title, kicker_text=:kicker, view_all_text=:vatext,
+                    view_all_url=:vaurl, sub_text=:sub, period_days=:days, display_limit=:dlimit, sort_order=:sort
+                WHERE id=:id
+            ')->execute([
+                'bid' => $brandId, 'title' => $sectionTitle, 'kicker' => $kickerText !== '' ? $kickerText : null,
+                'vatext' => $viewAllText, 'vaurl' => $viewAllUrl !== '' ? $viewAllUrl : null,
+                'sub' => $subText !== '' ? $subText : null, 'days' => $periodDays, 'dlimit' => $displayLimit,
+                'sort' => $sortOrder, 'id' => $sectionId,
+            ]);
+            AdminAuth::log((int)AdminAuth::currentAdminId(), 'brand_best_update', "브랜드베스트#{$sectionId} 수정 ({$sectionTitle})");
+            flash('admin_success', '브랜드 베스트 섹션이 수정되었습니다.');
+        } else {
+            $pdo->prepare('
+                INSERT INTO tt_brand_best_sections
+                    (brand_id, section_title, kicker_text, view_all_text, view_all_url, sub_text, period_days, display_limit, sort_order, is_active)
+                VALUES (:bid, :title, :kicker, :vatext, :vaurl, :sub, :days, :dlimit, :sort, 1)
+            ')->execute([
+                'bid' => $brandId, 'title' => $sectionTitle, 'kicker' => $kickerText !== '' ? $kickerText : null,
+                'vatext' => $viewAllText, 'vaurl' => $viewAllUrl !== '' ? $viewAllUrl : null,
+                'sub' => $subText !== '' ? $subText : null, 'days' => $periodDays, 'dlimit' => $displayLimit,
+                'sort' => $sortOrder,
+            ]);
+            $newId = (int)$pdo->lastInsertId();
+            AdminAuth::log((int)AdminAuth::currentAdminId(), 'brand_best_create', "브랜드베스트#{$newId} 등록 ({$sectionTitle})");
+            flash('admin_success', "'{$sectionTitle}' 섹션이 등록되었습니다.");
+        }
+    } catch (Throwable $e) {
+        error_log('[admin/banners save_brand_best] ' . $e->getMessage());
+        flash('admin_error', '저장 중 오류가 발생했습니다.');
+    }
+    redirect_tab('brandbest');
+}
+
+if (is_post() && ($_POST['form_type'] ?? '') === 'toggle_brand_best_status') {
+    if (!Csrf::verify($_POST['csrf_token'] ?? '')) { flash('admin_error', '잘못된 요청입니다.'); redirect_tab('brandbest'); }
+    $sectionId = (int)($_POST['section_id'] ?? 0);
+    $pdo->prepare('UPDATE tt_brand_best_sections SET is_active = 1 - is_active WHERE id = :id')->execute(['id' => $sectionId]);
+    AdminAuth::log((int)AdminAuth::currentAdminId(), 'brand_best_toggle', "브랜드베스트#{$sectionId} 노출상태 변경");
+    redirect_tab('brandbest');
+}
+
+if (is_post() && ($_POST['form_type'] ?? '') === 'delete_brand_best') {
+    if (!Csrf::verify($_POST['csrf_token'] ?? '')) { flash('admin_error', '잘못된 요청입니다.'); redirect_tab('brandbest'); }
+    $sectionId = (int)($_POST['section_id'] ?? 0);
+    $pdo->prepare('DELETE FROM tt_brand_best_sections WHERE id = :id')->execute(['id' => $sectionId]);
+    AdminAuth::log((int)AdminAuth::currentAdminId(), 'brand_best_delete', "브랜드베스트#{$sectionId} 삭제");
+    flash('admin_success', '브랜드 베스트 섹션이 삭제되었습니다.');
+    redirect_tab('brandbest');
+}
+
+/* =====================================================================
    조회 (화면 표시용)
    ===================================================================== */
 $banners       = $pdo->query('SELECT id, title, image_url, link_url, sort_order, target_w, target_h, is_active FROM tt_banners ORDER BY sort_order ASC, id ASC')->fetchAll();
@@ -512,6 +580,15 @@ $newProductsAdmin = $pdo->query("
     WHERE p.status = 'active' ORDER BY p.created_at DESC LIMIT 8
 ")->fetchAll();
 
+$brandBestSections = $pdo->query("
+    SELECT s.*, b.name AS brand_name
+    FROM tt_brand_best_sections s
+    LEFT JOIN tt_brands b ON b.id = s.brand_id
+    ORDER BY s.sort_order ASC, s.id ASC
+")->fetchAll();
+
+$brandsForSelect = $pdo->query("SELECT id, name FROM tt_brands WHERE is_active = 1 ORDER BY name ASC")->fetchAll();
+
 $currentTab = $_GET['tab'] ?? 'banner';
 $pageTitle  = '홈 화면 관리';
 require __DIR__ . '/includes/header.php';
@@ -523,6 +600,7 @@ require __DIR__ . '/includes/header.php';
   <a href="?tab=promo"  class="admin-tab <?= $currentTab==='promo'?'active':'' ?>">③ 프로모 배너</a>
   <a href="?tab=section" class="admin-tab <?= $currentTab==='section'?'active':'' ?>">④ 섹션 제목</a>
   <a href="?tab=product" class="admin-tab <?= $currentTab==='product'?'active':'' ?>">⑤ BEST/NEW 상품명</a>
+  <a href="?tab=brandbest" class="admin-tab <?= $currentTab==='brandbest'?'active':'' ?>">⑥ 브랜드 베스트 섹션</a>
 </div>
 
 <?php if ($currentTab === 'banner'): ?>
@@ -881,6 +959,154 @@ require __DIR__ . '/includes/header.php';
     </tbody>
   </table>
 </div>
+
+<?php elseif ($currentTab === 'brandbest'): ?>
+<!-- ============================== ⑥ 브랜드 베스트 섹션 탭 ============================== -->
+<div class="admin-card" style="margin-bottom:20px">
+  <h2 id="bbsFormTitle">브랜드 베스트 섹션 등록</h2>
+  <p class="admin-form-hint" style="margin-bottom:14px;">
+    브랜드를 선택하면 해당 브랜드 상품만, 선택하지 않으면 전체 상품 중에서 '최근 N일' 판매량 기준 베스트셀러를 뽑아 보여줍니다.
+    한 줄에는 최대 5개까지만 노출되며, 이 섹션을 여러 개 만들어서 브랜드별로 여러 줄을 구성할 수 있습니다.
+  </p>
+  <form method="post" id="bbsForm">
+    <?= Csrf::field() ?>
+    <input type="hidden" name="tab" value="brandbest">
+    <input type="hidden" name="form_type" value="save_brand_best">
+    <input type="hidden" name="section_id" id="bbsIdInput" value="0">
+
+    <div class="admin-form-grid">
+      <div class="admin-form-row">
+        <label>대상 브랜드</label>
+        <select name="brand_id" id="bbsBrandInput">
+          <option value="">전체 (브랜드 무관 베스트)</option>
+          <?php foreach ($brandsForSelect as $b): ?>
+            <option value="<?= (int)$b['id'] ?>"><?= h($b['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="admin-form-row">
+        <label>섹션 제목 <span class="req">*</span></label>
+        <input type="text" name="section_title" id="bbsTitleInput" required maxlength="100" placeholder="예: 브리지스톤 베스트">
+      </div>
+
+      <div class="admin-form-row admin-form-row-full">
+        <label>상단 문구 (kicker)</label>
+        <input type="text" name="kicker_text" id="bbsKickerInput" maxlength="150" placeholder="예: 타이어픽 최저가 N사 최저가 도전!">
+      </div>
+
+      <div class="admin-form-row">
+        <label>전체보기 링크 문구</label>
+        <input type="text" name="view_all_text" id="bbsViewAllTextInput" maxlength="60" placeholder="예: 브리지스톤 전체보기">
+      </div>
+      <div class="admin-form-row">
+        <label>전체보기 링크 URL</label>
+        <input type="text" name="view_all_url" id="bbsViewAllUrlInput" placeholder="비워두면 브랜드 기준으로 자동 생성">
+      </div>
+
+      <div class="admin-form-row admin-form-row-full">
+        <label>하단 문구</label>
+        <input type="text" name="sub_text" id="bbsSubTextInput" maxlength="150" placeholder="예: 타이어픽에서 저렴하게 만나보세요!">
+      </div>
+
+      <div class="admin-form-row">
+        <label>집계 기준(최근 N일)</label>
+        <input type="number" name="period_days" id="bbsPeriodInput" value="30" min="1" max="365">
+      </div>
+      <div class="admin-form-row">
+        <label>한 줄 표시 개수 (최대 5)</label>
+        <input type="number" name="display_limit" id="bbsLimitInput" value="5" min="1" max="5">
+      </div>
+      <div class="admin-form-row">
+        <label>노출 순서</label>
+        <input type="number" name="sort_order" id="bbsSortInput" value="0">
+      </div>
+    </div>
+
+    <div class="admin-form-actions">
+      <button type="button" class="btn-admin-secondary" id="bbsFormCancelBtn" style="display:none">취소</button>
+      <button type="submit" class="btn-admin-primary" id="bbsFormSubmitBtn">섹션 등록</button>
+    </div>
+  </form>
+</div>
+
+<div class="admin-card">
+  <h2>등록된 브랜드 베스트 섹션 <span class="admin-count-pill"><?= count($brandBestSections) ?>개</span></h2>
+  <table class="admin-table-trendy">
+    <thead>
+      <tr>
+        <th>제목</th><th>브랜드</th><th>상단문구</th><th style="width:70px">기간</th>
+        <th style="width:70px">개수</th><th style="width:70px">순서</th><th style="width:90px">노출</th><th style="width:150px"></th>
+      </tr>
+    </thead>
+    <tbody>
+    <?php if (empty($brandBestSections)): ?>
+      <tr><td colspan="8" class="admin-empty-row">🛞 등록된 브랜드 베스트 섹션이 없습니다.</td></tr>
+    <?php else: foreach ($brandBestSections as $s): ?>
+      <tr>
+        <td><span class="admin-prod-name"><?= h($s['section_title']) ?></span></td>
+        <td class="admin-text-sub"><?= $s['brand_name'] ? h($s['brand_name']) : '전체' ?></td>
+        <td class="admin-text-sub"><?= $s['kicker_text'] ? h($s['kicker_text']) : '-' ?></td>
+        <td class="mono"><?= (int)$s['period_days'] ?>일</td>
+        <td class="mono"><?= (int)$s['display_limit'] ?>개</td>
+        <td class="mono"><?= (int)$s['sort_order'] ?></td>
+        <td>
+          <form method="post" style="display:inline">
+            <?= Csrf::field() ?><input type="hidden" name="tab" value="brandbest">
+            <input type="hidden" name="form_type" value="toggle_brand_best_status">
+            <input type="hidden" name="section_id" value="<?= (int)$s['id'] ?>">
+            <button type="submit" class="status-toggle-btn status-badge status-<?= $s['is_active']?'done':'cancelled' ?>"><?= $s['is_active']?'노출중':'숨김' ?></button>
+          </form>
+        </td>
+        <td>
+          <button type="button" class="admin-link-btn btn-edit-bbs"
+            data-id="<?= (int)$s['id'] ?>"
+            data-brand="<?= (int)($s['brand_id'] ?? 0) ?>"
+            data-title="<?= h($s['section_title']) ?>"
+            data-kicker="<?= h($s['kicker_text'] ?? '') ?>"
+            data-vatext="<?= h($s['view_all_text'] ?? '') ?>"
+            data-vaurl="<?= h($s['view_all_url'] ?? '') ?>"
+            data-sub="<?= h($s['sub_text'] ?? '') ?>"
+            data-days="<?= (int)$s['period_days'] ?>"
+            data-limit="<?= (int)$s['display_limit'] ?>"
+            data-sort="<?= (int)$s['sort_order'] ?>">수정</button>
+          <form method="post" style="display:inline" onsubmit="return confirm('삭제하시겠습니까?');">
+            <?= Csrf::field() ?><input type="hidden" name="tab" value="brandbest">
+            <input type="hidden" name="form_type" value="delete_brand_best">
+            <input type="hidden" name="section_id" value="<?= (int)$s['id'] ?>">
+            <button type="submit" class="btn-admin-danger" style="padding:4px 10px;font-size:12px;">삭제</button>
+          </form>
+        </td>
+      </tr>
+    <?php endforeach; endif; ?>
+    </tbody>
+  </table>
+</div>
+
+<script>
+document.querySelectorAll('.btn-edit-bbs').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    document.getElementById('bbsIdInput').value = this.dataset.id;
+    document.getElementById('bbsBrandInput').value = this.dataset.brand || '';
+    document.getElementById('bbsTitleInput').value = this.dataset.title;
+    document.getElementById('bbsKickerInput').value = this.dataset.kicker;
+    document.getElementById('bbsViewAllTextInput').value = this.dataset.vatext;
+    document.getElementById('bbsViewAllUrlInput').value = this.dataset.vaurl;
+    document.getElementById('bbsSubTextInput').value = this.dataset.sub;
+    document.getElementById('bbsPeriodInput').value = this.dataset.days;
+    document.getElementById('bbsLimitInput').value = this.dataset.limit;
+    document.getElementById('bbsSortInput').value = this.dataset.sort;
+    document.getElementById('bbsFormSubmitBtn').textContent = '섹션 수정 저장';
+    document.getElementById('bbsFormCancelBtn').style.display = 'inline-block';
+    document.getElementById('bbsForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+document.getElementById('bbsFormCancelBtn')?.addEventListener('click', function () {
+  document.getElementById('bbsForm').reset();
+  document.getElementById('bbsIdInput').value = '0';
+  document.getElementById('bbsFormSubmitBtn').textContent = '섹션 등록';
+  this.style.display = 'none';
+});
+</script>
 <?php endif; ?>
 
 <script>
