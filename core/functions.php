@@ -436,41 +436,75 @@ function get_brand_best_products(PDO $pdo, ?int $brandId, int $periodDays, int $
 /* =====================================================================
    메인화면 하단 "실구매자 리뷰" 섹션 (타이어픽 스타일 참고)
    - 기존 tt_reviews 테이블을 그대로 사용, 새 테이블 생성 없음
-   - 평점 4점 이상 + 내용 8자 이상인 리뷰만 신뢰도 있게 노출
+   - 1차: 평점 4점 이상 + 내용 8자 이상 "우수 리뷰" 우선 노출
+   - 2차: 1차 결과가 limit에 못 미치면 조건을 낮춰 나머지를 자동 채움
+   - LEFT JOIN으로 변경: 연결된 상품/유저가 삭제/탈퇴돼도 리뷰 자체는 절대 누락되지 않음
    ===================================================================== */
 function get_home_best_reviews(PDO $pdo, int $limit = 10): array
 {
     $limit = max(1, min(20, $limit));
+
     try {
-        $stmt = $pdo->prepare("
+        // 1차: 우수 리뷰(평점 4점 이상, 8자 이상) 우선 조회
+        $stmt1 = $pdo->prepare("
             SELECT r.id, r.rating, r.content, r.created_at,
                    p.id AS product_id, p.name AS product_name, p.thumbnail_url,
                    b.name AS brand_name,
                    u.name AS user_name
             FROM tt_reviews r
-            JOIN tt_products p ON p.id = r.product_id
-            LEFT JOIN tt_brands b ON b.id = p.brand_id
-            JOIN tt_users u ON u.id = r.user_id
+            LEFT JOIN tt_products p ON p.id = r.product_id
+            LEFT JOIN tt_brands   b ON b.id = p.brand_id
+            LEFT JOIN tt_users    u ON u.id = r.user_id
             WHERE r.rating >= 4
               AND CHAR_LENGTH(TRIM(r.content)) >= 8
             ORDER BY r.rating DESC, r.created_at DESC
             LIMIT :lim
         ");
-        $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
-        $stmt->execute();
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt1->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $stmt1->execute();
+        $rows = $stmt1->fetchAll(PDO::FETCH_ASSOC);
+
+        // 2차 보강: 데이터가 적은 초기 단계 대비, 조건을 낮춰 나머지를 채움
+        if (count($rows) < $limit) {
+            $need = $limit - count($rows);
+            $excludeIds = array_column($rows, 'id');
+            $excludeIds[] = 0; // NOT IN 빈 배열 방지용 더미값
+            $placeholders = implode(',', array_fill(0, count($excludeIds), '?'));
+
+            $sql2 = "
+                SELECT r.id, r.rating, r.content, r.created_at,
+                       p.id AS product_id, p.name AS product_name, p.thumbnail_url,
+                       b.name AS brand_name,
+                       u.name AS user_name
+                FROM tt_reviews r
+                LEFT JOIN tt_products p ON p.id = r.product_id
+                LEFT JOIN tt_brands   b ON b.id = p.brand_id
+                LEFT JOIN tt_users    u ON u.id = r.user_id
+                WHERE r.id NOT IN ($placeholders)
+                  AND CHAR_LENGTH(TRIM(r.content)) >= 2
+                ORDER BY r.rating DESC, r.created_at DESC
+                LIMIT $need
+            ";
+            $stmt2 = $pdo->prepare($sql2);
+            $stmt2->execute($excludeIds);
+            $rows = array_merge($rows, $stmt2->fetchAll(PDO::FETCH_ASSOC));
+        }
     } catch (Throwable $e) {
         error_log('[get_home_best_reviews] ' . $e->getMessage());
         return [];
     }
 
-    // 작성자 이름 마스킹 (개인정보 보호) : 김철수 → 김**
+    // 작성자 이름 마스킹 + 삭제된 상품/유저 대비 기본값 처리
     foreach ($rows as &$row) {
         $name = (string)($row['user_name'] ?? '고객');
         $nameLen = mb_strlen($name);
         $row['user_name_masked'] = $nameLen <= 1
             ? $name . '*'
             : mb_substr($name, 0, 1) . str_repeat('*', $nameLen - 1);
+
+        $row['product_name']  = $row['product_name']  ?? '판매종료 상품';
+        $row['thumbnail_url'] = $row['thumbnail_url'] ?? '';
+        $row['brand_name']    = $row['brand_name']    ?? '';
     }
     unset($row);
 

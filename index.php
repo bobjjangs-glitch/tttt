@@ -254,30 +254,6 @@ require __DIR__ . '/includes/header.php';
 </section>
 <?php endforeach; ?>
 
-<section class="benefit-sec">
-  <div class="benefit-grid">
-    <div class="benefit-card">
-      <div class="benefit-icon">💰</div>
-      <div class="benefit-title">최저가 도전</div>
-      <div class="benefit-desc">타이어 교체 비용 최저가로 도전합니다</div>
-    </div>
-    <div class="benefit-card">
-      <div class="benefit-icon">🔧</div>
-      <div class="benefit-title">맞춤 교체</div>
-      <div class="benefit-desc">방문·출장·배송, 내 상황에 맞게 선택</div>
-    </div>
-    <div class="benefit-card">
-      <div class="benefit-icon">🛡️</div>
-      <div class="benefit-title">파손 보증</div>
-      <div class="benefit-desc">보증 상품 파손 시 무상 교체</div>
-    </div>
-    <div class="benefit-card">
-      <div class="benefit-icon">🎁</div>
-      <div class="benefit-title">리뷰 적립</div>
-      <div class="benefit-desc">구매 후 리뷰 작성하면 포인트 지급</div>
-    </div>
-  </div>
-</section>
 
 <!-- ===== [NEW] 메인화면 맨 하단 "실구매자 리뷰" 섹션 (타이어픽 스타일 참고, 기존 tt_reviews 그대로 사용) ===== -->
 <?php if (!empty($homeReviews)): ?>
