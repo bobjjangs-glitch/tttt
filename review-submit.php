@@ -1,16 +1,12 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
+ensure_review_extra_columns();
 
 if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
     define('REVIEW_WRITE_WINDOW_DAYS', 7);
 }
 
-/**
- * 처리 결과에 따라 되돌아갈 위치를 결정한다.
- * return_to=mypage 이면 마이페이지의 '내가 쓴 리뷰' 섹션으로,
- * 그 외(기본값)에는 기존처럼 상품 상세페이지 리뷰 탭으로 돌려보낸다.
- */
 function review_submit_redirect(int $productId, string $returnTo): void
 {
     if ($returnTo === 'mypage') {
@@ -52,9 +48,17 @@ if (mb_strlen($content) > 1000) {
     review_submit_redirect($productId, $returnTo);
 }
 
+// [NEW] 서비스 유형 / 부가옵션 화이트리스트 검증 (조작 방지)
+$serviceType = trim((string)($_POST['service_type'] ?? ''));
+if ($serviceType !== '' && !in_array($serviceType, review_service_type_options(), true)) {
+    $serviceType = '';
+}
+$optionTagsInput = (array)($_POST['option_tags'] ?? []);
+$optionTags      = array_values(array_intersect($optionTagsInput, review_option_tag_options()));
+$optionTagsStr   = implode(',', $optionTags);
+
 $pdo = Database::connection();
 
-// 구매확정(confirmed_at) 이력 확인
 $buyStmt = $pdo->prepare("
     SELECT oi.id, o.confirmed_at
     FROM tt_order_items oi
@@ -71,7 +75,6 @@ if (!$orderItem || empty($orderItem['id'])) {
     review_submit_redirect($productId, $returnTo);
 }
 
-// 구매확정일로부터 7일 초과 시 서버에서 강제 차단 (화면 숨김과 별개인 이중 방어)
 $confirmedAt = new DateTime($orderItem['confirmed_at']);
 $deadline    = (clone $confirmedAt)->modify('+' . REVIEW_WRITE_WINDOW_DAYS . ' days');
 if (new DateTime() > $deadline) {
@@ -79,7 +82,6 @@ if (new DateTime() > $deadline) {
     review_submit_redirect($productId, $returnTo);
 }
 
-// 중복 작성 방지
 $dupStmt = $pdo->prepare('SELECT id FROM tt_reviews WHERE user_id = :uid AND product_id = :pid LIMIT 1');
 $dupStmt->execute(['uid' => $userId, 'pid' => $productId]);
 if ($dupStmt->fetch()) {
@@ -87,19 +89,64 @@ if ($dupStmt->fetch()) {
     review_submit_redirect($productId, $returnTo);
 }
 
+// [NEW] 리뷰 사진 업로드 처리 (최대 3장, jpg/png/webp, 장당 5MB 이하)
+$uploadedPhotoUrls = [];
+if (!empty($_FILES['photos']['tmp_name']) && is_array($_FILES['photos']['tmp_name'])) {
+    $allowedExt = ['jpg', 'jpeg', 'png', 'webp'];
+    $maxBytes   = 5 * 1024 * 1024;
+    $maxCount   = 3;
+    $count      = 0;
+
+    foreach ($_FILES['photos']['tmp_name'] as $idx => $tmpPath) {
+        if ($count >= $maxCount) break;
+        if (($_FILES['photos']['error'][$idx] ?? 1) !== UPLOAD_ERR_OK) continue;
+        if (($_FILES['photos']['size'][$idx] ?? 0) > $maxBytes) continue;
+
+        $origName = (string)($_FILES['photos']['name'][$idx] ?? '');
+        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowedExt, true)) continue;
+
+        // 확장자만 바꾼 위장 파일 방지: 실제 이미지인지 검증
+        if (@getimagesize($tmpPath) === false) continue;
+
+        $subDir = 'uploads/reviews/' . date('Ym');
+        $destDir = __DIR__ . '/' . $subDir;
+        if (!is_dir($destDir)) {
+            mkdir($destDir, 0755, true);
+        }
+
+        $fileName = bin2hex(random_bytes(8)) . '.' . $ext;
+        if (move_uploaded_file($tmpPath, $destDir . '/' . $fileName)) {
+            $uploadedPhotoUrls[] = '/' . $subDir . '/' . $fileName;
+        }
+        $count++;
+    }
+}
+
 try {
     $pdo->beginTransaction();
 
     $pdo->prepare('
-        INSERT INTO tt_reviews (product_id, user_id, order_item_id, rating, content, created_at)
-        VALUES (:pid, :uid, :oid, :rating, :content, NOW())
+        INSERT INTO tt_reviews (product_id, user_id, order_item_id, rating, content, service_type, option_tags, created_at)
+        VALUES (:pid, :uid, :oid, :rating, :content, :service_type, :option_tags, NOW())
     ')->execute([
-        'pid'     => $productId,
-        'uid'     => $userId,
-        'oid'     => $orderItem['id'],
-        'rating'  => $rating,
-        'content' => $content,
+        'pid'          => $productId,
+        'uid'          => $userId,
+        'oid'          => $orderItem['id'],
+        'rating'       => $rating,
+        'content'      => $content,
+        'service_type' => $serviceType !== '' ? $serviceType : null,
+        'option_tags'  => $optionTagsStr !== '' ? $optionTagsStr : null,
     ]);
+
+    $reviewId = (int)$pdo->lastInsertId();
+
+    if (!empty($uploadedPhotoUrls)) {
+        $photoStmt = $pdo->prepare('INSERT INTO tt_review_photos (review_id, image_url, sort_order) VALUES (:rid, :url, :sort)');
+        foreach ($uploadedPhotoUrls as $i => $url) {
+            $photoStmt->execute(['rid' => $reviewId, 'url' => $url, 'sort' => $i]);
+        }
+    }
 
     $pdo->prepare('
         UPDATE tt_products p
@@ -110,23 +157,6 @@ try {
 
     $pdo->commit();
     flash('success', '리뷰가 등록되었습니다.');
-
-} catch (PDOException $e) {
-    $pdo->rollBack();
-
-    $sqlState  = $e->errorInfo[0] ?? $e->getCode();
-    $driverMsg = $e->errorInfo[2] ?? $e->getMessage();
-
-    error_log(sprintf(
-        '[review-submit] sqlstate=%s uid=%d pid=%d oid=%s msg=%s',
-        (string)$sqlState,
-        $userId,
-        $productId,
-        (string)($orderItem['id'] ?? 'null'),
-        $driverMsg
-    ));
-
-    flash('error', '리뷰 등록 중 오류가 발생했습니다.');
 
 } catch (Throwable $e) {
     $pdo->rollBack();

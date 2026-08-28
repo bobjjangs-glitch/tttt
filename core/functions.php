@@ -434,79 +434,56 @@ function get_brand_best_products(PDO $pdo, ?int $brandId, int $periodDays, int $
     return $stmt->fetchAll();
 }
 /* =====================================================================
-   메인화면 하단 "실구매자 리뷰" 섹션 (타이어픽 스타일 참고)
-   - 기존 tt_reviews 테이블을 그대로 사용, 새 테이블 생성 없음
-   - 1차: 평점 4점 이상 + 내용 8자 이상 "우수 리뷰" 우선 노출
-   - 2차: 1차 결과가 limit에 못 미치면 조건을 낮춰 나머지를 자동 채움
-   - LEFT JOIN으로 변경: 연결된 상품/유저가 삭제/탈퇴돼도 리뷰 자체는 절대 누락되지 않음
+   [NEW] 리뷰 작성 시 선택 가능한 서비스 유형 / 부가옵션 화이트리스트
+   - review-submit.php, product-detail.php, review-list.php 에서 공통으로 참조
+   - 여기서 값을 추가/삭제하면 작성 폼과 목록 필터에 동시에 반영됨
    ===================================================================== */
-function get_home_best_reviews(PDO $pdo, int $limit = 10): array
+function review_service_type_options(): array
 {
-    $limit = max(1, min(20, $limit));
+    return ['타이어교체', '매장방문', '출장교체', '발렛', '자동세차', '엔진오일교체', '배터리교체'];
+}
+
+function review_option_tag_options(): array
+{
+    return ['휠얼라인먼트추가', '밸런스작업', '폐타이어처리', '공기압점검'];
+}
+
+/* =====================================================================
+   [NEW] tt_reviews 테이블에 service_type / option_tags 컬럼을 자동 추가하고,
+   리뷰 사진을 담을 tt_review_photos 테이블을 자동 생성한다.
+   - 기존 ensure_brand_best_sections_table() 과 동일한 패턴 (없으면 만들고, 있으면 통과)
+   ===================================================================== */
+function ensure_review_extra_columns(): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+
+    $pdo = Database::connection();
 
     try {
-        // 1차: 우수 리뷰(평점 4점 이상, 8자 이상) 우선 조회
-        $stmt1 = $pdo->prepare("
-            SELECT r.id, r.rating, r.content, r.created_at,
-                   p.id AS product_id, p.name AS product_name, p.thumbnail_url,
-                   b.name AS brand_name,
-                   u.name AS user_name
-            FROM tt_reviews r
-            LEFT JOIN tt_products p ON p.id = r.product_id
-            LEFT JOIN tt_brands   b ON b.id = p.brand_id
-            LEFT JOIN tt_users    u ON u.id = r.user_id
-            WHERE r.rating >= 4
-              AND CHAR_LENGTH(TRIM(r.content)) >= 8
-            ORDER BY r.rating DESC, r.created_at DESC
-            LIMIT :lim
-        ");
-        $stmt1->bindValue(':lim', $limit, PDO::PARAM_INT);
-        $stmt1->execute();
-        $rows = $stmt1->fetchAll(PDO::FETCH_ASSOC);
-
-        // 2차 보강: 데이터가 적은 초기 단계 대비, 조건을 낮춰 나머지를 채움
-        if (count($rows) < $limit) {
-            $need = $limit - count($rows);
-            $excludeIds = array_column($rows, 'id');
-            $excludeIds[] = 0; // NOT IN 빈 배열 방지용 더미값
-            $placeholders = implode(',', array_fill(0, count($excludeIds), '?'));
-
-            $sql2 = "
-                SELECT r.id, r.rating, r.content, r.created_at,
-                       p.id AS product_id, p.name AS product_name, p.thumbnail_url,
-                       b.name AS brand_name,
-                       u.name AS user_name
-                FROM tt_reviews r
-                LEFT JOIN tt_products p ON p.id = r.product_id
-                LEFT JOIN tt_brands   b ON b.id = p.brand_id
-                LEFT JOIN tt_users    u ON u.id = r.user_id
-                WHERE r.id NOT IN ($placeholders)
-                  AND CHAR_LENGTH(TRIM(r.content)) >= 2
-                ORDER BY r.rating DESC, r.created_at DESC
-                LIMIT $need
-            ";
-            $stmt2 = $pdo->prepare($sql2);
-            $stmt2->execute($excludeIds);
-            $rows = array_merge($rows, $stmt2->fetchAll(PDO::FETCH_ASSOC));
+        if (!$pdo->query("SHOW COLUMNS FROM tt_reviews LIKE 'service_type'")->fetch()) {
+            $pdo->exec("ALTER TABLE tt_reviews ADD COLUMN service_type VARCHAR(30) NULL AFTER rating");
+        }
+        if (!$pdo->query("SHOW COLUMNS FROM tt_reviews LIKE 'option_tags'")->fetch()) {
+            $pdo->exec("ALTER TABLE tt_reviews ADD COLUMN option_tags VARCHAR(255) NULL AFTER service_type");
         }
     } catch (Throwable $e) {
-        error_log('[get_home_best_reviews] ' . $e->getMessage());
-        return [];
+        error_log('[ensure_review_extra_columns:alter] ' . $e->getMessage());
     }
 
-    // 작성자 이름 마스킹 + 삭제된 상품/유저 대비 기본값 처리
-    foreach ($rows as &$row) {
-        $name = (string)($row['user_name'] ?? '고객');
-        $nameLen = mb_strlen($name);
-        $row['user_name_masked'] = $nameLen <= 1
-            ? $name . '*'
-            : mb_substr($name, 0, 1) . str_repeat('*', $nameLen - 1);
-
-        $row['product_name']  = $row['product_name']  ?? '판매종료 상품';
-        $row['thumbnail_url'] = $row['thumbnail_url'] ?? '';
-        $row['brand_name']    = $row['brand_name']    ?? '';
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_review_photos (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                review_id INT NOT NULL,
+                image_url VARCHAR(500) NOT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_review_id (review_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+    } catch (Throwable $e) {
+        error_log('[ensure_review_extra_columns:photos] ' . $e->getMessage());
     }
-    unset($row);
-
-    return $rows;
 }
