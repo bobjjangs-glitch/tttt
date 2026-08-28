@@ -16,6 +16,9 @@ if (is_post()) {
 }
 
 // ── 주문 대상 아이템 조회 ───────────────────────────────────────────
+// [FIX] 옵션(DOT)이 있으면 옵션 자신의 price_sale이 실제 판매가다.
+//       상품의 price_sale은 옵션이 없을 때만 쓰는 기본가이며,
+//       extra_price는 실제로 사용되지 않는 레거시 컬럼이므로 가격 계산에서 제외한다.
 if ($mode === 'buynow') {
     $buyNow = $_SESSION['buy_now'] ?? null;
     if (!$buyNow) {
@@ -25,9 +28,9 @@ if ($mode === 'buynow') {
 
     $stmt = $pdo->prepare('
         SELECT :qty AS qty, p.id AS product_id, p.name, p.price_sale, p.stock AS product_stock,
-               o.id AS option_id, o.size, o.extra_price, o.stock_qty AS option_stock
+               o.id AS option_id, o.size, o.price_sale AS option_price_sale, o.stock_qty AS option_stock
         FROM tt_products p
-        LEFT JOIN tt_product_options o ON o.id = :option_id
+        LEFT JOIN tt_product_options o ON o.id = :option_id AND o.product_id = p.id
         WHERE p.id = :pid AND p.status = "active"
     ');
     $stmt->execute([
@@ -45,7 +48,7 @@ if ($mode === 'buynow') {
 } else {
     $stmt = $pdo->prepare('
         SELECT c.id AS cart_id, c.qty, p.id AS product_id, p.name, p.price_sale, p.stock AS product_stock,
-               o.id AS option_id, o.size, o.extra_price, o.stock_qty AS option_stock
+               o.id AS option_id, o.size, o.price_sale AS option_price_sale, o.stock_qty AS option_stock
         FROM tt_carts c
         JOIN tt_products p ON p.id = c.product_id
         LEFT JOIN tt_product_options o ON o.id = c.option_id
@@ -57,9 +60,16 @@ if ($mode === 'buynow') {
     if (!$items) redirect('/cart.php');
 }
 
-$subtotalPreview = array_sum(array_map(fn($i) => ((int)$i['price_sale'] + (int)($i['extra_price'] ?? 0)) * (int)$i['qty'], $items));
+/** [FIX] 옵션이 있으면 옵션의 price_sale, 없으면 상품의 price_sale을 실제 단가로 사용 */
+function ck_unit_price(array $it): int {
+    return $it['option_id']
+        ? (int)$it['option_price_sale']
+        : (int)$it['price_sale'];
+}
 
-/* ===== [NEW] 사용 가능한 쿠폰 목록 조회 (사용 안 함 + 기간 유효 + 최소금액 이하는 제외하지 않고 전부 보여준 뒤 JS로 비활성 처리) ===== */
+$subtotalPreview = array_sum(array_map(fn($i) => ck_unit_price($i) * (int)$i['qty'], $items));
+
+/* ===== 사용 가능한 쿠폰 목록 조회 (사용 안 함 + 기간 유효, 최소금액 이하는 JS로 비활성 처리) ===== */
 $couponListStmt = $pdo->prepare("
     SELECT uc.id AS user_coupon_id, c.id AS coupon_id, c.name, c.discount_type, c.discount_value,
            c.max_discount_amount, c.min_order_amount, c.valid_until
@@ -114,6 +124,15 @@ if (is_post()) {
 
     $recipientAddr = "({$zipcode}) {$address1}" . ($address2 !== '' ? " {$address2}" : '');
 
+    // [FIX] get_setting()은 내부적으로 ensure_settings_table()을 호출해
+    // CREATE TABLE IF NOT EXISTS(DDL)를 실행할 수 있다. DDL이 실행되는 순간
+    // MySQL/MariaDB는 현재 트랜잭션을 암묵적으로 커밋해버리기 때문에,
+    // 트랜잭션 안에서 이 함수를 호출하면 이후 catch 블록의 rollBack()이
+    // "There is no active transaction" 예외를 던지며 500 오류로 튄다.
+    // 반드시 beginTransaction() 이전에 값을 미리 가져와 둔다.
+    $freeShippingMin    = (int) get_setting('shipping_free_min', (string)FREE_SHIPPING_MIN);
+    $shippingFeeDefault = (int) get_setting('shipping_fee_default', (string)SHIPPING_FEE_DEFAULT);
+
     try {
         $pdo->beginTransaction();
 
@@ -141,7 +160,8 @@ if (is_post()) {
                     ->execute(['q' => $it['qty'], 'id' => $it['product_id']]);
             }
 
-            $unitPrice = (int)$it['price_sale'] + (int)($it['extra_price'] ?? 0);
+            // [FIX] 옵션 자체 가격(price_sale)을 실제 단가로 사용 (247,000원 오표시 버그 수정)
+            $unitPrice = ck_unit_price($it);
             $subtotal  = $unitPrice * (int)$it['qty'];
             $total += $subtotal;
 
@@ -162,13 +182,23 @@ if (is_post()) {
                 ->execute(['q' => $it['qty'], 'id' => $it['product_id']]);
         }
 
-        /* ===== [NEW] 쿠폰 재검증 및 할인 계산 (서버가 최종 권위, 클라이언트 값은 신뢰하지 않음) ===== */
+        /* ===== 쿠폰 재검증 및 할인 계산 (서버가 최종 권위, 클라이언트 값은 신뢰하지 않음) =====
+           [FIX] 예전 코드는 'SELECT uc.id, uc.status, c.*, c.id AS coupon_id'처럼
+           c.*로 컬럼을 통째로 가져왔는데, tt_coupons에도 id/status 컬럼이 있어서
+           PDO가 뒤에 나온 값으로 앞의 값을 덮어썼다. 그 결과 uc.status(쿠폰 사용여부:
+           unused/used)가 c.status(쿠폰 자체 활성여부: active)로 뒤바뀌어,
+           쿠폰을 쓸 때마다 "이미 사용했거나 만료된 쿠폰입니다" 예외가 무조건
+           발생했다. 이게 주문하기를 누르면 상품 페이지로 튕겨나가고, 트랜잭션이
+           롤백되어 쿠폰도 그대로 남아있던 진짜 원인이었다.
+           컬럼을 전부 명시적으로 나열하고 별칭을 붙여 충돌을 제거한다. */
         $discountAmount = 0;
         $validUserCouponId = null;
 
         if ($userCouponId !== null) {
             $ucStmt = $pdo->prepare('
-                SELECT uc.id, uc.status, c.* , c.id AS coupon_id
+                SELECT uc.id AS uc_id, uc.status AS uc_status,
+                       c.id AS coupon_id, c.discount_type, c.discount_value,
+                       c.max_discount_amount, c.min_order_amount, c.valid_until
                 FROM tt_user_coupons uc
                 JOIN tt_coupons c ON c.id = uc.coupon_id
                 WHERE uc.id = :ucid AND uc.user_id = :uid
@@ -180,11 +210,8 @@ if (is_post()) {
             if (!$ucRow) {
                 throw new RuntimeException('선택한 쿠폰을 찾을 수 없습니다.');
             }
-            if ($ucRow['status'] !== 'unused') {
+            if ($ucRow['uc_status'] !== 'unused') {
                 throw new RuntimeException('이미 사용했거나 만료된 쿠폰입니다.');
-            }
-            if ($ucRow['status'] !== 'active' && $ucRow['status'] !== 'unused') {
-                // no-op, status checked above
             }
             if ($ucRow['valid_until'] && strtotime($ucRow['valid_until']) < time()) {
                 throw new RuntimeException('쿠폰 유효기간이 만료되었습니다.');
@@ -194,12 +221,10 @@ if (is_post()) {
             }
 
             $discountAmount = calc_coupon_discount($ucRow, $total);
-            $validUserCouponId = (int)$ucRow['id'];
+            $validUserCouponId = (int)$ucRow['uc_id'];
         }
 
-        /* [배송비 설정 반영] 관리자 설정값(tt_site_settings)을 우선 사용, 없으면 상수값을 기본값으로 사용 */
-        $freeShippingMin    = (int) get_setting('shipping_free_min', (string)FREE_SHIPPING_MIN);
-        $shippingFeeDefault = (int) get_setting('shipping_fee_default', (string)SHIPPING_FEE_DEFAULT);
+        // [FIX] 설정값은 트랜잭션 시작 전에 이미 조회해 둔 변수를 그대로 사용한다.
         $shippingFee = $total >= $freeShippingMin ? 0 : $shippingFeeDefault;
         $payableAmount = max(0, $total + $shippingFee - $discountAmount);
         $orderNo = 'TT' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(4)));
@@ -247,7 +272,13 @@ if (is_post()) {
         redirect('/order-complete.php?no=' . $orderNo);
 
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        // [FIX] rollBack() 호출 전, 실제로 활성 트랜잭션이 남아있는지 먼저 확인한다.
+        // (DDL 암묵적 커밋 등으로 이미 트랜잭션이 끊겼는데 rollBack()을 또 부르면
+        // "There is no active transaction" PDOException이 새로 발생해 그대로
+        // 튀어오르면서 Apache 기본 500 화면이 뜬다.)
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         error_log('[CHECKOUT FAIL] ' . $e->getMessage());
         $userMsg = ($e instanceof RuntimeException) ? $e->getMessage() : '주문 처리 중 문제가 발생했습니다. 다시 시도해주세요.';
         flash('error', $userMsg);
@@ -263,7 +294,7 @@ if (is_post()) {
 $pageTitle = '주문/결제';
 require __DIR__ . '/includes/header.php';
 $subtotal = $subtotalPreview;
-/* [배송비 설정 반영] 화면 미리보기도 동일하게 설정값 기준으로 계산 */
+/* [배송비 설정 반영] 화면 미리보기도 동일하게 설정값 기준으로 계산 (GET 렌더링, 트랜잭션과 무관하므로 안전) */
 $freeShippingMinDisp    = (int) get_setting('shipping_free_min', (string)FREE_SHIPPING_MIN);
 $shippingFeeDefaultDisp = (int) get_setting('shipping_fee_default', (string)SHIPPING_FEE_DEFAULT);
 $shipFee = $subtotal >= $freeShippingMinDisp ? 0 : $shippingFeeDefaultDisp;
@@ -303,7 +334,7 @@ $fieldErrors = json_decode(flash('errors') ?? '{}', true) ?: [];
           <tr>
             <td><?= h($it['name']) ?> <?= $it['size'] ? h($it['size']) : '' ?></td>
             <td><?= (int)$it['qty'] ?>개</td>
-            <td><?= format_price(((int)$it['price_sale'] + (int)($it['extra_price'] ?? 0)) * (int)$it['qty']) ?></td>
+            <td><?= format_price(ck_unit_price($it) * (int)$it['qty']) ?></td>
           </tr>
         <?php endforeach; ?>
       </tbody>
@@ -476,12 +507,12 @@ document.getElementById('checkoutForm')?.addEventListener('submit', function (e)
 
 ['fRecipientName', 'fRecipientPhone'].forEach(function (id) {
   document.getElementById(id)?.addEventListener('input', function () {
-    const row = this.closest('[data-field-row"]');
+    const row = this.closest('[data-field-row]');
     if (row) row.classList.remove('has-error');
   });
 });
 
-/* ===== [NEW] 쿠폰 선택 시 실시간 할인 계산 (화면 표시용, 최종 금액은 서버가 재계산) ===== */
+/* ===== 쿠폰 선택 시 실시간 할인 계산 (화면 표시용, 최종 금액은 서버가 재계산) ===== */
 (function(){
   const select = document.getElementById('couponSelect');
   if (!select) return;

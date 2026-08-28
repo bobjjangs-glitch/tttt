@@ -87,8 +87,6 @@ function pd_sanitize_description_html(string $html): string
 function pd_render_description(string $desc): string
 {
     if ($desc === '') return '';
-    /* 리치에디터 도입 전에 저장된 순수 텍스트는 태그가 전혀 없으므로,
-       그 경우는 기존 방식(이스케이프 + 줄바꿈 변환)을 그대로 유지한다. */
     if (strip_tags($desc) === $desc) {
         return nl2br(h($desc), false);
     }
@@ -200,8 +198,6 @@ $subtitle = '';
 if (!empty($product['description'])) {
     $firstLine = trim(strtok((string)$product['description'], "\n"));
     if ($firstLine !== '') {
-        /* [주의] description이 이제 HTML을 포함할 수 있으므로, 한 줄 미리보기용 텍스트는
-           strip_tags로 태그를 제거한 뒤 잘라낸다. (subtitle에 태그가 섞여 나오는 걸 방지) */
         $firstLinePlain = trim(strip_tags($firstLine));
         if ($firstLinePlain !== '') {
             $subtitle = mb_strlen($firstLinePlain) > 40 ? mb_substr($firstLinePlain, 0, 40) . '…' : $firstLinePlain;
@@ -209,7 +205,6 @@ if (!empty($product['description'])) {
     }
 }
 
-/* [노출 배지] 관리자에서 실제로 저장한 값만 사용. 값이 없으면 각 영역이 조용히 숨겨짐 */
 $badgeCarType = trim((string)($product['car_type'] ?? ''));
 $badgeGrade   = trim((string)($product['grade'] ?? ''));
 $featureTags  = array_values(array_filter(array_map('trim', explode(',', (string)($product['feature_tags'] ?? '')))));
@@ -234,7 +229,6 @@ require __DIR__ . '/includes/header.php';
 .pdh-wrap{max-width:1200px;margin:0 auto;padding:24px 20px 0;}
 .pdh-grid{display:grid;grid-template-columns:1fr 1.15fr;gap:36px;align-items:start;}
 @media (max-width:1000px){.pdh-grid{grid-template-columns:1fr;}}
-
 .pdh-brand{font-size:13px;color:#94a3b8;font-weight:700;margin:0 0 8px;}
 .pdh-chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
 .pdh-size-chip{display:inline-block;border:1px solid #cbd5e1;border-radius:8px;padding:4px 12px;font-size:14px;font-weight:700;color:#334155;}
@@ -244,7 +238,6 @@ require __DIR__ . '/includes/header.php';
 .pdh-rating-row{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;margin-bottom:20px;}
 .pdh-rating-row .star{color:#fbbf24;font-size:14px;}
 .pdh-rating-row .sep{color:#e2e8f0;}
-
 .pdh-price-box{margin-bottom:20px;padding-bottom:18px;border-bottom:1px dashed #e2e8f0;}
 .pdh-price-top-row{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;min-height:18px;}
 .pdh-discount{color:#ef4444;font-weight:800;font-size:15px;}
@@ -252,7 +245,6 @@ require __DIR__ . '/includes/header.php';
 .pdh-final-row{display:flex;align-items:baseline;gap:8px;}
 .pdh-won-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;background:#0d9488;color:#fff;border-radius:6px;font-size:11px;font-weight:800;flex-shrink:0;}
 .pdh-final-price{font-size:27px;font-weight:800;color:#0d9488;}
-
 .pdh-option-row{margin-bottom:14px;}
 .pdh-option-row label{display:block;font-size:12px;color:#64748b;margin-bottom:6px;font-weight:600;}
 .pdh-option-row select{width:100%;padding:11px 12px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;background:#fff;}
@@ -262,17 +254,14 @@ require __DIR__ . '/includes/header.php';
 .pdh-restock-row{display:flex;gap:8px;margin-top:8px;}
 .pdh-restock-row input{width:70px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;}
 .btn-restock{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;color:#334155;cursor:pointer;}
-
 .pdh-qty-row{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
 .pdh-qty-row > label{font-size:13px;color:#64748b;font-weight:600;}
 .pdh-qty-stepper{display:flex;align-items:center;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;}
 .pdh-qty-stepper button{width:32px;height:34px;border:none;background:#f8fafc;font-size:16px;cursor:pointer;color:#475569;}
 .pdh-qty-stepper button:hover{background:#eef2f7;}
 .pdh-qty-stepper input{width:44px;height:34px;border:none;text-align:center;font-size:14px;-moz-appearance:textfield;}
-
 .pdh-total-row{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:#64748b;margin-bottom:18px;}
 .pdh-total-row strong{font-size:17px;color:#0f172a;}
-
 .pdh-action-row{display:flex;align-items:center;gap:10px;}
 .pdh-icon-btn{width:46px;height:46px;border-radius:12px;border:1px solid #e2e8f0;background:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;color:#64748b;cursor:pointer;transition:.15s;flex-shrink:0;}
 .pdh-icon-btn:hover{border-color:#cbd5e1;background:#f8fafc;}
@@ -280,42 +269,30 @@ require __DIR__ . '/includes/header.php';
 .pdh-buy-btn{flex:1;height:46px;border:none;border-radius:12px;background:#0f172a;color:#fff;font-weight:700;font-size:15px;cursor:pointer;transition:.15s;}
 .pdh-buy-btn:hover{background:#1e293b;}
 .pdh-buy-btn:disabled{opacity:.6;cursor:not-allowed;}
-
 .pdh-benefit-box{margin-top:16px;font-size:12px;color:#94a3b8;line-height:1.6;}
-
 .pdh-gallery{display:flex;flex-direction:column;gap:12px;}
 .pdh-gallery-row{display:flex;gap:14px;align-items:stretch;}
-
 .pdh-main-img-wrap{position:relative;flex:1;min-width:0;}
 .pdh-main-img{width:100%;aspect-ratio:1/1;background:#f1f5f9;border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
 .pdh-main-img img{width:100%;height:100%;object-fit:cover;}
 .pdh-main-img .ph{font-size:48px;}
-
-/* [수정] 등급/특징태그/서비스 뱃지 사이드 카드 – 이미지 오버레이(.pdh-tag-overlay)는 삭제하고
-   태그를 이 카드 안에서 함께 표시하도록 통합. 너비를 120px→150px로 확장 */
 .pdh-badge-side{width:150px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:6px;}
 .pdh-badge-grade{width:100%;text-align:center;border:1px solid #cbd5e1;border-radius:14px;padding:12px 6px;font-size:17px;font-weight:800;color:#0f172a;background:#fff;box-shadow:0 4px 10px rgba(15,23,42,.06);}
-
-/* [신규] 특징 태그 – 이미지 위 오버레이에서 뱃지 카드 안으로 이전 */
 .pdh-badge-tags{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:100%;}
 .pdh-badge-tags .pdh-tag-chip{background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:5px 10px;font-size:11px;font-weight:700;color:#334155;white-space:nowrap;}
-
 .pdh-badge-services{display:flex;flex-direction:column;gap:9px;width:100%;padding-top:2px;border-top:1px solid #e2e8f0;padding-top:12px;}
 .pdh-badge-services .pdh-service-item{display:flex;align-items:center;gap:6px;font-size:12px;color:#334155;font-weight:700;}
 .pdh-badge-services .pdh-service-item .ic{color:#0d9488;font-size:13px;}
 .pdh-badge-consult{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:#64748b;text-decoration:none;text-align:center;padding-top:10px;border-top:1px solid #e2e8f0;width:100%;}
 .pdh-badge-consult:hover{color:#0d9488;}
-
 .pdh-thumb-strip{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
 .pdh-thumb-strip img{width:56px;height:56px;object-fit:cover;border-radius:10px;cursor:pointer;border:2px solid transparent;transition:border-color .12s;}
 .pdh-thumb-strip img.active,.pdh-thumb-strip img:hover{border-color:#0d9488;}
-
 .pd-review-cta{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;}
 .btn-review-write{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;padding:12px 26px;border-radius:999px;font-weight:700;font-size:15px;cursor:pointer;box-shadow:0 6px 16px rgba(99,102,241,.35);transition:transform .15s ease,box-shadow .15s ease;display:inline-flex;align-items:center;gap:6px;}
 .btn-review-write:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(99,102,241,.45);}
 .btn-review-write:active{transform:translateY(0);}
 .pd-review-ddays{font-size:13px;color:#64748b;}
-
 .review-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transition:opacity .2s ease;z-index:999;}
 .review-modal-overlay.active{opacity:1;visibility:visible;}
 .review-modal-box{background:#fff;border-radius:20px;padding:32px;width:92%;max-width:440px;position:relative;transform:translateY(16px) scale(.97);transition:transform .2s ease;box-shadow:0 24px 60px rgba(0,0,0,.25);}
@@ -323,18 +300,15 @@ require __DIR__ . '/includes/header.php';
 .review-modal-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;}
 .review-modal-title{font-size:19px;font-weight:800;margin-bottom:4px;}
 .review-modal-sub{font-size:13px;color:#64748b;margin-bottom:18px;}
-
 .star-rating{display:flex;flex-direction:row-reverse;gap:4px;margin-bottom:16px;}
 .star-rating input{display:none;}
 .star-rating label{font-size:30px;color:#e2e8f0;cursor:pointer;transition:color .12s,transform .12s;}
 .star-rating input:checked ~ label,.star-rating label:hover,.star-rating label:hover ~ label{color:#fbbf24;}
-
 .review-modal-box textarea{width:100%;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;font-size:14px;resize:vertical;margin-bottom:18px;box-sizing:border-box;}
 .review-modal-actions{display:flex;gap:10px;justify-content:flex-end;}
 .btn-modal-cancel{background:#f1f5f9;color:#475569;border:none;padding:10px 20px;border-radius:999px;font-weight:600;cursor:pointer;}
 .btn-modal-submit{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;padding:10px 24px;border-radius:999px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(99,102,241,.35);transition:transform .12s ease;}
 .btn-modal-submit:hover{transform:translateY(-1px);}
-
 .pd-review-item{display:flex;flex-direction:column;gap:6px;padding:16px 0;border-bottom:1px solid #f1f5f9;}
 .pd-review-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 .pd-review-meta{display:flex;align-items:center;gap:8px;}
@@ -343,30 +317,24 @@ require __DIR__ . '/includes/header.php';
 .pd-flash-msg{padding:12px 16px;border-radius:12px;margin-bottom:16px;font-size:14px;}
 .pd-flash-msg.success{background:#ecfdf5;color:#047857;}
 .pd-flash-msg.error{background:#fef2f2;color:#b91c1c;}
-
-/* [신규] 리치텍스트 상세설명 렌더링 영역 – 관리자 에디터에서 저장한 굵기/색상/폰트/정렬 서식이 그대로 반영됨 */
 .pd-desc-html{font-size:15px;line-height:1.75;color:#334155;word-break:break-word;margin-bottom:20px;}
 .pd-desc-html a{color:#4338ca;text-decoration:underline;}
 .pd-desc-html ul,.pd-desc-html ol{padding-left:20px;margin:10px 0;}
 .pd-desc-html blockquote{margin:12px 0;padding:10px 16px;border-left:3px solid #cbd5e1;background:#f8fafc;color:#475569;}
 .pd-desc-html h3,.pd-desc-html h4{margin:16px 0 8px;color:#0f172a;}
-
 .pd-detail-images{margin-top:24px;display:flex;flex-direction:column;}
 .pd-detail-images img{display:block;width:100%;height:auto;}
-
 .pd-tabs{max-width:1200px;margin:32px auto 0;padding:0 20px;display:flex;gap:8px;border-bottom:1px solid #e2e8f0;}
 .pd-tab-btn{background:none;border:none;padding:12px 18px;font-size:15px;font-weight:700;color:#94a3b8;cursor:pointer;border-bottom:2px solid transparent;}
 .pd-tab-btn.active{color:#0f172a;border-bottom-color:#0f172a;}
 .pd-tab-panel{max-width:1200px;margin:0 auto;padding:24px 20px 60px;display:none;}
 .pd-tab-panel.active{display:block;}
-
 .pd-spec-box{margin-bottom:24px;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;}
 .pd-spec-box h3{margin:0;padding:14px 18px;font-size:15px;font-weight:800;background:#f8fafc;border-bottom:1px solid #e2e8f0;}
 .pd-spec-table{width:100%;border-collapse:collapse;font-size:14px;}
 .pd-spec-table tr:not(:last-child) th,.pd-spec-table tr:not(:last-child) td{border-bottom:1px solid #f1f5f9;}
 .pd-spec-table th{width:34%;text-align:left;padding:12px 18px;color:#64748b;font-weight:600;background:#fafbff;white-space:nowrap;}
 .pd-spec-table td{padding:12px 18px;color:#1e293b;font-weight:600;word-break:break-all;}
-
 .pd-shipping-box{font-size:14px;color:#334155;line-height:1.7;}
 .pd-shipping-box h4{font-size:15px;font-weight:800;margin:22px 0 10px;color:#1e293b;}
 .pd-shipping-box h4:first-child{margin-top:0;}
@@ -550,8 +518,6 @@ require __DIR__ . '/includes/header.php';
     <?php endif; ?>
 
     <?php if (!empty($product['description'])): ?>
-      <!-- [변경] nl2br(h(...)) → pd_render_description() : 관리자 에디터에서 저장한 굵기/색상/폰트/정렬 서식을 실제로 반영해서 출력한다.
-           순수 텍스트로 저장된 예전 데이터는 함수 내부에서 자동으로 이스케이프 + <br> 처리되어 하위호환이 유지된다. -->
       <div class="pd-desc-html"><?= pd_render_description((string)$product['description']) ?></div>
     <?php else: ?>
       <p style="color:var(--gray4);">등록된 상세 설명이 없습니다.</p>
@@ -576,7 +542,6 @@ require __DIR__ . '/includes/header.php';
         <li>배송완료 이후 매장에 예약 일정 문의 요망</li>
         <li>배송완료 이후 2주 이내 장착 요망 (단, 매장과 합의하에 장기 보관 가능(보관비 발생))</li>
       </ul>
-
       <h4>반품 / 교환 안내</h4>
       <p class="pd-shipping-sub">반품 / 교환 가능한 경우</p>
       <ul>
@@ -593,7 +558,6 @@ require __DIR__ . '/includes/header.php';
         <li>반품 가능 기간(수령 후 14일 이내)이 경과된 경우</li>
         <li>차량의 문제로 제휴점에서 장착이 불가한 경우 무료 반품 불가 (반품비 발생)</li>
       </ul>
-
       <h4>품질보증기준</h4>
       <ul>
         <li>제조상의 과실에 의한 하자가 발생 시 보증기간 내에 있는 제품에 한해 A/S 처리됩니다. (제조일로부터 6년 이내, 홈 깊이가 20% 이상 남은 경우)</li>
@@ -669,7 +633,7 @@ require __DIR__ . '/includes/header.php';
             </span>
         </div>
     <?php elseif (Auth::isLoggedIn()): ?>
-        <p style="color:var(--gray4);">구매확정 후 7일 이내에만 후기를 작성할 수 있습니다. (이미 후기를 작성하셨거나 구매확정된 상품이 아닌 경우 표시되지 않습니다)</p>
+        <p style="color:var(--gray4);">구매확정일 후 7일 이내에만 후기를 작성하실 수 있습니다. (이미 후기를 작성했거나 후기작성기한이 지났거나 구매한 상품이 아니면 표시되지 않음)</p>
     <?php endif; ?>
 
     <?php if (empty($productReviews)): ?>
@@ -718,7 +682,7 @@ require __DIR__ . '/includes/header.php';
                 <label for="star<?= $i ?>">★</label>
             <?php endfor; ?>
         </div>
-        <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 사용 후기를 남겨주세요." required></textarea>
+        <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 후기를 남겨주세요." required></textarea>
         <div class="review-modal-actions">
             <button type="button" class="btn-modal-cancel" id="reviewModalCancel">취소</button>
             <button type="submit" class="btn-modal-submit">등록하기</button>
@@ -729,20 +693,21 @@ require __DIR__ . '/includes/header.php';
 <?php endif; ?>
 
 <form method="post" action="<?= BASE_URL ?>/buy-now.php" id="buyNowForm" style="display:none;">
-  <?= Csrf::field() ?>
-  <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
-  <input type="hidden" name="option_id" id="buyNowOptionId" value="">
-  <input type="hidden" name="qty" id="buyNowQty" value="1">
+    <?= Csrf::field() ?>
+    <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
+    <input type="hidden" name="option_id" id="buyNowOptionId" value="">
+    <input type="hidden" name="qty" id="buyNowQty" value="1">
 </form>
 
-<input type="hidden" id="csrfToken" value="<?= h($csrfToken) ?>">
+</main>
 
+<input type="hidden" id="csrfToken" value="<?= h($csrfToken) ?>">
 <script>
 const BASE_URL       = "<?= BASE_URL ?>";
 const csrfToken      = document.getElementById('csrfToken').value;
 const productId      = <?= (int)$productId ?>;
 const hasOptions     = <?= !empty($options) ? 'true' : 'false' ?>;
-const isLoggedIn     = <?= Auth::isLoggedIn() ? 'true' : 'false' ?>;
+const isLoggedIn      = <?= Auth::isLoggedIn() ? 'true' : 'false' ?>;
 const autoOpenReview = <?= $autoOpenReview ? 'true' : 'false' ?>;
 
 const qtyInput     = document.getElementById('pdQtyInput');
@@ -771,6 +736,9 @@ function currentUnitPrice() {
     const opt = optionSelect.options[optionSelect.selectedIndex];
     return parseInt(opt.dataset.price, 10) || 0;
   }
+  // [FIX] 옵션을 선택하지 않았을 때는 상품 기본 판매가(price_sale)를 그대로 사용한다.
+  //       옵션이 존재하는 상품이라도 "옵션 미선택 = 기본 상품 구매"가 정상 동작해야 한다.
+  const priceBox = document.querySelector('.pdh-price-box');
   return parseInt(priceNowEl.textContent.replace(/[^0-9]/g, ''), 10) || 0;
 }
 
@@ -791,13 +759,20 @@ document.getElementById('pdQtyPlus').addEventListener('click', () => {
 qtyInput.addEventListener('input', recalcTotal);
 
 if (optionSelect) {
+  const basePriceLabel = priceNowEl.textContent; // 최초 렌더링된 상품 기본가 텍스트를 저장해둔다.
   optionSelect.addEventListener('change', () => {
+    // [FIX] "옵션을 선택해주세요"(빈 값)로 되돌렸을 때 표시가를 상품 기본가로 복원.
+    if (optionSelect.value === '') {
+      stockWarn.style.display = 'none';
+      priceNowEl.textContent = basePriceLabel;
+      recalcTotal();
+      return;
+    }
+
     const opt = optionSelect.options[optionSelect.selectedIndex];
     const stock = parseInt(opt.dataset.stock, 10) || 0;
-    stockWarn.style.display = (optionSelect.value !== '' && stock <= 0) ? 'block' : 'none';
-    if (optionSelect.value !== '') {
-      priceNowEl.textContent = (parseInt(opt.dataset.price, 10) || 0).toLocaleString('ko-KR') + '원';
-    }
+    stockWarn.style.display = (stock <= 0) ? 'block' : 'none';
+    priceNowEl.textContent = (parseInt(opt.dataset.price, 10) || 0).toLocaleString('ko-KR') + '원';
     recalcTotal();
   });
 }
@@ -837,10 +812,16 @@ wishBtn.addEventListener('click', async function () {
   }
 });
 
+// [FIX] 옵션이 존재하는 상품이라도 옵션을 선택하지 않은 상태에서
+//       "DOT 옵션을 선택해주세요" alert로 막던 강제 검증 블록을 완전히 제거했다.
+//       재고 검증은 실제로 옵션을 선택했을 때만 의미가 있으므로 그 경우에만 확인한다.
 cartBtn.addEventListener('click', async function () {
-  if (hasOptions && (!optionSelect || optionSelect.value === '')) {
-    alert('DOT 옵션을 선택해주세요.');
-    return;
+  if (hasOptions && optionSelect && optionSelect.value !== '') {
+    const opt = optionSelect.options[optionSelect.selectedIndex];
+    if ((parseInt(opt.dataset.stock, 10) || 0) <= 0) {
+      alert('품절된 옵션입니다. 다른 옵션을 선택하거나 옵션 없이 담아주세요.');
+      return;
+    }
   }
 
   const optionIdPayload = (hasOptions && optionSelect && optionSelect.value !== '')
@@ -861,7 +842,7 @@ cartBtn.addEventListener('click', async function () {
       return;
     }
     if (!data.success) {
-      alert(data.message || '장바구니에 실패했습니다.');
+      alert(data.message || '장바구니에 담지 못했습니다.');
       return;
     }
 
@@ -874,24 +855,27 @@ cartBtn.addEventListener('click', async function () {
   }
 });
 
+// [FIX] 바로구매도 동일하게, 옵션 미선택 시 강제로 막던 로직을 제거.
+//       옵션을 선택하지 않으면 buyNowOptionId를 빈 값으로 넘겨
+//       서버(buy-now.php)가 상품 기본가/기본 재고 기준으로 처리하게 한다.
 buyBtn.addEventListener('click', function () {
   if (!isLoggedIn) {
     alert('로그인이 필요합니다.');
     location.href = BASE_URL + '/login.php';
     return;
   }
-  if (hasOptions && (!optionSelect || optionSelect.value === '')) {
-    alert('DOT 옵션을 선택해주세요.');
-    return;
-  }
-  if (hasOptions) {
+
+  if (hasOptions && optionSelect && optionSelect.value !== '') {
     const opt = optionSelect.options[optionSelect.selectedIndex];
     if ((parseInt(opt.dataset.stock, 10) || 0) <= 0) {
       alert('품절된 옵션입니다.');
       return;
     }
     document.getElementById('buyNowOptionId').value = optionSelect.value;
+  } else {
+    document.getElementById('buyNowOptionId').value = '';
   }
+
   document.getElementById('buyNowQty').value = Math.max(1, Math.min(99, parseInt(qtyInput.value, 10) || 1));
 
   buyBtn.disabled = true;
@@ -957,7 +941,7 @@ if (restockBtn) {
     const qty       = Math.max(1, parseInt(qtyInput?.value, 10) || 1);
 
     restockBtn.disabled = true;
-    restockBtn.textContent = '요청 중...';
+    restockBtn.textContent = '재고 요청...';
     try {
       const formData = new FormData();
       formData.append('product_id', productId);
@@ -977,18 +961,18 @@ if (restockBtn) {
 
       const data = await res.json();
       if (data.success) {
-        restockBtn.textContent = '✓ 요청 완료';
+        restockBtn.textContent = '✓ 재고 요청';
         restockBtn.style.background = '#22c55e';
         restockBtn.style.color = '#fff';
-        alert(data.message || '재고 요청이 접수되었습니다.');
+        alert(data.message || '재고 입고 요청이 접수되었습니다.');
       } else {
         restockBtn.disabled = false;
-        restockBtn.textContent = '재고 요청하기';
-        alert(data.message || '요청 중 오류가 발생했습니다.');
+        restockBtn.textContent = '재고 입고요청';
+        alert(data.message || '요청 처리 중 오류가 발생했습니다.');
       }
     } catch (e) {
       restockBtn.disabled = false;
-      restockBtn.textContent = '재고 요청하기';
+      restockBtn.textContent = '재고 입고요청';
       alert('네트워크 오류가 발생했습니다.');
     }
   });

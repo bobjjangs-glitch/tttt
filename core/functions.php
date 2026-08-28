@@ -13,10 +13,6 @@ function redirect(string $path): never {
     if (!preg_match('#^https?://#i', $path)) {
         $path = BASE_URL . $path;
     }
-    /* [FIX] 혹시 buy-now.php처럼 리다이렉트 직전에 어떤 이유로든 화면에
-       이미 출력이 조금 나가 있는 상태라면(BOM, 공백, 디버그 echo 등),
-       header()가 실패하지 않도록 header() 호출 직전에 버퍼를 한 번 더 비운다.
-       bootstrap.php 최상단의 ob_start()와 이중 안전장치 역할을 한다. */
     if (ob_get_level()) {
         ob_clean();
     }
@@ -49,11 +45,6 @@ function json_response(array $data, int $code = 200): never {
     exit;
 }
 
-/* =====================================================================
-   홈 화면 섹션 제목 등 key-value 설정
-   admin/banners.php에서 저장 → index.php에서 조회하여 "가장 많이 팔린
-   타이어(BEST)" 등의 문구를 하드코딩 없이 관리한다.
-   ===================================================================== */
 function ensure_settings_table(): void
 {
     static $checked = false;
@@ -98,9 +89,6 @@ function set_setting(string $key, string $value): void
     )->execute(['k' => $key, 'v' => $value, 'v2' => $value]);
 }
 
-/* =====================================================================
-   tt_promo_banners.placement 컬럼 자동 보강
-   ===================================================================== */
 function ensure_promo_placement_column(): void
 {
     static $checked = false;
@@ -121,9 +109,6 @@ function ensure_promo_placement_column(): void
     }
 }
 
-/* =====================================================================
-   tt_banners.target_w / target_h 컬럼 자동 보강
-   ===================================================================== */
 function ensure_banner_size_columns(): void
 {
     static $checked = false;
@@ -143,14 +128,6 @@ function ensure_banner_size_columns(): void
     }
 }
 
-/* =====================================================================
-   쿠폰 시스템 테이블/컬럼 자동 생성 + 보강.
-   과거 sql/sql-data-fixed 스크립트로 운영 DB를 먼저 세팅한 이력이 있는
-   서버에서는 tt_coupons / tt_user_coupons 테이블이 예전 컬럼 구성으로
-   이미 존재할 수 있어, CREATE TABLE IF NOT EXISTS만으로는 최신 컬럼이
-   보장되지 않는다. tt_stock_requests / tt_admin_logs / tt_users에 이미
-   적용된 것과 동일한 "컬럼 자동 보강" 패턴을 동일하게 적용한다.
-   ===================================================================== */
 function ensure_coupon_tables(): void
 {
     static $checked = false;
@@ -253,7 +230,6 @@ function ensure_coupon_tables(): void
     }
 }
 
-/** 쿠폰 1장의 할인액을 계산 (서버/클라 공통 로직, 서버가 최종 권위를 가짐) */
 function calc_coupon_discount(array $coupon, int $subtotal): int
 {
     if ($subtotal < (int)$coupon['min_order_amount']) return 0;
@@ -269,15 +245,11 @@ function calc_coupon_discount(array $coupon, int $subtotal): int
     return max(0, min($discount, $subtotal));
 }
 
-/** 쿠폰 상태 뱃지 라벨 */
 function coupon_status_label(string $status): string
 {
     return ['unused' => '사용가능', 'used' => '사용완료', 'expired' => '기간만료'][$status] ?? $status;
 }
 
-/* =====================================================================
-   tt_stock_requests 컬럼 자동 보강.
-   ===================================================================== */
 function ensure_stock_requests_table(PDO $pdo): void
 {
     static $checked = false;
@@ -325,9 +297,6 @@ function ensure_stock_requests_table(PDO $pdo): void
     }
 }
 
-/* =====================================================================
-   tt_admin_logs 테이블 자동 생성.
-   ===================================================================== */
 function ensure_admin_logs_table(PDO $pdo): void
 {
     static $checked = false;
@@ -349,7 +318,6 @@ function ensure_admin_logs_table(PDO $pdo): void
     }
 }
 
-/** 재고 요청 상태 라벨 + 트렌디 UI용 색상/아이콘 매핑 */
 function stock_request_status_meta(): array
 {
     return [
@@ -360,9 +328,6 @@ function stock_request_status_meta(): array
     ];
 }
 
-/* =====================================================================
-   tt_users 테이블에 사업자/휴대폰인증/약관동의 관련 컬럼 자동 보강.
-   ===================================================================== */
 function ensure_user_extra_columns(PDO $pdo): void
 {
     static $checked = false;
@@ -399,4 +364,115 @@ function ensure_user_extra_columns(PDO $pdo): void
     } catch (Throwable $e) {
         error_log('[ensure_user_extra_columns] ' . $e->getMessage());
     }
+}
+
+/* =====================================================================
+   [NEW] 홈 화면 "브랜드별 베스트셀러" 섹션 — 어드민에서 여러 개 생성 가능
+   ===================================================================== */
+function ensure_brand_best_sections_table(): void
+{
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+    try {
+        Database::connection()->exec("
+            CREATE TABLE IF NOT EXISTS tt_brand_best_sections (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                brand_id INT NULL COMMENT 'NULL이면 브랜드 무관 전체 베스트',
+                section_title VARCHAR(100) NOT NULL,
+                kicker_text VARCHAR(150) NULL COMMENT '상단 문구 (예: 타이어픽 최저가 N사 최저가 도전!)',
+                view_all_text VARCHAR(60) NULL DEFAULT '전체보기',
+                view_all_url VARCHAR(255) NULL COMMENT '비워두면 브랜드 기준으로 자동 생성',
+                sub_text VARCHAR(150) NULL COMMENT '하단 문구 (예: 타이어픽에서 저렴하게 만나보세요!)',
+                period_days INT NOT NULL DEFAULT 30,
+                display_limit TINYINT NOT NULL DEFAULT 5,
+                sort_order INT NOT NULL DEFAULT 0,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT fk_bbs_brand FOREIGN KEY (brand_id) REFERENCES tt_brands(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+    } catch (Throwable $e) {
+        error_log('[ensure_brand_best_sections_table] ' . $e->getMessage());
+    }
+}
+
+/**
+ * 지정한 브랜드(또는 전체)의 "최근 N일 기준 베스트셀러"를 조회한다.
+ * tt_products.sales_count는 전체 누적치라서 기간 필터링이 불가능하므로
+ * tt_order_items + tt_orders(created_at, status)를 직접 집계한다.
+ */
+function get_brand_best_products(PDO $pdo, ?int $brandId, int $periodDays, int $limit): array
+{
+    $limit      = max(1, min(5, $limit));       // 한 줄 최대 5개 강제
+    $periodDays = max(1, $periodDays);
+
+    $sql = "
+        SELECT p.*, b.name AS brand_name,
+               COALESCE(SUM(CASE WHEN o.id IS NOT NULL THEN oi.qty ELSE 0 END), 0) AS period_sales
+        FROM tt_products p
+        JOIN tt_brands b ON b.id = p.brand_id
+        LEFT JOIN tt_order_items oi ON oi.product_id = p.id
+        LEFT JOIN tt_orders o
+            ON o.id = oi.order_id
+           AND o.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+           AND o.status != 'cancelled'
+        WHERE p.status = 'active'"
+        . ($brandId !== null ? " AND p.brand_id = :brand_id" : "") . "
+        GROUP BY p.id
+        ORDER BY period_sales DESC, p.sales_count DESC, p.id DESC
+        LIMIT :limit
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->bindValue(':days', $periodDays, PDO::PARAM_INT);
+    if ($brandId !== null) {
+        $stmt->bindValue(':brand_id', $brandId, PDO::PARAM_INT);
+    }
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll();
+}
+/* =====================================================================
+   메인화면 하단 "실구매자 리뷰" 섹션 (타이어픽 스타일 참고)
+   - 기존 tt_reviews 테이블을 그대로 사용, 새 테이블 생성 없음
+   - 평점 4점 이상 + 내용 8자 이상인 리뷰만 신뢰도 있게 노출
+   ===================================================================== */
+function get_home_best_reviews(PDO $pdo, int $limit = 10): array
+{
+    $limit = max(1, min(20, $limit));
+    try {
+        $stmt = $pdo->prepare("
+            SELECT r.id, r.rating, r.content, r.created_at,
+                   p.id AS product_id, p.name AS product_name, p.thumbnail_url,
+                   b.name AS brand_name,
+                   u.name AS user_name
+            FROM tt_reviews r
+            JOIN tt_products p ON p.id = r.product_id
+            LEFT JOIN tt_brands b ON b.id = p.brand_id
+            JOIN tt_users u ON u.id = r.user_id
+            WHERE r.rating >= 4
+              AND CHAR_LENGTH(TRIM(r.content)) >= 8
+            ORDER BY r.rating DESC, r.created_at DESC
+            LIMIT :lim
+        ");
+        $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        error_log('[get_home_best_reviews] ' . $e->getMessage());
+        return [];
+    }
+
+    // 작성자 이름 마스킹 (개인정보 보호) : 김철수 → 김**
+    foreach ($rows as &$row) {
+        $name = (string)($row['user_name'] ?? '고객');
+        $nameLen = mb_strlen($name);
+        $row['user_name_masked'] = $nameLen <= 1
+            ? $name . '*'
+            : mb_substr($name, 0, 1) . str_repeat('*', $nameLen - 1);
+    }
+    unset($row);
+
+    return $rows;
 }

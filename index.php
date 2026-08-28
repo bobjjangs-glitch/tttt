@@ -3,6 +3,7 @@ require_once __DIR__ . '/core/bootstrap.php';
 $pdo = Database::connection();
 ensure_promo_placement_column();
 ensure_banner_size_columns(); // ← 방문 순서와 무관하게 target_w/target_h 컬럼 보장
+ensure_brand_best_sections_table(); // ← [NEW] 브랜드별 베스트셀러 섹션 테이블 보장
 
 $bestProducts = $pdo->query("
     SELECT p.*, b.name AS brand_name
@@ -45,6 +46,18 @@ $bestSectionTitle = get_setting('best_section_title', '가장 많이 팔린 타�
 $bestSectionSub   = get_setting('best_section_sub', 'BEST');
 $newSectionTitle  = get_setting('new_section_title', '신상품');
 $newSectionSub    = get_setting('new_section_sub', 'NEW');
+
+// ── [NEW] 브랜드별 베스트셀러 섹션 목록 (어드민 → admin/banners.php?tab=brandbest 에서 관리) ──
+$brandBestSections = $pdo->query("
+    SELECT s.*, b.name AS brand_name
+    FROM tt_brand_best_sections s
+    LEFT JOIN tt_brands b ON b.id = s.brand_id
+    WHERE s.is_active = 1
+    ORDER BY s.sort_order ASC, s.id ASC
+")->fetchAll();
+
+// ── [NEW] 메인화면 맨 하단 "실구매자 리뷰" 섹션용 데이터 (core/functions.php에 정의된 함수 사용) ──
+$homeReviews = get_home_best_reviews($pdo, 10);
 
 function renderProductCard(array $p): string {
     $discount = ($p['price_original'] > 0)
@@ -120,7 +133,7 @@ require __DIR__ . '/includes/header.php';
 </section>
 <?php endif; ?>
 
-<!-- ===== 카테고리 아이콘 바 (카테고리 아이콘 위, tire-pick.com 스타일 가로 나열) ===== -->
+<!-- ===== 카테고리 아이콘 바 ===== -->
 <?php if (!empty($homeCategoryIcons)): ?>
 <section class="category-icon-sec" aria-label="카테고리 아이콘 바로가기">
   <div class="sec-inner">
@@ -136,7 +149,7 @@ require __DIR__ . '/includes/header.php';
 </section>
 <?php endif; ?>
 
-<!-- ===== 카드형 프로모 배너 그리드 (카테고리 아이콘 아래, 가로 스크롤, 관리자 등록) ===== -->
+<!-- ===== 카드형 프로모 배너 그리드 ===== -->
 <?php if (!empty($homePromoGrid)): ?>
 <section class="promo-grid-sec" aria-label="프로모션 배너">
   <div class="sec-inner promo-grid-wrap">
@@ -208,6 +221,39 @@ require __DIR__ . '/includes/header.php';
   </div>
 </section>
 
+
+<!-- ===== [NEW] 브랜드별 베스트셀러 섹션 (어드민에서 여러 개 생성 가능, 한 줄 최대 5개) ===== -->
+<?php foreach ($brandBestSections as $bbs):
+    $bbsProducts = get_brand_best_products(
+        $pdo,
+        $bbs['brand_id'] !== null ? (int)$bbs['brand_id'] : null,
+        (int)$bbs['period_days'],
+        (int)$bbs['display_limit']
+    );
+    if (!$bbsProducts) continue; // 해당 브랜드 상품이 없으면 섹션 자체를 숨김
+    $viewAllUrl = $bbs['view_all_url'] ?: (BASE_URL . '/product-list.php' . ($bbs['brand_id'] ? ('?brand[]=' . (int)$bbs['brand_id']) : ''));
+?>
+<section class="rec-sec brand-best-sec">
+  <div class="sec-inner">
+    <div class="brand-best-head">
+      <?php if (!empty($bbs['kicker_text'])): ?>
+        <p class="brand-best-kicker"><?= h($bbs['kicker_text']) ?></p>
+      <?php endif; ?>
+      <div class="brand-best-title-row">
+        <h2 class="brand-best-title"><?= h($bbs['section_title']) ?></h2>
+        <a class="brand-best-viewall" href="<?= h($viewAllUrl) ?>"><?= h($bbs['view_all_text'] ?: '전체보기') ?> →</a>
+      </div>
+      <?php if (!empty($bbs['sub_text'])): ?>
+        <p class="brand-best-sub"><?= h($bbs['sub_text']) ?></p>
+      <?php endif; ?>
+    </div>
+    <div class="prod-grid">
+      <?php foreach ($bbsProducts as $p): echo renderProductCard($p); endforeach; ?>
+    </div>
+  </div>
+</section>
+<?php endforeach; ?>
+
 <section class="benefit-sec">
   <div class="benefit-grid">
     <div class="benefit-card">
@@ -233,6 +279,53 @@ require __DIR__ . '/includes/header.php';
   </div>
 </section>
 
+<!-- ===== [NEW] 메인화면 맨 하단 "실구매자 리뷰" 섹션 (타이어픽 스타일 참고, 기존 tt_reviews 그대로 사용) ===== -->
+<?php if (!empty($homeReviews)): ?>
+<section class="home-review-section" aria-label="실구매자 리뷰">
+  <div class="sec-inner">
+    <div class="home-review-head">
+      <p class="home-review-kicker">고객 후기</p>
+      <h2 class="home-review-title">실제 구매자들이 남긴 솔직한 리뷰</h2>
+      <p class="home-review-sub">평점 4점 이상, 실제 구매 확인된 후기만 모았습니다.</p>
+    </div>
+
+    <div class="home-review-scroll" id="homeReviewScroll">
+      <?php foreach ($homeReviews as $rv): ?>
+        <div class="home-review-card">
+          <div class="home-review-card-top">
+            <div class="home-review-thumb">
+              <?php if (!empty($rv['thumbnail_url'])): ?>
+                <img src="<?= h($rv['thumbnail_url']) ?>" alt="<?= h($rv['product_name']) ?>" loading="lazy">
+              <?php else: ?>
+                <span class="home-review-thumb-ph">🛞</span>
+              <?php endif; ?>
+            </div>
+            <div class="home-review-product-info">
+              <?php if (!empty($rv['brand_name'])): ?>
+                <span class="home-review-brand-chip"><?= h($rv['brand_name']) ?></span>
+              <?php endif; ?>
+              <p class="home-review-product-name"><?= h(mb_strimwidth($rv['product_name'], 0, 22, '…')) ?></p>
+            </div>
+          </div>
+
+          <div class="home-review-stars">
+            <?= str_repeat('★', (int)$rv['rating']) . str_repeat('☆', 5 - (int)$rv['rating']) ?>
+          </div>
+
+          <p class="home-review-content"><?= h(mb_strimwidth($rv['content'], 0, 80, '…')) ?></p>
+
+          <div class="home-review-meta">
+            <span class="home-review-user"><?= h($rv['user_name_masked']) ?></span>
+            <span class="home-review-dot">·</span>
+            <span class="home-review-date"><?= h(date('Y.m.d', strtotime($rv['created_at']))) ?></span>
+          </div>
+        </div>
+      <?php endforeach; ?>
+    </div>
+  </div>
+</section>
+<?php endif; ?>
+
 <script>
 (function(){
   const slider = document.getElementById('bannerSlider');
@@ -248,7 +341,7 @@ require __DIR__ . '/includes/header.php';
   function applyRatio(slide) {
     const tw = slide.dataset.tw || 1200;
     const th = slide.dataset.th || 400;
-    slider.style.aspectRatio = tw + ' / ' + th; // 배너마다 다른 사이즈여도 컨테이너가 그대로 맞춰짐
+    slider.style.aspectRatio = tw + ' / ' + th;
   }
 
   function goTo(index) {
@@ -280,6 +373,32 @@ require __DIR__ . '/includes/header.php';
   function scrollByCard(dir) { track.scrollBy({ left: dir * Math.round(track.clientWidth * 0.9), behavior: 'smooth' }); }
   if (prevBtn) prevBtn.addEventListener('click', () => scrollByCard(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => scrollByCard(1));
+})();
+
+(function(){
+  // [NEW] 하단 리뷰 카드 가로 드래그 스크롤
+  const scroller = document.getElementById('homeReviewScroll');
+  if (!scroller) return;
+  let isDown = false, startX = 0, scrollLeft = 0;
+
+  scroller.addEventListener('mousedown', (e) => {
+    isDown = true;
+    scroller.classList.add('dragging');
+    startX = e.pageX - scroller.offsetLeft;
+    scrollLeft = scroller.scrollLeft;
+  });
+  ['mouseleave', 'mouseup'].forEach(evt =>
+    scroller.addEventListener(evt, () => {
+      isDown = false;
+      scroller.classList.remove('dragging');
+    })
+  );
+  scroller.addEventListener('mousemove', (e) => {
+    if (!isDown) return;
+    e.preventDefault();
+    const x = e.pageX - scroller.offsetLeft;
+    scroller.scrollLeft = scrollLeft - (x - startX) * 1.2;
+  });
 })();
 </script>
 

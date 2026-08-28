@@ -10,63 +10,75 @@ if (!$orderNo) redirect('/index.php');
 
 $pdo = Database::connection();
 
-// tt_orders 실제 컬럼: order_no, user_id, total_amount, shipping_fee, status,
-//                      recipient_name, recipient_phone, recipient_addr, memo, created_at
-$stmt = $pdo->prepare('SELECT * FROM tt_orders WHERE order_no = :no AND user_id = :uid');
+// tt_orders 조회: order_no, user_id, total_amount, shipping_fee, discount_amount, status,
+//                recipient_name, recipient_phone, recipient_addr, memo, created_at 등
+$stmt = $pdo->prepare('SELECT id, order_no, total_amount FROM tt_orders WHERE order_no = :no AND user_id = :uid');
 $stmt->execute(['no' => $orderNo, 'uid' => Auth::currentUserId()]);
 $order = $stmt->fetch();
 
 if (!$order) redirect('/index.php');
 
-// tt_order_items 실제 컬럼: order_id, product_id, option_id, product_name, price, qty
-// (size_snap, subtotal 컬럼은 존재하지 않음 — subtotal은 price*qty로 화면에서 계산)
-$itemStmt = $pdo->prepare('SELECT * FROM tt_order_items WHERE order_id = :id');
+// tt_order_items 조회: order_id, product_id, option_id, product_name, price, qty
+$itemStmt = $pdo->prepare('SELECT product_name, qty FROM tt_order_items WHERE order_id = :id');
 $itemStmt->execute(['id' => $order['id']]);
 $items = $itemStmt->fetchAll();
 
 $pageTitle = '주문완료';
 require __DIR__ . '/includes/header.php';
 ?>
-<div class="order-complete-wrap">
-  <div class="complete-icon">✅</div>
-  <h1>주문이 완료되었습니다</h1>
-  <p class="order-no">주문번호: <strong><?= h($order['order_no']) ?></strong></p>
+<style>
+.oc-wrap{
+  max-width:480px; margin:60px auto; padding:40px 32px;
+  background:#fff; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,.06);
+  text-align:center;
+}
+.oc-icon{
+  width:64px; height:64px; margin:0 auto 18px; border-radius:50%;
+  background:linear-gradient(135deg,#6366f1,#8b5cf6);
+  display:flex; align-items:center; justify-content:center;
+  font-size:32px; color:#fff;
+}
+.oc-title{font-size:21px; font-weight:800; color:#1e293b; margin-bottom:8px}
+.oc-orderno{font-size:13px; color:#94a3b8; margin-bottom:28px}
+.oc-orderno strong{color:#6366f1; font-weight:700}
+.oc-item-list{
+  border-top:1px solid #f1f5f9; border-bottom:1px solid #f1f5f9;
+  padding:18px 0; margin-bottom:24px; text-align:left;
+}
+.oc-item-row{
+  display:flex; justify-content:space-between; align-items:center;
+  padding:8px 4px; font-size:14.5px; color:#334155;
+}
+.oc-item-name{font-weight:600}
+.oc-item-qty{color:#64748b; font-size:13.5px; white-space:nowrap; margin-left:12px}
+.oc-actions{display:flex; gap:10px}
+.oc-btn{
+  flex:1; padding:13px 0; border-radius:999px; font-weight:700; font-size:14.5px;
+  text-decoration:none; text-align:center; transition:transform .12s ease;
+}
+.oc-btn:hover{transform:translateY(-1px)}
+.oc-btn-outline{background:#f1f5f9; color:#475569;}
+.oc-btn-primary{background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; box-shadow:0 8px 18px rgba(99,102,241,.3);}
+</style>
 
-  <table class="order-item-table">
-    <thead>
-      <tr><th>상품</th><th>수량</th><th>금액</th></tr>
-    </thead>
-    <tbody>
-      <?php foreach ($items as $it): ?>
-        <?php $lineTotal = (int)$it['price'] * (int)$it['qty']; ?>
-        <tr>
-          <td><?= h($it['product_name']) ?></td>
-          <td><?= (int)$it['qty'] ?>개</td>
-          <td><?= format_price($lineTotal) ?></td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
+<div class="oc-wrap">
+  <div class="oc-icon">✓</div>
+  <h1 class="oc-title">주문이 완료되었습니다</h1>
+  <p class="oc-orderno">주문번호 <strong><?= h($order['order_no']) ?></strong></p>
 
-  <p class="order-total">총 결제금액: <strong><?= format_price((int)$order['total_amount']) ?></strong></p>
-
-  <div class="order-recipient-info">
-    <p><strong>받는분</strong> <?= h($order['recipient_name']) ?> (<?= h($order['recipient_phone']) ?>)</p>
-    <p><strong>배송지</strong> <?= h($order['recipient_addr']) ?></p>
-    <?php if (!empty($order['memo'])): ?>
-      <p><strong>배송메모</strong> <?= h($order['memo']) ?></p>
-    <?php endif; ?>
+  <div class="oc-item-list">
+    <?php foreach ($items as $it): ?>
+      <div class="oc-item-row">
+        <span class="oc-item-name"><?= h($it['product_name']) ?></span>
+        <span class="oc-item-qty"><?= (int)$it['qty'] ?>개</span>
+      </div>
+    <?php endforeach; ?>
   </div>
 
-  <div class="payment-notice">
-    <p><strong>무통장입금 안내</strong></p>
-    <p>국민은행 123456-04-123456 (예금주: 타이어탑)</p>
-    <p>입금 확인 후 상품 준비가 시작됩니다. 마이페이지 &gt; 주문내역에서 진행상황을 확인하실 수 있습니다.</p>
-  </div>
-
-  <div class="complete-actions">
-    <a href="<?= BASE_URL ?>/mypage.php#orders" class="btn-outline">주문내역 보기</a>
-    <a href="<?= BASE_URL ?>/index.php" class="btn-primary">홈으로</a>
+  <div class="oc-actions">
+    <a href="<?= BASE_URL ?>/mypage.php#orders" class="oc-btn oc-btn-outline">마이페이지에서 확인하기</a>
+    <a href="<?= BASE_URL ?>/index.php" class="oc-btn oc-btn-primary">홈으로 돌아가기</a>
   </div>
 </div>
+
 <?php require __DIR__ . '/includes/footer.php'; ?>

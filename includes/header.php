@@ -50,7 +50,7 @@ try {
   <div class="tt-header-inner">
     <!-- ★ 변경: 텍스트 로고 → 이미지 로고 -->
     <a href="<?= BASE_URL ?>/index.php" class="tt-logo">
-      <img src="<?= BASE_URL ?>/img/logo.png" alt="<?= h(SITE_NAME) ?>" class="tt-logo-img">
+      <img src="<?= BASE_URL ?>/img/logo1.png" alt="<?= h(SITE_NAME) ?>" class="tt-logo-img">
     </a>
 
     <nav class="tt-nav">
