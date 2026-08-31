@@ -1,9 +1,3 @@
-
-**3) review-submit.php — 전체 교체본**
-
-기존의 구매확정 검증, 중복리뷰 검증, 사진 업로드(최대 3장, 5MB 이하), 트랜잭션, 상품 평점 갱신 로직은 그대로 두고, `vehicle_model`/`visit_type`/`store_id`/`extra_service` 4개 필드의 수신·검증·저장 로직만 추가했습니다.
-
-```php
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
@@ -54,26 +48,22 @@ if (mb_strlen($content) > 1000) {
     review_submit_redirect($productId, $returnTo);
 }
 
-// 부가 옵션(태그) 화이트리스트 검증 — 어드민에서 관리하는 tt_review_option_tags 기준
 $optionTagsInput = (array)($_POST['option_tags'] ?? []);
 $optionTags      = array_values(array_intersect($optionTagsInput, review_option_tag_options()));
 $optionTagsStr   = implode(',', $optionTags);
 
-// [NEW] 차량 모델 (선택, 60자 제한)
 $vehicleModel = trim((string)($_POST['vehicle_model'] ?? ''));
 if (mb_strlen($vehicleModel) > 60) {
     $vehicleModel = mb_substr($vehicleModel, 0, 60);
 }
 $vehicleModel = $vehicleModel !== '' ? $vehicleModel : null;
 
-// [NEW] 방문 형태 — 화이트리스트(store/delivery) 이외 값은 기본값(store)으로 강제
 $visitTypeOptions = review_visit_type_options();
 $visitType = (string)($_POST['visit_type'] ?? 'store');
 if (!array_key_exists($visitType, $visitTypeOptions)) {
     $visitType = 'store';
 }
 
-// [NEW] 방문 매장 — 매장방문일 때만 유효, 실제 존재하는 매장인지 재확인 후 저장
 $storeId = null;
 if ($visitType === 'store') {
     $reqStoreId = (int)($_POST['store_id'] ?? 0);
@@ -82,7 +72,6 @@ if ($visitType === 'store') {
     }
 }
 
-// [NEW] 추가로 진행한 서비스 — 화이트리스트 검증 (tt_review_extra_services 기준)
 $extraServiceInput = (array)($_POST['extra_service'] ?? []);
 $extraServices      = array_values(array_intersect($extraServiceInput, review_extra_service_options()));
 $extraServiceStr    = implode(',', $extraServices);
@@ -119,7 +108,6 @@ if ($dupStmt->fetch()) {
     review_submit_redirect($productId, $returnTo);
 }
 
-// 리뷰 사진 업로드 처리 (최대 3장, jpg/png/webp, 장당 5MB 이하)
 $uploadedPhotoUrls = [];
 if (!empty($_FILES['photos']['tmp_name']) && is_array($_FILES['photos']['tmp_name'])) {
     $allowedExt = ['jpg', 'jpeg', 'png', 'webp'];

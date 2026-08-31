@@ -89,7 +89,7 @@ function pd_render_description(string $desc): string
 $productId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($productId <= 0) {
     http_response_code(404);
-    echo '잘못된 상품 요청입니다.';
+    echo '잘못된 상품 접근입니다.';
     exit;
 }
 
@@ -106,12 +106,12 @@ $stmt = $pdo->prepare(
      WHERE p.id = :id
      LIMIT 1"
 );
-$stmt->execute([':id' => $productId]);
+$stmt->execute(['id' => $productId]);
 $product = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$product || $product['status'] !== 'active') {
     http_response_code(404);
-    echo '판매중지되었거나 존재하지 않는 상품입니다.';
+    echo '판매종료되었거나 존재하지 않는 상품입니다.';
     exit;
 }
 
@@ -203,23 +203,21 @@ $badgeGrade   = trim((string)($product['grade'] ?? ''));
 $featureTags  = array_values(array_filter(array_map('trim', explode(',', (string)($product['feature_tags'] ?? '')))));
 
 $specRows = [];
-if (!empty($product['brand_name']))       $specRows[] = ['제조사', $product['brand_name']];
-if ($sizeLabel !== '')                     $specRows[] = ['크기', $sizeLabel];
+if (!empty($product['brand_name']))       $specRows[] = ['브랜드', $product['brand_name']];
+if ($sizeLabel !== '')                     $specRows[] = ['규격', $sizeLabel];
 if (!empty($product['pattern_name']))     $specRows[] = ['패턴명', $product['pattern_name']];
 if (!empty($product['pattern_code']))     $specRows[] = ['패턴코드', $product['pattern_code']];
-if (!empty($product['load_speed_rating']))$specRows[] = ['하중&속도규격', $product['load_speed_rating']];
+if (!empty($product['load_speed_rating']))$specRows[] = ['하중/속도지수', $product['load_speed_rating']];
 if (!empty($product['origin']))           $specRows[] = ['원산지', $product['origin']];
-if (!empty($product['oem']))              $specRows[] = ['OEM 인증', $product['oem']];
+if (!empty($product['oem']))              $specRows[] = ['OEM 여부', $product['oem']];
 if (!empty($product['tech']))             $specRows[] = ['Tech.', $product['tech']];
 $specRows[]                                = ['런플랫(Runflat)', ($product['runflat'] ?? 'N') === 'Y' ? 'Y (런플랫 타이어)' : 'N (일반 타이어)'];
-if (!empty($product['dot_code']))         $specRows[] = ['대표 DOT / 생산연월', $product['dot_code']];
+if (!empty($product['dot_code']))         $specRows[] = ['대표 DOT / 제조년주', $product['dot_code']];
 
-/* 리뷰 작성 모달용 선택 가능 태그 목록 (어드민 관리) */
-$reviewOptionTags = review_option_tag_options();
-/* [NEW] 방문형태 / 추가서비스 / 방문가능 매장 목록 */
-$reviewVisitTypes    = review_visit_type_options();
-$reviewExtraServices = review_extra_service_options();
-$activeStores        = store_active_options();
+$reviewOptionTags     = review_option_tag_options();
+$reviewVisitTypes     = review_visit_type_options();
+$reviewExtraServices  = review_extra_service_options();
+$activeStores         = store_active_options();
 
 $pageTitle = $product['name'];
 require __DIR__ . '/includes/header.php';
@@ -229,27 +227,27 @@ require __DIR__ . '/includes/header.php';
 .pdh-wrap{max-width:1200px;margin:0 auto;padding:24px 20px 0;}
 .pdh-grid{display:grid;grid-template-columns:1fr 1.15fr;gap:36px;align-items:start;}
 @media (max-width:1000px){.pdh-grid{grid-template-columns:1fr;}}
-.pdh-brand{font-size:13px;color:#94a3b8;font-weight:700;margin:0 0 8px;}
-.pdh-chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
-.pdh-size-chip{display:inline-block;border:1px solid #cbd5e1;border-radius:8px;padding:4px 12px;font-size:14px;font-weight:700;color:#334155;}
-.pdh-cartype-chip{display:inline-block;background:#0f172a;color:#fff;border-radius:8px;padding:4px 12px;font-size:13px;font-weight:700;}
-.pdh-title{font-size:26px;font-weight:800;color:#0f172a;margin:0 0 6px;line-height:1.32;word-break:break-all;}
-.pdh-subtitle{font-size:13px;color:#94a3b8;margin:0 0 14px;}
-.pdh-rating-row{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;margin-bottom:20px;}
-.pdh-rating-row .star{color:#fbbf24;font-size:14px;}
+.pdh-brand{color:#64748b;font-size:13px;font-weight:700;margin:0 0 6px;}
+.pdh-chip-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;}
+.pdh-cartype-chip,.pdh-size-chip{background:#f1f5f9;color:#334155;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;}
+.pdh-title{font-size:24px;font-weight:800;color:#0f172a;margin:4px 0;}
+.pdh-subtitle{color:#64748b;font-size:13px;margin:0 0 10px;}
+.pdh-rating-row{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;margin-bottom:16px;}
+.pdh-rating-row .star{color:#fbbf24;}
 .pdh-rating-row .sep{color:#e2e8f0;}
-.pdh-price-box{margin-bottom:20px;padding-bottom:18px;border-bottom:1px dashed #e2e8f0;}
-.pdh-price-top-row{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;min-height:18px;}
-.pdh-discount{color:#ef4444;font-weight:800;font-size:15px;}
-.pdh-orig-price{color:#94a3b8;font-size:13px;text-decoration:line-through;}
-.pdh-final-row{display:flex;align-items:baseline;gap:8px;}
-.pdh-won-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;background:#0d9488;color:#fff;border-radius:6px;font-size:11px;font-weight:800;flex-shrink:0;}
-.pdh-final-price{font-size:27px;font-weight:800;color:#0d9488;}
-.pdh-option-row{margin-bottom:14px;}
-.pdh-option-row label{display:block;font-size:12px;color:#64748b;margin-bottom:6px;font-weight:600;}
-.pdh-option-row select{width:100%;padding:11px 12px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;background:#fff;}
-.pdh-stock-warn{color:#ef4444;font-size:12px;margin-top:6px;display:none;}
-.pdh-stock-ok{color:#0d9488;font-size:13px;font-weight:700;margin:0 0 6px;}
+.pdh-price-box{margin-bottom:18px;}
+.pdh-price-top-row{display:flex;align-items:center;gap:8px;margin-bottom:2px;}
+.pdh-discount{color:#ef4444;font-weight:800;font-size:19px;}
+.pdh-orig-price{color:#94a3b8;text-decoration:line-through;font-size:14px;}
+.pdh-final-row{display:flex;align-items:center;gap:6px;}
+.pdh-won-badge{background:#0f172a;color:#fff;font-size:11px;font-weight:800;border-radius:6px;padding:2px 6px;}
+.pdh-final-price{font-size:28px;font-weight:800;color:#0f172a;}
+.pdh-option-row{margin-bottom:16px;}
+.pdh-option-row label{display:block;font-size:13px;font-weight:700;color:#334155;margin-bottom:6px;}
+.pdh-option-row select{width:100%;padding:12px 14px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;background:#fff;}
+.pdh-option-hint{font-size:12px;color:#94a3b8;margin:6px 0 0;}
+.pdh-stock-ok{color:#0d9488;font-size:13px;font-weight:700;margin:6px 0 0;}
+.pdh-stock-warn{color:#ef4444;font-size:13px;font-weight:700;margin:6px 0 0;display:none;}
 .pdh-dot-info{font-size:13px;color:#475569;margin:0 0 6px;}
 .pdh-restock-row{display:flex;gap:8px;margin-top:8px;}
 .pdh-restock-row input{width:70px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;}
@@ -349,8 +347,6 @@ require __DIR__ . '/includes/header.php';
 .pd-shipping-box ul{margin:0;padding-left:18px;}
 .pd-shipping-box li{margin-bottom:6px;}
 .pd-shipping-sub{font-size:13px;font-weight:700;color:#475569;margin:14px 0 6px;}
-
-/* [NEW] 리뷰 카드 확장 영역 — 차량모델 / 방문형태 / 추가서비스 / HOT / 매장정보 / 사진 / 도움돼요 */
 .pd-review-vehicle{font-size:12px;color:#64748b;font-weight:600;}
 .pd-review-badge-row{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px;}
 .pd-review-badge{border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;}
@@ -378,7 +374,7 @@ require __DIR__ . '/includes/header.php';
 <main class="tt-main">
 <div class="pdh-wrap">
   <div class="pd-breadcrumb" style="margin-bottom:16px;">
-    <a href="<?= BASE_URL ?>/product-list.php">상품 목록</a> &gt; <?= h($product['name']) ?>
+    <a href="<?= BASE_URL ?>/product-list.php">타이어 목록</a> &gt; <?= h($product['name']) ?>
   </div>
 
   <div class="pdh-grid">
@@ -425,9 +421,9 @@ require __DIR__ . '/includes/header.php';
 
       <?php if (!empty($options)): ?>
       <div class="pdh-option-row">
-        <label for="pdOptionSelect">DOT 옵션 선택 (재고·년차별 옵션)</label>
+        <label for="pdOptionSelect">DOT 옵션 선택 (선택하지 않아도 구매 가능합니다)</label>
         <select id="pdOptionSelect">
-          <option value="">옵션을 선택해주세요</option>
+          <option value="">기본옵션 (선택 안 함 · <?= number_format((int)$product['price_sale']) ?>원)</option>
           <?php foreach ($options as $opt):
               $dotYear = '';
               if (preg_match('/(\d{4})$/', $opt['dot_code'] ?? '', $m)) {
@@ -443,6 +439,7 @@ require __DIR__ . '/includes/header.php';
             </option>
           <?php endforeach; ?>
         </select>
+        <p class="pdh-option-hint">옵션을 선택하지 않으면 기본 상품가로 결제가 진행됩니다.</p>
         <p class="pdh-stock-warn" id="pdStockWarn">품절된 옵션입니다.</p>
       </div>
       <?php else: ?>
@@ -453,10 +450,10 @@ require __DIR__ . '/includes/header.php';
           <?php if ((int)$product['stock'] > 0): ?>
             <p class="pdh-stock-ok">재고 <?= (int)$product['stock'] ?>개</p>
           <?php else: ?>
-            <p class="pdh-stock-warn" style="display:block;">판매중인 상품의 재고가 없습니다.</p>
+            <p class="pdh-stock-warn" style="display:block;">현재 재고가 없습니다.</p>
             <div class="pdh-restock-row">
               <input type="number" id="pdRestockQty" placeholder="수량" min="1" value="1">
-              <button type="button" class="btn-restock" id="pdRestockBtn" data-product-id="<?= (int)$productId ?>">재고 입고요청</button>
+              <button type="button" class="btn-restock" id="pdRestockBtn" data-product-id="<?= (int)$productId ?>">재고 입고 알림</button>
             </div>
           <?php endif; ?>
         </div>
@@ -484,7 +481,7 @@ require __DIR__ . '/includes/header.php';
         <button type="button" class="pdh-buy-btn" id="pdBuyNowBtn">바로구매</button>
       </div>
 
-      <p class="pdh-benefit-box">표시된 가격은 부가세 포함가이며, DOT 옵션 선택 시 해당 재고 기준으로 결제가 진행됩니다.</p>
+      <p class="pdh-benefit-box">할인쿠폰 가격에 반영되어 표시됩니다. DOT 옵션 선택 시 해당 재고 기준으로 가격이 갱신되며, 선택하지 않을 경우 기본 상품가로 구매가 진행됩니다.</p>
     </div>
 
     <div class="pdh-gallery">
@@ -511,17 +508,17 @@ require __DIR__ . '/includes/header.php';
             </div>
           <?php endif; ?>
           <div class="pdh-badge-services">
-            <div class="pdh-service-item"><span class="ic">🚚</span> 무료배송</div>
+            <div class="pdh-service-item"><span class="ic">🚚</span> 빠른출고</div>
             <div class="pdh-service-item"><span class="ic">🔧</span> 무료장착</div>
           </div>
-          <a class="pdh-badge-consult" href="tel:1877-9778">📞 브랜드 상담 문의</a>
+          <a class="pdh-badge-consult" href="tel:1877-9778">📞 문의전화 걸기</a>
         </div>
       </div>
 
       <?php if (count($mainImages) > 1): ?>
       <div class="pdh-thumb-strip" id="pdThumbStrip">
         <?php foreach ($mainImages as $i => $imgUrl): ?>
-          <img src="<?= h($imgUrl) ?>" class="<?= $i === 0 ? 'active' : '' ?>" data-src="<?= h($imgUrl) ?>" alt="썸네일 <?= $i + 1 ?>">
+          <img src="<?= h($imgUrl) ?>" class="<?= $i === 0 ? 'active' : '' ?>" data-src="<?= h($imgUrl) ?>" alt="이미지 <?= $i + 1 ?>">
         <?php endforeach; ?>
       </div>
       <?php endif; ?>
@@ -529,15 +526,15 @@ require __DIR__ . '/includes/header.php';
   </div>
 
   <div class="pd-tabs">
-    <button type="button" class="pd-tab-btn active" data-tab="info">상품 기본정보</button>
-    <button type="button" class="pd-tab-btn" data-tab="shipping">배송/장착</button>
-    <button type="button" class="pd-tab-btn" data-tab="review">후기 (<?= (int)$product['review_count'] ?>)</button>
+    <button type="button" class="pd-tab-btn active" data-tab="info">상품 상세정보</button>
+    <button type="button" class="pd-tab-btn" data-tab="shipping">배송/설치</button>
+    <button type="button" class="pd-tab-btn" data-tab="review">리뷰 (<?= (int)$product['review_count'] ?>)</button>
   </div>
 
   <div class="pd-tab-panel active" data-panel="info">
     <?php if (!empty($specRows)): ?>
       <div class="pd-spec-box">
-        <h3>상품 기본정보</h3>
+        <h3>상품 상세정보</h3>
         <table class="pd-spec-table">
           <?php foreach ($specRows as $row): ?>
             <tr>
@@ -552,13 +549,13 @@ require __DIR__ . '/includes/header.php';
     <?php if (!empty($product['description'])): ?>
       <div class="pd-desc-html"><?= pd_render_description((string)$product['description']) ?></div>
     <?php else: ?>
-      <p style="color:var(--gray4);">등록된 상세 설명이 없습니다.</p>
+      <p style="color:var(--gray4);">등록된 상품 설명이 없습니다.</p>
     <?php endif; ?>
 
     <?php if (!empty($detailImages)): ?>
       <div class="pd-detail-images">
         <?php foreach ($detailImages as $imgUrl): ?>
-          <img src="<?= h($imgUrl) ?>" alt="상세페이지 이미지" loading="lazy">
+          <img src="<?= h($imgUrl) ?>" alt="상품 상세이미지" loading="lazy">
         <?php endforeach; ?>
       </div>
     <?php endif; ?>
@@ -566,34 +563,33 @@ require __DIR__ . '/includes/header.php';
 
   <div class="pd-tab-panel" data-panel="shipping">
     <div class="pd-shipping-box">
-      <h4>배송 / 장착 안내</h4>
+      <h4>배송 / 설치 안내</h4>
       <ul>
-        <li>전국 무료 배송 (단, 제주 및 도서지역은 개당 5,500원 추가 발생)</li>
-        <li>출고 및 배송 완료 시 알림 안내</li>
-        <li>출고일 기준 3일 이내 도착 (해당 지역 물량에 따라 배송 일정 상이)</li>
-        <li>배송완료 이후 매장에 예약 일정 문의 요망</li>
-        <li>배송완료 이후 2주 이내 장착 요망 (단, 매장과 합의하에 장기 보관 가능(보관비 발생))</li>
+        <li>제휴 매장 배송 (직접, 정품 등 대부분 지역은 물류 5,500원 추가 발생)</li>
+        <li>출고 후 배송 완료까지 약 1~3일 소요</li>
+        <li>출고일 후 최대 3일 이내에 배송 (택배 발송 준비되는 대로 매장 안내 문자)</li>
+        <li>배송완료 이후 확인 후 교환/환불 처리</li>
+        <li>배송완료 이후 이틀 2일 이내 설치 안내 (직접, 매장측 협의하여 이용 부탁드립니다(정확된 감소))</li>
       </ul>
-      <h4>반품 / 교환 안내</h4>
-      <p class="pd-shipping-sub">반품 / 교환 가능한 경우</p>
+      <h4>무료 / 유료 설치 안내</h4>
+      <p class="pd-shipping-sub">무료 / 유료 설치 관련 유의</p>
       <ul>
-        <li>제품의 하자, 배송 오류 등의 사유로 반품 시 반품배송비는 무료</li>
-        <li>사용하지 않은 경우 상품 수령 후 14일 이내에 신청 가능</li>
-        <li>고객님의 오 주문 및 단순한 변심에 의해 반품/교환 요청 시 왕복 배송 비용 발생 (제주 및 도서지역은 개당 11,000원 추가 발생)</li>
-        <li>전자상거래 등에서의 소비자보호에 관한 법률에 규정되어 있는 소비자 청약 철회 가능 범위에 해당되는 경우</li>
+        <li>제휴 매장 협의, 배송 일정 등 사정에 따라 배송 후 매장에서 개별 연락</li>
+        <li>설치예약이 완료된 이후 상품 안내 후 14일 이내에 실제 방문 완료</li>
+        <li>재고소진된 옵션 및 규격 부장하고 취소되어 안내드릴 배송/설치 이용 불가 사유(직접 물류센터쪽에 문의 부탁드립니다 11,000원 추가 발생)</li>
+        <li>제외사항에 문의부탁드립니다 (자세한 문의는 고객센터로 연결 부탁드립니다)</li>
       </ul>
-      <p class="pd-shipping-sub">반품 / 교환 불가능한 경우</p>
+      <p class="pd-shipping-sub">무료 / 유료 추가되는 사항</p>
       <ul>
-        <li>본 제품의 특성상 장착 이후에는 반품 불가</li>
-        <li>고객님 과실로 인한 상품 멸실 또는 상품이 훼손된 경우</li>
-        <li>고객님의 관리 부주의로 상품 가치가 현저히 감소한 경우</li>
-        <li>반품 가능 기간(수령 후 14일 이내)이 경과된 경우</li>
-        <li>차량의 문제로 제휴점에서 장착이 불가한 경우 무료 반품 불가 (반품비 발생)</li>
+        <li>휠 정렬이 필요한 상황 이용시 별도 추가 요금</li>
+        <li>공기압센서 교체나 이상시 상품 부담 관련되어 형태 별도 요금</li>
+        <li>공기압센서와 관련 추가 부착사항에 상품 관리되어 편의를 위해 안내 요금</li>
+        <li>배송 완료(포함 총 14일 이내)이 방문업체 요금</li>
       </ul>
-      <h4>품질보증기준</h4>
+      <h4>취소/환불 규정</h4>
       <ul>
-        <li>제조상의 과실에 의한 하자가 발생 시 보증기간 내에 있는 제품에 한해 A/S 처리됩니다. (제조일로부터 6년 이내, 홈 깊이가 20% 이상 남은 경우)</li>
-        <li>공정거래위원회 고시(소비자 분쟁 해결기준)에 의거하여 보상해 드립니다.</li>
+        <li>결제완료 후 아직 배송 시작 전이면 전체 취소가 가능합니다. (제휴점 자체 배송관련 6일 이내, 폐 갱신금액 20% 이상 차감 발생)</li>
+        <li>규격변경으로인해 교환(제휴 배송 등 확인)에 이용하시면 부담해드립니다.</li>
       </ul>
     </div>
   </div>
@@ -606,7 +602,6 @@ require __DIR__ . '/includes/header.php';
     <?php endif; ?>
 
     <?php
-    /* [수정] 차량모델 / 방문형태 / 추가서비스 / 매장정보 / 도움돼요 카운트까지 함께 조회 */
     $rvStmt = $pdo->prepare("
         SELECT r.id, r.user_id, r.rating, r.content, r.option_tags, r.created_at,
                r.vehicle_model, r.visit_type, r.extra_service, r.store_id, r.helpful_count,
@@ -623,7 +618,6 @@ require __DIR__ . '/includes/header.php';
     $productReviews = $rvStmt->fetchAll(PDO::FETCH_ASSOC);
     $currentUid = Auth::isLoggedIn() ? (int)Auth::currentUserId() : 0;
 
-    /* [NEW] 로그인 사용자가 이미 "도움이 돼요"를 누른 리뷰 id 집합 */
     $myHelpfulSet = [];
     if ($currentUid && !empty($productReviews)) {
         $rIds = array_column($productReviews, 'id');
@@ -633,7 +627,6 @@ require __DIR__ . '/includes/header.php';
         $myHelpfulSet = array_flip($hStmt->fetchAll(PDO::FETCH_COLUMN));
     }
 
-    /* [NEW] 리뷰별 첨부 사진 조회 */
     $reviewPhotosByReview = [];
     if (!empty($productReviews)) {
         $rIds2 = array_column($productReviews, 'id');
@@ -692,7 +685,7 @@ require __DIR__ . '/includes/header.php';
             </span>
         </div>
     <?php elseif (Auth::isLoggedIn()): ?>
-        <p style="color:var(--gray4);">구매확정일 후 7일 이내에만 후기를 작성하실 수 있습니다. (이미 후기를 작성했거나 후기작성기한이 지났거나 구매한 상품이 아니면 표시되지 않음)</p>
+        <p style="color:var(--gray4);">구매확정일로부터 7일 이내에만 후기를 작성하실 수 있습니다. (이미 후기를 작성했거나 후기작성기한이 지난 경우 리뷰 작성이 불가능합니다)</p>
     <?php endif; ?>
 
     <?php if (empty($productReviews)): ?>
@@ -715,7 +708,7 @@ require __DIR__ . '/includes/header.php';
                             <span class="pd-review-date"><?= h(date('y.m.d', strtotime($rv['created_at']))) ?></span>
                         </div>
                         <?php if ($currentUid && $currentUid === (int)$rv['user_id']): ?>
-                            <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('후기를 삭제하시겠습니까? 삭제된 후기는 되돌릴 수 없습니다.');" style="margin:0;">
+                            <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('정말 이 후기를 삭제하시겠습니까? 삭제하면 되돌릴 수 없습니다.');" style="margin:0;">
                                 <?= Csrf::field() ?>
                                 <input type="hidden" name="review_id" value="<?= (int)$rv['id'] ?>">
                                 <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
@@ -750,7 +743,7 @@ require __DIR__ . '/includes/header.php';
                     <?php if (!empty($reviewPhotosByReview[$rv['id']])): ?>
                         <div class="pd-review-photo-row">
                             <?php foreach ($reviewPhotosByReview[$rv['id']] as $purl): ?>
-                                <img src="<?= h($purl) ?>" alt="후기 사진" loading="lazy">
+                                <img src="<?= h($purl) ?>" alt="후기 사진" loading="lazy" onclick="window.open(this.src)">
                             <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
@@ -765,7 +758,7 @@ require __DIR__ . '/includes/header.php';
                         <button type="button"
                                 class="btn-review-helpful <?= isset($myHelpfulSet[$rv['id']]) ? 'active' : '' ?>"
                                 data-review-id="<?= (int)$rv['id'] ?>">
-                            👍 도움이 돼요 <span class="hp-count"><?= (int)$rv['helpful_count'] ?></span>
+                            👍 도움돼요 <span class="hp-count"><?= (int)$rv['helpful_count'] ?></span>
                         </button>
                     </div>
                 </div>
@@ -779,7 +772,7 @@ require __DIR__ . '/includes/header.php';
   <div class="review-modal-box">
     <button type="button" class="review-modal-close" id="reviewModalClose" aria-label="닫기">&times;</button>
     <h3 class="review-modal-title">후기 작성하기</h3>
-    <p class="review-modal-sub">솔직한 사용 후기를 남겨주시면 다른 고객님들께 큰 도움이 됩니다.</p>
+    <p class="review-modal-sub">솔직한 상품 후기를 남겨주시면 다른 고객님들께 큰 도움이 됩니다.</p>
     <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form" enctype="multipart/form-data">
         <?= Csrf::field() ?>
         <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
@@ -792,7 +785,7 @@ require __DIR__ . '/includes/header.php';
         </div>
 
         <?php if (!empty($reviewOptionTags)): ?>
-        <div class="rv-modal-field-label">이런 점이 좋았어요! (선택, 여러 개 선택 가능)</div>
+        <div class="rv-modal-field-label">어떤 점이 좋았나요? (선택, 여러개 선택 가능)</div>
         <div class="rv-chip-group">
             <?php foreach ($reviewOptionTags as $idx => $tagLabel): ?>
                 <input type="checkbox" class="rv-chip-input" id="rvTag<?= $idx ?>" name="option_tags[]" value="<?= h($tagLabel) ?>">
@@ -801,7 +794,6 @@ require __DIR__ . '/includes/header.php';
         </div>
         <?php endif; ?>
 
-        <!-- [NEW] 방문 형태 -->
         <div class="rv-modal-field-label">방문 형태</div>
         <div class="rv-visit-toggle-row">
             <?php foreach ($reviewVisitTypes as $vKey => $vLabel): ?>
@@ -810,7 +802,6 @@ require __DIR__ . '/includes/header.php';
             <?php endforeach; ?>
         </div>
 
-        <!-- [NEW] 방문 매장 선택 (매장방문일 때만 노출) -->
         <?php if (!empty($activeStores)): ?>
         <div class="rv-store-select-wrap" id="rvStoreSelectWrap">
             <div class="rv-modal-field-label">방문 매장</div>
@@ -822,15 +813,13 @@ require __DIR__ . '/includes/header.php';
         </div>
         <?php endif; ?>
 
-        <!-- [NEW] 차량 모델 -->
         <div class="rv-vehicle-input-wrap">
-            <div class="rv-modal-field-label">차량 모델 (선택)</div>
-            <input type="text" name="vehicle_model" maxlength="60" placeholder="예) 렉서스 ES">
+            <div class="rv-modal-field-label">탑승 차량 (선택)</div>
+            <input type="text" name="vehicle_model" maxlength="60" placeholder="예) 소나타 ES">
         </div>
 
-        <!-- [NEW] 추가로 진행한 서비스 -->
         <?php if (!empty($reviewExtraServices)): ?>
-        <div class="rv-modal-field-label">추가로 진행한 서비스 (선택, 여러 개 선택 가능)</div>
+        <div class="rv-modal-field-label">추가로 진행한 서비스 (선택, 여러개 선택 가능)</div>
         <div class="rv-chip-group">
             <?php foreach ($reviewExtraServices as $eIdx => $eLabel): ?>
                 <input type="checkbox" class="rv-chip-input" id="rvExtra<?= $eIdx ?>" name="extra_service[]" value="<?= h($eLabel) ?>">
@@ -841,9 +830,8 @@ require __DIR__ . '/includes/header.php';
 
         <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 후기를 남겨주세요." required></textarea>
 
-        <!-- [NEW] 리뷰 사진 첨부 -->
         <div class="rv-photo-upload-wrap">
-            <div class="rv-modal-field-label">사진 첨부 (선택, 최대 3장 / 장당 5MB 이하)</div>
+            <div class="rv-modal-field-label">사진 첨부 (선택, 최대 3장 / 각각 5MB 이하)</div>
             <input type="file" name="photos[]" id="rvPhotoInput" accept="image/jpeg,image/png,image/webp" multiple>
             <div class="rv-photo-preview" id="rvPhotoPreview"></div>
         </div>
@@ -864,6 +852,7 @@ require __DIR__ . '/includes/header.php';
     <input type="hidden" name="qty" id="buyNowQty" value="1">
 </form>
 
+</div>
 </main>
 
 <input type="hidden" id="csrfToken" value="<?= h($csrfToken) ?>">
@@ -871,19 +860,22 @@ require __DIR__ . '/includes/header.php';
 const BASE_URL       = "<?= BASE_URL ?>";
 const csrfToken      = document.getElementById('csrfToken').value;
 const productId      = <?= (int)$productId ?>;
-const hasOptions     = <?= !empty($options) ? 'true' : 'false' ?>;
+const hasOptions      = <?= !empty($options) ? 'true' : 'false' ?>;
 const isLoggedIn      = <?= Auth::isLoggedIn() ? 'true' : 'false' ?>;
 const autoOpenReview = <?= $autoOpenReview ? 'true' : 'false' ?>;
 
 const qtyInput     = document.getElementById('pdQtyInput');
 const totalEl      = document.getElementById('pdTotalPrice');
 const priceNowEl   = document.getElementById('pdPriceNow');
+const discountEl   = document.getElementById('pdDiscountPct');
+const priceBoxEl   = document.querySelector('.pdh-price-box');
 const optionSelect = document.getElementById('pdOptionSelect');
 const stockWarn    = document.getElementById('pdStockWarn');
 const buyBtn       = document.getElementById('pdBuyNowBtn');
 const cartBtn      = document.getElementById('pdAddCartBtn');
 const wishBtn      = document.getElementById('pdWishBtn');
 
+/* ===================== 썸네일 이미지 전환 ===================== */
 const pdThumbStrip = document.getElementById('pdThumbStrip');
 const pdMainImgTag = document.getElementById('pdMainImgTag');
 if (pdThumbStrip && pdMainImgTag) {
@@ -896,6 +888,7 @@ if (pdThumbStrip && pdMainImgTag) {
   });
 }
 
+/* ===================== 가격/수량 계산 ===================== */
 function currentUnitPrice() {
   if (optionSelect && optionSelect.value !== '') {
     const opt = optionSelect.options[optionSelect.selectedIndex];
@@ -911,48 +904,280 @@ function recalcTotal() {
 }
 
 document.getElementById('pdQtyMinus').addEventListener('click', () => {
-  qtyInput.value = Math.max(1, parseInt(qtyInput.value, 10) - 1);
+  qtyInput.value = Math.max(1, (parseInt(qtyInput.value, 10) || 1) - 1);
   recalcTotal();
 });
 document.getElementById('pdQtyPlus').addEventListener('click', () => {
-  qtyInput.value = Math.min(99, parseInt(qtyInput.value, 10) + 1);
+  qtyInput.value = Math.min(99, (parseInt(qtyInput.value, 10) || 1) + 1);
   recalcTotal();
 });
 qtyInput.addEventListener('input', recalcTotal);
 
+/* ===================== DOT 옵션 선택 시 가격 갱신 (선택 안 해도 무방) ===================== */
 if (optionSelect) {
-  const basePriceLabel = priceNowEl.textContrestockBtn.disabled = true;
-restockBtn.textContent = '재고 요청 중...';
-try {
-  const formData = new FormData();
-  formData.append('product_id', productId);
-  formData.append('qty', qty);
-  formData.append('csrf_token', csrfToken);
+  const originalPrice   = parseInt(priceBoxEl?.dataset.priceOriginal || '0', 10) || 0;
+  const baseSalePrice   = parseInt(priceNowEl.textContent.replace(/[^0-9]/g, ''), 10) || 0;
+  const baseDiscountPct = discountEl ? parseInt(discountEl.textContent.replace(/[^0-9]/g, ''), 10) || 0 : 0;
 
-  const res = await fetch(BASE_URL + '/ajax-stock-request.php', {
-    method: 'POST',
-    body: formData
+  optionSelect.addEventListener('change', () => {
+    if (optionSelect.value === '') {
+      // 옵션을 선택하지 않으면 기본 상품가/기본 할인율로 복원
+      priceNowEl.textContent = baseSalePrice.toLocaleString('ko-KR') + '원';
+      if (discountEl) {
+        discountEl.textContent = baseDiscountPct + '%';
+        discountEl.style.display = baseDiscountPct > 0 ? '' : 'none';
+      }
+      if (stockWarn) stockWarn.style.display = 'none';
+      buyBtn.disabled = false;
+      recalcTotal();
+      return;
+    }
+
+    const opt   = optionSelect.options[optionSelect.selectedIndex];
+    const price = parseInt(opt.dataset.price, 10) || 0;
+    const stock = parseInt(opt.dataset.stock, 10) || 0;
+
+    priceNowEl.textContent = price.toLocaleString('ko-KR') + '원';
+
+    if (discountEl && originalPrice > 0) {
+      const pct = Math.round((1 - (price / originalPrice)) * 100);
+      discountEl.textContent = pct + '%';
+      discountEl.style.display = pct > 0 ? '' : 'none';
+    }
+
+    if (stockWarn) {
+      if (stock <= 0) {
+        stockWarn.textContent = '해당 DOT 옵션은 품절되었습니다.';
+        stockWarn.style.display = 'block';
+        buyBtn.disabled = true;
+      } else {
+        stockWarn.style.display = 'none';
+        buyBtn.disabled = false;
+      }
+    }
+
+    recalcTotal();
   });
+}
 
-  if (res.status === 401) {
+/* ===================== [수정] 바로구매 버튼 — DOT 옵션 미선택 시에도 진행 ===================== */
+buyBtn.addEventListener('click', () => {
+  if (!isLoggedIn) {
+    alert('로그인이 필요합니다.');
+    location.href = BASE_URL + '/login.php';
+    return;
+  }
+  // DOT 옵션을 선택하지 않아도 기본 상품 정보로 그대로 결제 진행합니다.
+  document.getElementById('buyNowOptionId').value = (optionSelect && optionSelect.value !== '') ? optionSelect.value : '';
+  document.getElementById('buyNowQty').value = qtyInput.value;
+  document.getElementById('buyNowForm').submit();
+});
+
+/* ===================== [수정] 장바구니 담기 버튼 — DOT 옵션 미선택 시에도 진행 ===================== */
+cartBtn.addEventListener('click', async () => {
+  if (!isLoggedIn) {
     alert('로그인이 필요합니다.');
     location.href = BASE_URL + '/login.php';
     return;
   }
 
-  const data = await res.json();
-  if (data.success) {
-    restockBtn.textContent = '✓ 재고 요청';
-    restockBtn.style.background = '#22c55e';
-    restockBtn.style.color = '#fff';
-    alert(data.message || '재고 입고 요청이 등록되었습니다.');
-  } else {
-    restockBtn.disabled = false;
-    restockBtn.textContent = '재고 입고요청';
-    alert(data.message || '요청 처리 중 오류가 발생했습니다.');
+  cartBtn.disabled = true;
+  try {
+    const res = await fetch(BASE_URL + '/cart-add.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        product_id: productId,
+        option_id: (optionSelect && optionSelect.value !== '') ? optionSelect.value : null,
+        qty: parseInt(qtyInput.value, 10) || 1,
+        csrf_token: csrfToken
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (window.ttSetCartCount) window.ttSetCartCount(data.data.cart_count);
+      alert(data.data.message || '장바구니에 담았습니다.');
+    } else {
+      alert(data.message || '장바구니 담기에 실패했습니다.');
+    }
+  } catch (e) {
+    alert('네트워크 오류로 요청에 실패했습니다.');
+  } finally {
+    cartBtn.disabled = false;
   }
-} catch (e) {
-  restockBtn.disabled = false;
-  restockBtn.textContent = '재고 입고요청';
-  alert('네트워크 오류로 요청 처리에 실패했습니다.');
+});
+
+/* ===================== 찜하기 버튼 ===================== */
+wishBtn.addEventListener('click', async () => {
+  if (!isLoggedIn) {
+    alert('로그인이 필요합니다.');
+    location.href = BASE_URL + '/login.php';
+    return;
+  }
+  wishBtn.disabled = true;
+  try {
+    const res = await fetch(BASE_URL + '/wish-toggle.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: productId, csrf_token: csrfToken })
+    });
+    const data = await res.json();
+    if (data.success) {
+      wishBtn.classList.toggle('active', data.data.wished);
+      wishBtn.textContent = data.data.wished ? '♥' : '♡';
+    } else {
+      alert(data.message || '찜하기 처리에 실패했습니다.');
+    }
+  } catch (e) {
+    alert('네트워크 오류로 요청에 실패했습니다.');
+  } finally {
+    wishBtn.disabled = false;
+  }
+});
+
+/* ===================== 상단 탭 전환 (정보/배송/리뷰) ===================== */
+const tabBtns   = document.querySelectorAll('.pd-tab-btn');
+const tabPanels = document.querySelectorAll('.pd-tab-panel');
+function activateTab(tabName) {
+  tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+  tabPanels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
 }
+tabBtns.forEach(btn => {
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+});
+
+/* ===================== 리뷰 작성 모달 ===================== */
+const reviewWriteBtn     = document.getElementById('pdReviewWriteBtn');
+const reviewModalOverlay = document.getElementById('reviewModalOverlay');
+const reviewModalClose   = document.getElementById('reviewModalClose');
+const reviewModalCancel  = document.getElementById('reviewModalCancel');
+
+function openReviewModal() {
+  if (!reviewModalOverlay) return;
+  activateTab('review');
+  reviewModalOverlay.classList.add('active');
+}
+function closeReviewModal() {
+  reviewModalOverlay?.classList.remove('active');
+}
+reviewWriteBtn?.addEventListener('click', openReviewModal);
+reviewModalClose?.addEventListener('click', closeReviewModal);
+reviewModalCancel?.addEventListener('click', closeReviewModal);
+reviewModalOverlay?.addEventListener('click', (e) => {
+  if (e.target === reviewModalOverlay) closeReviewModal();
+});
+
+if (autoOpenReview) {
+  activateTab('review');
+  if (reviewModalOverlay) openReviewModal();
+}
+
+/* ===================== 방문형태에 따라 매장선택 노출 ===================== */
+const rvStoreSelectWrap = document.getElementById('rvStoreSelectWrap');
+document.querySelectorAll('input[name="visit_type"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    if (!rvStoreSelectWrap) return;
+    rvStoreSelectWrap.style.display = radio.value === 'store' && radio.checked ? '' : 'none';
+  });
+});
+if (rvStoreSelectWrap) {
+  const checkedVisit = document.querySelector('input[name="visit_type"]:checked');
+  rvStoreSelectWrap.style.display = (checkedVisit && checkedVisit.value === 'store') ? '' : 'none';
+}
+
+/* ===================== 리뷰 사진 미리보기 ===================== */
+const rvPhotoInput   = document.getElementById('rvPhotoInput');
+const rvPhotoPreview = document.getElementById('rvPhotoPreview');
+rvPhotoInput?.addEventListener('change', () => {
+  if (!rvPhotoPreview) return;
+  rvPhotoPreview.innerHTML = '';
+  const files = Array.from(rvPhotoInput.files || []).slice(0, 3);
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = document.createElement('img');
+      img.src = e.target.result;
+      rvPhotoPreview.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+  });
+});
+
+/* ===================== 도움돼요(리뷰 helpful) 버튼 ===================== */
+document.querySelectorAll('.btn-review-helpful').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (!isLoggedIn) {
+      alert('로그인이 필요합니다.');
+      location.href = BASE_URL + '/login.php';
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const res = await fetch(BASE_URL + '/review-helpful.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_id: btn.dataset.reviewId, csrf_token: csrfToken })
+      });
+      const data = await res.json();
+      if (data.success) {
+        btn.classList.toggle('active', data.data.helpful);
+        btn.querySelector('.hp-count').textContent = data.data.helpful_count;
+      } else {
+        alert(data.message || '처리 중 오류가 발생했습니다.');
+      }
+    } catch (e) {
+      alert('네트워크 오류로 요청에 실패했습니다.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+
+/* ===================== 재고 입고 알림 버튼 (옵션 없는 단일상품 전용) ===================== */
+const restockBtn = document.getElementById('pdRestockBtn');
+restockBtn?.addEventListener('click', async () => {
+  if (!isLoggedIn) {
+    alert('로그인이 필요합니다.');
+    location.href = BASE_URL + '/login.php';
+    return;
+  }
+  const qty = Math.max(1, parseInt(document.getElementById('pdRestockQty').value, 10) || 1);
+  restockBtn.disabled = true;
+  restockBtn.textContent = '재고 확인 중...';
+  try {
+    const formData = new FormData();
+    formData.append('product_id', productId);
+    formData.append('qty', qty);
+    formData.append('csrf_token', csrfToken);
+
+    const res = await fetch(BASE_URL + '/ajax-stock-request.php', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (res.status === 401) {
+      alert('로그인이 필요합니다.');
+      location.href = BASE_URL + '/login.php';
+      return;
+    }
+
+    const data = await res.json();
+    if (data.success) {
+      restockBtn.textContent = '✓ 재고 알림 신청';
+      restockBtn.style.background = '#22c55e';
+      restockBtn.style.color = '#fff';
+      alert(data.message || '재고 입고 알림이 등록되었습니다.');
+    } else {
+      restockBtn.disabled = false;
+      restockBtn.textContent = '재고 입고 알림';
+      alert(data.message || '알림 등록 중 오류가 발생했습니다.');
+    }
+  } catch (e) {
+    restockBtn.disabled = false;
+    restockBtn.textContent = '재고 입고 알림';
+    alert('네트워크 오류로 요청에 실패했습니다.');
+  }
+});
+</script>
+
+<?php require __DIR__ . '/includes/footer.php'; ?>
