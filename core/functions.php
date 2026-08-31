@@ -433,25 +433,74 @@ function get_brand_best_products(PDO $pdo, ?int $brandId, int $periodDays, int $
     $stmt->execute();
     return $stmt->fetchAll();
 }
+
 /* =====================================================================
-   [NEW] 리뷰 작성 시 선택 가능한 서비스 유형 / 부가옵션 화이트리스트
-   - review-submit.php, product-detail.php, review-list.php 에서 공통으로 참조
-   - 여기서 값을 추가/삭제하면 작성 폼과 목록 필터에 동시에 반영됨
+   [NEW] 리뷰 작성 시 선택 가능한 서비스 유형 화이트리스트
+   - review-submit.php, product-detail.php 에서 공통으로 참조
+   - 현재 UI(리뷰 모달)에서는 사용하지 않지만, 하위호환을 위해 함수/컬럼은 유지한다.
    ===================================================================== */
 function review_service_type_options(): array
 {
     return ['타이어교체', '매장방문', '출장교체', '발렛', '자동세차', '엔진오일교체', '배터리교체'];
 }
 
+/* =====================================================================
+   [수정] 리뷰 작성 모달에서 선택 가능한 "이런 점이 좋았어요" 태그 목록
+   - [기존] 하드코딩 배열로 반환하던 방식 → [변경] tt_review_option_tags 테이블 조회로 전환
+   - 이렇게 바꾸는 이유: 어드민(admin/reviews.php)에서 코드 수정 없이 태그를
+     추가/삭제/숨김 처리할 수 있어야 하기 때문. review-submit.php 는 이 목록을
+     화이트리스트로 사용해 제출된 태그를 검증하므로, 여기서 비활성 처리된 태그는
+     더 이상 새 리뷰에 선택될 수 없다.
+   ===================================================================== */
 function review_option_tag_options(): array
 {
-    return ['휠얼라인먼트추가', '밸런스작업', '폐타이어처리', '공기압점검'];
+    ensure_review_extra_columns();
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    try {
+        $rows = Database::connection()->query(
+            "SELECT label FROM tt_review_option_tags WHERE is_active = 1 ORDER BY sort_order ASC, id ASC"
+        )->fetchAll(PDO::FETCH_COLUMN);
+        $cache = $rows ?: [];
+    } catch (Throwable $e) {
+        error_log('[review_option_tag_options] ' . $e->getMessage());
+        $cache = [];
+    }
+    return $cache;
+}
+
+/**
+ * [NEW] 어드민 관리 화면(admin/reviews.php)용 — id / label / is_active / sort_order
+ * 를 모두 포함한 전체 목록(비활성 태그도 포함)을 조회한다.
+ */
+function review_option_tag_options_admin(): array
+{
+    ensure_review_extra_columns();
+    try {
+        return Database::connection()->query(
+            "SELECT id, label, is_active, sort_order FROM tt_review_option_tags ORDER BY sort_order ASC, id ASC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        error_log('[review_option_tag_options_admin] ' . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * [NEW] tt_reviews.option_tags 에 저장된 콤마 구분 문자열("a,b,c")을
+ * product-detail.php / review.php / admin/reviews.php 에서 안전하게 배열로 변환할 때 사용.
+ */
+function review_parse_option_tags(?string $csv): array
+{
+    if ($csv === null || $csv === '') return [];
+    return array_values(array_filter(array_map('trim', explode(',', $csv))));
 }
 
 /* =====================================================================
-   [NEW] tt_reviews 테이블에 service_type / option_tags 컬럼을 자동 추가하고,
-   리뷰 사진을 담을 tt_review_photos 테이블을 자동 생성한다.
-   - 기존 ensure_brand_best_sections_table() 과 동일한 패턴 (없으면 만들고, 있으면 통과)
+   [기존 + 수정] tt_reviews 에 service_type / option_tags 컬럼 추가,
+   리뷰 사진 저장용 tt_review_photos 테이블 생성.
+   [추가] 리뷰 태그를 어드민에서 관리할 수 있는 tt_review_option_tags 테이블을
+   신규 생성하고, 데이터가 하나도 없을 때만 기본 5개 문구를 자동 시딩한다.
    ===================================================================== */
 function ensure_review_extra_columns(): void
 {
@@ -485,5 +534,76 @@ function ensure_review_extra_columns(): void
         ");
     } catch (Throwable $e) {
         error_log('[ensure_review_extra_columns:photos] ' . $e->getMessage());
+    }
+
+    /* [NEW] 리뷰 작성 모달의 "이런 점이 좋았어요" 태그 관리 테이블 */
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_review_option_tags (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                label VARCHAR(30) NOT NULL,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_review_tag_label (label)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $cnt = (int)$pdo->query("SELECT COUNT(*) FROM tt_review_option_tags")->fetchColumn();
+        if ($cnt === 0) {
+            $defaults = ['승차감이 편안해요', '소음이 없어요', '가성비가 좋아요', '최신 제품이에요', '부드러워요'];
+            $ins = $pdo->prepare("INSERT INTO tt_review_option_tags (label, is_active, sort_order) VALUES (:label, 1, :sort)");
+            foreach ($defaults as $i => $label) {
+                $ins->execute(['label' => $label, 'sort' => $i]);
+            }
+            error_log('[ensure_review_extra_columns:tags] 기본 리뷰 태그 5개를 시딩했습니다.');
+        }
+    } catch (Throwable $e) {
+        error_log('[ensure_review_extra_columns:tags] ' . $e->getMessage());
+    }
+}
+
+/* =====================================================================
+   [기존] 홈 화면 "베스트 리뷰" 섹션에서 사용하는 최근 우수 리뷰 조회
+   index.php 가 호출하지만 파일에 정의가 없어서 500 에러(Fatal error:
+   Call to undefined function get_home_best_reviews())를 유발하던 함수.
+   ===================================================================== */
+function get_home_best_reviews(PDO $pdo, int $limit = 10): array
+{
+    $limit = max(1, min(30, $limit));
+
+    try {
+        $stmt = $pdo->prepare("
+            SELECT
+                r.id, r.rating, r.content, r.created_at,
+                u.name AS user_name,
+                p.name AS product_name, p.thumbnail_url,
+                b.name AS brand_name
+            FROM tt_reviews r
+            JOIN tt_users u ON u.id = r.user_id
+            JOIN tt_products p ON p.id = r.product_id
+            LEFT JOIN tt_brands b ON b.id = p.brand_id
+            WHERE r.rating >= 4
+              AND r.content IS NOT NULL
+              AND r.content != ''
+            ORDER BY r.created_at DESC
+            LIMIT :limit
+        ");
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($rows as &$row) {
+            $name = (string)($row['user_name'] ?? '');
+            $row['user_name_masked'] = $name !== ''
+                ? mb_substr($name, 0, 1) . str_repeat('*', max(0, mb_strlen($name) - 1))
+                : '익명';
+        }
+        unset($row);
+
+        return $rows;
+    } catch (Throwable $e) {
+        error_log('[get_home_best_reviews] ' . $e->getMessage());
+        return [];
     }
 }

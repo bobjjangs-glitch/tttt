@@ -48,11 +48,7 @@ if (mb_strlen($content) > 1000) {
     review_submit_redirect($productId, $returnTo);
 }
 
-// [NEW] 서비스 유형 / 부가옵션 화이트리스트 검증 (조작 방지)
-$serviceType = trim((string)($_POST['service_type'] ?? ''));
-if ($serviceType !== '' && !in_array($serviceType, review_service_type_options(), true)) {
-    $serviceType = '';
-}
+// [NEW] 부가 옵션(태그) 화이트리스트 검증 — 어드민에서 관리하는 tt_review_option_tags 기준
 $optionTagsInput = (array)($_POST['option_tags'] ?? []);
 $optionTags      = array_values(array_intersect($optionTagsInput, review_option_tag_options()));
 $optionTagsStr   = implode(',', $optionTags);
@@ -89,7 +85,7 @@ if ($dupStmt->fetch()) {
     review_submit_redirect($productId, $returnTo);
 }
 
-// [NEW] 리뷰 사진 업로드 처리 (최대 3장, jpg/png/webp, 장당 5MB 이하)
+// [기존] 리뷰 사진 업로드 처리 (최대 3장, jpg/png/webp, 장당 5MB 이하)
 $uploadedPhotoUrls = [];
 if (!empty($_FILES['photos']['tmp_name']) && is_array($_FILES['photos']['tmp_name'])) {
     $allowedExt = ['jpg', 'jpeg', 'png', 'webp'];
@@ -105,8 +101,6 @@ if (!empty($_FILES['photos']['tmp_name']) && is_array($_FILES['photos']['tmp_nam
         $origName = (string)($_FILES['photos']['name'][$idx] ?? '');
         $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
         if (!in_array($ext, $allowedExt, true)) continue;
-
-        // 확장자만 바꾼 위장 파일 방지: 실제 이미지인지 검증
         if (@getimagesize($tmpPath) === false) continue;
 
         $subDir = 'uploads/reviews/' . date('Ym');
@@ -127,15 +121,14 @@ try {
     $pdo->beginTransaction();
 
     $pdo->prepare('
-        INSERT INTO tt_reviews (product_id, user_id, order_item_id, rating, content, service_type, option_tags, created_at)
-        VALUES (:pid, :uid, :oid, :rating, :content, :service_type, :option_tags, NOW())
+        INSERT INTO tt_reviews (product_id, user_id, order_item_id, rating, content, option_tags, created_at)
+        VALUES (:pid, :uid, :oid, :rating, :content, :option_tags, NOW())
     ')->execute([
         'pid'          => $productId,
         'uid'          => $userId,
         'oid'          => $orderItem['id'],
         'rating'       => $rating,
         'content'      => $content,
-        'service_type' => $serviceType !== '' ? $serviceType : null,
         'option_tags'  => $optionTagsStr !== '' ? $optionTagsStr : null,
     ]);
 

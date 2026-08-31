@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
+ensure_review_extra_columns();
 
 if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
     define('REVIEW_WRITE_WINDOW_DAYS', 7);
@@ -8,13 +9,6 @@ if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
 
 $pdo = Database::connection();
 
-/* ==========================================================================
-   [신규] 상세설명 리치텍스트(HTML) 렌더링
-   - admin/product_form.php 에서 저장 시점에 이미 한 번 화이트리스트 정제를 거치지만,
-     DB 직접 수정 등 다른 경로로 들어온 데이터까지 감안해 출력 시점에도 한 번 더 필터링한다.
-   - [주의] admin_sanitize_description_html() 과 로직이 거의 동일하다. 나중에 허용 태그를
-     바꿀 일이 생기면 반드시 양쪽 모두 수정해야 한다. (이상적으로는 core/ 공용 파일로 통합 권장)
-   ========================================================================== */
 function pd_sanitize_style_attr(string $style): string
 {
     $allowedProps = ['color', 'background-color', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-decoration', 'text-align'];
@@ -36,7 +30,6 @@ function pd_sanitize_style_attr(string $style): string
 function pd_sanitize_description_html(string $html): string
 {
     if ($html === '') return '';
-
     $allowedTags = '<b><strong><i><em><u><s><span><div><p><br><ul><ol><li><a><font><h3><h4><blockquote>';
     $clean = strip_tags($html, $allowedTags);
 
@@ -221,6 +214,9 @@ if (!empty($product['tech']))             $specRows[] = ['Tech.', $product['tech
 $specRows[]                                = ['런플랫(Runflat)', ($product['runflat'] ?? 'N') === 'Y' ? 'Y (런플랫 타이어)' : 'N (일반 타이어)'];
 if (!empty($product['dot_code']))         $specRows[] = ['대표 DOT / 생산연월', $product['dot_code']];
 
+/* [NEW] 리뷰 작성 모달용 선택 가능 태그 목록 (어드민 관리) */
+$reviewOptionTags = review_option_tag_options();
+
 $pageTitle = $product['name'];
 require __DIR__ . '/includes/header.php';
 ?>
@@ -295,7 +291,7 @@ require __DIR__ . '/includes/header.php';
 .pd-review-ddays{font-size:13px;color:#64748b;}
 .review-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transition:opacity .2s ease;z-index:999;}
 .review-modal-overlay.active{opacity:1;visibility:visible;}
-.review-modal-box{background:#fff;border-radius:20px;padding:32px;width:92%;max-width:440px;position:relative;transform:translateY(16px) scale(.97);transition:transform .2s ease;box-shadow:0 24px 60px rgba(0,0,0,.25);}
+.review-modal-box{background:#fff;border-radius:20px;padding:32px;width:92%;max-width:460px;position:relative;transform:translateY(16px) scale(.97);transition:transform .2s ease;box-shadow:0 24px 60px rgba(0,0,0,.25);max-height:88vh;overflow-y:auto;}
 .review-modal-overlay.active .review-modal-box{transform:translateY(0) scale(1);}
 .review-modal-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;}
 .review-modal-title{font-size:19px;font-weight:800;margin-bottom:4px;}
@@ -304,6 +300,14 @@ require __DIR__ . '/includes/header.php';
 .star-rating input{display:none;}
 .star-rating label{font-size:30px;color:#e2e8f0;cursor:pointer;transition:color .12s,transform .12s;}
 .star-rating input:checked ~ label,.star-rating label:hover,.star-rating label:hover ~ label{color:#fbbf24;}
+/* [NEW] 리뷰 태그(체크박스 칩) — 반드시 인접 형제 선택자(+)만 사용해서
+   "하나 체크하면 뒤의 모든 라벨이 같이 하이라이트되는" 버그를 방지한다. (~ 사용 금지) */
+.rv-modal-field-label{font-size:13px;font-weight:700;color:#334155;margin-bottom:10px;}
+.rv-chip-group{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
+.rv-chip-input{position:absolute;opacity:0;width:0;height:0;pointer-events:none;}
+.rv-chip-label{display:inline-flex;align-items:center;gap:4px;padding:8px 14px;border:1.5px solid #e2e8f0;border-radius:999px;font-size:13px;font-weight:600;color:#64748b;cursor:pointer;user-select:none;transition:.15s;background:#fff;}
+.rv-chip-label:hover{border-color:#c7d2fe;background:#f5f5ff;}
+.rv-chip-input:checked + .rv-chip-label{background:linear-gradient(135deg,#6366f1,#8b5cf6);border-color:transparent;color:#fff;box-shadow:0 4px 10px rgba(99,102,241,.35);}
 .review-modal-box textarea{width:100%;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;font-size:14px;resize:vertical;margin-bottom:18px;box-sizing:border-box;}
 .review-modal-actions{display:flex;gap:10px;justify-content:flex-end;}
 .btn-modal-cancel{background:#f1f5f9;color:#475569;border:none;padding:10px 20px;border-radius:999px;font-weight:600;cursor:pointer;}
@@ -314,6 +318,9 @@ require __DIR__ . '/includes/header.php';
 .pd-review-meta{display:flex;align-items:center;gap:8px;}
 .btn-review-delete{background:none;border:1px solid #e2e8f0;color:#94a3b8;font-size:12px;padding:4px 10px;border-radius:999px;cursor:pointer;transition:color .12s,border-color .12s;}
 .btn-review-delete:hover{color:#ef4444;border-color:#fca5a5;}
+/* [NEW] 리뷰 목록에 표시되는 태그 칩 (읽기 전용) */
+.pd-review-tag-row{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px;}
+.pd-review-tag-chip{background:#f0f0ff;color:#6366f1;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;}
 .pd-flash-msg{padding:12px 16px;border-radius:12px;margin-bottom:16px;font-size:14px;}
 .pd-flash-msg.success{background:#ecfdf5;color:#047857;}
 .pd-flash-msg.error{background:#fef2f2;color:#b91c1c;}
@@ -575,7 +582,7 @@ require __DIR__ . '/includes/header.php';
 
     <?php
     $rvStmt = $pdo->prepare("
-        SELECT r.id, r.user_id, r.rating, r.content, r.created_at, u.name AS user_name
+        SELECT r.id, r.user_id, r.rating, r.content, r.option_tags, r.created_at, u.name AS user_name
         FROM tt_reviews r
         JOIN tt_users u ON u.id = r.user_id
         WHERE r.product_id = :pid
@@ -648,7 +655,6 @@ require __DIR__ . '/includes/header.php';
                             <span class="pd-review-user"><?= h(mb_substr($rv['user_name'], 0, 1) . str_repeat('*', max(0, mb_strlen($rv['user_name']) - 1))) ?></span>
                             <span class="pd-review-date"><?= h(date('Y.m.d', strtotime($rv['created_at']))) ?></span>
                         </div>
-
                         <?php if ($currentUid && $currentUid === (int)$rv['user_id']): ?>
                             <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('후기를 삭제하시겠습니까? 삭제된 후기는 되돌릴 수 없습니다.');" style="margin:0;">
                                 <?= Csrf::field() ?>
@@ -659,6 +665,14 @@ require __DIR__ . '/includes/header.php';
                             </form>
                         <?php endif; ?>
                     </div>
+                    <?php $rvTags = review_parse_option_tags($rv['option_tags'] ?? null); ?>
+                    <?php if (!empty($rvTags)): ?>
+                        <div class="pd-review-tag-row">
+                            <?php foreach ($rvTags as $t): ?>
+                                <span class="pd-review-tag-chip"><?= h($t) ?></span>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
                     <p class="pd-review-content"><?= nl2br(h($rv['content'])) ?></p>
                 </div>
             <?php endforeach; ?>
@@ -672,7 +686,7 @@ require __DIR__ . '/includes/header.php';
     <button type="button" class="review-modal-close" id="reviewModalClose" aria-label="닫기">&times;</button>
     <h3 class="review-modal-title">후기 작성하기</h3>
     <p class="review-modal-sub">솔직한 사용 후기를 남겨주시면 다른 고객님들께 큰 도움이 됩니다.</p>
-    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form">
+    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form" enctype="multipart/form-data">
         <?= Csrf::field() ?>
         <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
         <input type="hidden" name="return_to" value="product">
@@ -682,6 +696,17 @@ require __DIR__ . '/includes/header.php';
                 <label for="star<?= $i ?>">★</label>
             <?php endfor; ?>
         </div>
+
+        <?php if (!empty($reviewOptionTags)): ?>
+        <div class="rv-modal-field-label">이런 점이 좋았어요! (선택, 여러 개 선택 가능)</div>
+        <div class="rv-chip-group">
+            <?php foreach ($reviewOptionTags as $idx => $tagLabel): ?>
+                <input type="checkbox" class="rv-chip-input" id="rvTag<?= $idx ?>" name="option_tags[]" value="<?= h($tagLabel) ?>">
+                <label class="rv-chip-label" for="rvTag<?= $idx ?>"><?= h($tagLabel) ?></label>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
         <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 후기를 남겨주세요." required></textarea>
         <div class="review-modal-actions">
             <button type="button" class="btn-modal-cancel" id="reviewModalCancel">취소</button>
@@ -736,9 +761,6 @@ function currentUnitPrice() {
     const opt = optionSelect.options[optionSelect.selectedIndex];
     return parseInt(opt.dataset.price, 10) || 0;
   }
-  // [FIX] 옵션을 선택하지 않았을 때는 상품 기본 판매가(price_sale)를 그대로 사용한다.
-  //       옵션이 존재하는 상품이라도 "옵션 미선택 = 기본 상품 구매"가 정상 동작해야 한다.
-  const priceBox = document.querySelector('.pdh-price-box');
   return parseInt(priceNowEl.textContent.replace(/[^0-9]/g, ''), 10) || 0;
 }
 
@@ -759,16 +781,14 @@ document.getElementById('pdQtyPlus').addEventListener('click', () => {
 qtyInput.addEventListener('input', recalcTotal);
 
 if (optionSelect) {
-  const basePriceLabel = priceNowEl.textContent; // 최초 렌더링된 상품 기본가 텍스트를 저장해둔다.
+  const basePriceLabel = priceNowEl.textContent;
   optionSelect.addEventListener('change', () => {
-    // [FIX] "옵션을 선택해주세요"(빈 값)로 되돌렸을 때 표시가를 상품 기본가로 복원.
     if (optionSelect.value === '') {
       stockWarn.style.display = 'none';
       priceNowEl.textContent = basePriceLabel;
       recalcTotal();
       return;
     }
-
     const opt = optionSelect.options[optionSelect.selectedIndex];
     const stock = parseInt(opt.dataset.stock, 10) || 0;
     stockWarn.style.display = (stock <= 0) ? 'block' : 'none';
@@ -793,41 +813,34 @@ wishBtn.addEventListener('click', async function () {
       product_id: productId,
       csrf_token: csrfToken
     });
-
     if (status === 401) {
       alert('로그인이 필요합니다.');
       location.href = BASE_URL + '/login.php';
       return;
     }
     if (!data.success) {
-      alert(data.message || '찜 처리 중 오류가 발생했습니다.');
+      alert(data.message || '찜 목록 처리 중 오류가 발생했습니다.');
       return;
     }
-
     const wished = data.data.wished;
     wishBtn.classList.toggle('active', wished);
     wishBtn.textContent = wished ? '♥' : '♡';
   } catch (e) {
-    alert('네트워크 오류가 발생했습니다.');
+    alert('네트워크 오류로 찜 처리에 실패했습니다.');
   }
 });
 
-// [FIX] 옵션이 존재하는 상품이라도 옵션을 선택하지 않은 상태에서
-//       "DOT 옵션을 선택해주세요" alert로 막던 강제 검증 블록을 완전히 제거했다.
-//       재고 검증은 실제로 옵션을 선택했을 때만 의미가 있으므로 그 경우에만 확인한다.
 cartBtn.addEventListener('click', async function () {
   if (hasOptions && optionSelect && optionSelect.value !== '') {
     const opt = optionSelect.options[optionSelect.selectedIndex];
     if ((parseInt(opt.dataset.stock, 10) || 0) <= 0) {
-      alert('품절된 옵션입니다. 다른 옵션을 선택하거나 옵션 없이 담아주세요.');
+      alert('품절된 옵션입니다. 다른 옵션을 선택해주세요.');
       return;
     }
   }
-
   const optionIdPayload = (hasOptions && optionSelect && optionSelect.value !== '')
     ? parseInt(optionSelect.value, 10)
     : null;
-
   try {
     const { status, data } = await postJson(BASE_URL + '/cart-add.php', {
       product_id: productId,
@@ -835,36 +848,30 @@ cartBtn.addEventListener('click', async function () {
       qty: parseInt(qtyInput.value, 10) || 1,
       csrf_token: csrfToken
     });
-
     if (status === 401) {
       alert('로그인이 필요합니다.');
       location.href = BASE_URL + '/login.php';
       return;
     }
     if (!data.success) {
-      alert(data.message || '장바구니에 담지 못했습니다.');
+      alert(data.message || '장바구니 담기에 실패했습니다.');
       return;
     }
-
     if (typeof window.ttSetCartCount === 'function') {
       window.ttSetCartCount(data.data.cart_count);
     }
     alert(data.data.message || '장바구니에 담겼습니다.');
   } catch (e) {
-    alert('네트워크 오류가 발생했습니다.');
+    alert('네트워크 오류로 장바구니 처리에 실패했습니다.');
   }
 });
 
-// [FIX] 바로구매도 동일하게, 옵션 미선택 시 강제로 막던 로직을 제거.
-//       옵션을 선택하지 않으면 buyNowOptionId를 빈 값으로 넘겨
-//       서버(buy-now.php)가 상품 기본가/기본 재고 기준으로 처리하게 한다.
 buyBtn.addEventListener('click', function () {
   if (!isLoggedIn) {
     alert('로그인이 필요합니다.');
     location.href = BASE_URL + '/login.php';
     return;
   }
-
   if (hasOptions && optionSelect && optionSelect.value !== '') {
     const opt = optionSelect.options[optionSelect.selectedIndex];
     if ((parseInt(opt.dataset.stock, 10) || 0) <= 0) {
@@ -875,9 +882,7 @@ buyBtn.addEventListener('click', function () {
   } else {
     document.getElementById('buyNowOptionId').value = '';
   }
-
   document.getElementById('buyNowQty').value = Math.max(1, Math.min(99, parseInt(qtyInput.value, 10) || 1));
-
   buyBtn.disabled = true;
   document.getElementById('buyNowForm').submit();
 });
@@ -941,7 +946,7 @@ if (restockBtn) {
     const qty       = Math.max(1, parseInt(qtyInput?.value, 10) || 1);
 
     restockBtn.disabled = true;
-    restockBtn.textContent = '재고 요청...';
+    restockBtn.textContent = '재고 요청 중...';
     try {
       const formData = new FormData();
       formData.append('product_id', productId);
@@ -964,7 +969,7 @@ if (restockBtn) {
         restockBtn.textContent = '✓ 재고 요청';
         restockBtn.style.background = '#22c55e';
         restockBtn.style.color = '#fff';
-        alert(data.message || '재고 입고 요청이 접수되었습니다.');
+        alert(data.message || '재고 입고 요청이 등록되었습니다.');
       } else {
         restockBtn.disabled = false;
         restockBtn.textContent = '재고 입고요청';
@@ -973,7 +978,7 @@ if (restockBtn) {
     } catch (e) {
       restockBtn.disabled = false;
       restockBtn.textContent = '재고 입고요청';
-      alert('네트워크 오류가 발생했습니다.');
+      alert('네트워크 오류로 요청 처리에 실패했습니다.');
     }
   });
 }

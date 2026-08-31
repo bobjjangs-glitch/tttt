@@ -57,7 +57,7 @@ try {
       <a href="<?= BASE_URL ?>/product-list.php?cat=tire">타이어</a>
       <a href="<?= BASE_URL ?>/product-list.php?cat=engineoil">엔진오일</a>
       <a href="<?= BASE_URL ?>/product-list.php?cat=battery">배터리</a>
-      <a href="<?= BASE_URL ?>/review.php">리뷰</a>
+      <a href="<?= BASE_URL ?>/review-list.php">리뷰</a>
     </nav>
 
     <!-- 헤더 통합 검색바 -->

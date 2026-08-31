@@ -1,14 +1,13 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
+ensure_review_extra_columns();
 
 $pdo = Database::connection();
 
-// ── 페이지네이션 ──
 $page    = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
-$perPage = 12;
+$perPage = 10;
 
-// ── 별점 필터 ──
 $ratingFilter = isset($_GET['rating']) ? (int)$_GET['rating'] : 0;
 $where  = [];
 $params = [];
@@ -18,7 +17,6 @@ if ($ratingFilter >= 1 && $ratingFilter <= 5) {
 }
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
-// ── 전체 개수 → 총 페이지 계산 ──
 $countStmt = $pdo->prepare("SELECT COUNT(*) FROM tt_reviews r $whereSql");
 $countStmt->execute($params);
 $totalCount = (int)$countStmt->fetchColumn();
@@ -26,12 +24,14 @@ $totalPages = max(1, (int)ceil($totalCount / $perPage));
 if ($page > $totalPages) { $page = $totalPages; }
 $offset = ($page - 1) * $perPage;
 
-// ── 목록 조회 (최신순) — 실제 tt_reviews 컬럼: id, product_id, user_id, rating, content, created_at ──
-$sql = "SELECT r.id, r.rating, r.content, r.created_at,
-               p.id AS product_id, p.name AS product_name, p.thumbnail_url,
+$sql = "SELECT r.id, r.rating, r.content, r.option_tags, r.created_at,
+               p.id AS product_id, p.name AS product_name, p.thumbnail_url, p.spec,
+               p.width_mm, p.aspect_ratio, p.rim_diameter,
+               b.name AS brand_name,
                u.name AS user_name
         FROM tt_reviews r
         JOIN tt_products p ON p.id = r.product_id
+        LEFT JOIN tt_brands b ON b.id = p.brand_id
         JOIN tt_users u ON u.id = r.user_id
         $whereSql
         ORDER BY r.created_at DESC
@@ -43,14 +43,9 @@ $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
 $reviews = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// ── 전체 통계 (평균 별점) ──
 $stat = $pdo->query("SELECT COUNT(*) AS cnt, AVG(rating) AS avg_rating FROM tt_reviews")
              ->fetch(PDO::FETCH_ASSOC);
 
-/**
- * 작성자 이름 마스킹 — 개인정보 노출 방지를 위해 실명을 그대로 노출하지 않는다.
- * 예: "홍길동" -> "홍*동", "이몽" -> "이*"
- */
 function maskUserName(string $name): string {
     $len = mb_strlen($name);
     if ($len <= 1) return $name;
@@ -69,6 +64,42 @@ $pageTitle = '고객 리뷰';
 require __DIR__ . '/includes/header.php';
 ?>
 
+<style>
+.rv-wrap{max-width:1100px;margin:0 auto;padding:24px 20px 60px;}
+.rv-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:8px;}
+.rv-title{font-size:22px;font-weight:800;color:#0f172a;margin:0;}
+.rv-summary{font-size:13px;color:#64748b;margin:0;}
+.rv-filter-bar{display:flex;justify-content:flex-end;margin-bottom:14px;}
+.rv-filter-bar select{padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;color:#334155;}
+.rv-event-banner{display:flex;align-items:center;justify-content:space-between;background:linear-gradient(120deg,#1e2a5e,#3b3f8f);border-radius:16px;padding:20px 26px;margin-bottom:22px;color:#fff;}
+.rv-event-banner .txt strong{display:block;font-size:16px;font-weight:800;margin-bottom:4px;}
+.rv-event-banner .txt span{font-size:13px;opacity:.85;}
+.rv-event-banner .badge{background:rgba(255,255,255,.15);border-radius:999px;padding:8px 16px;font-size:13px;font-weight:700;white-space:nowrap;}
+.rv-list{display:flex;flex-direction:column;gap:14px;}
+.rv-card{display:flex;gap:20px;border:1px solid #eef1f6;border-radius:16px;padding:20px 22px;background:#fff;}
+.rv-card-main{flex:1;min-width:0;}
+.rv-card-meta{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+.rv-card-brand{font-size:13px;font-weight:800;color:#0f172a;}
+.rv-stars{color:#fbbf24;font-size:13px;letter-spacing:1px;}
+.rv-date{font-size:12px;color:#94a3b8;}
+.rv-content{font-size:14px;color:#334155;line-height:1.6;margin:8px 0 10px;word-break:break-word;}
+.rv-tag-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;}
+.rv-tag-chip{background:#eef2ff;color:#4f46e5;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:4px;}
+.rv-photo-note{font-size:12px;color:#94a3b8;}
+.rv-product-box{width:200px;flex-shrink:0;border:1px solid #eef1f6;border-radius:14px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;}
+.rv-product-thumb{width:64px;height:64px;border-radius:12px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.rv-product-thumb img{width:100%;height:100%;object-fit:cover;}
+.rv-product-brand{font-size:12px;color:#94a3b8;font-weight:700;}
+.rv-product-name{font-size:13px;font-weight:800;color:#0f172a;}
+.rv-product-spec{font-size:12px;color:#64748b;}
+.rv-product-btn{margin-top:4px;background:#0f172a;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;text-decoration:none;}
+.rv-empty{padding:60px 0;text-align:center;color:#94a3b8;font-size:14px;}
+.rv-pagination{display:flex;justify-content:center;gap:6px;margin-top:28px;}
+.rv-page-btn{padding:8px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;color:#334155;text-decoration:none;}
+.rv-page-btn.active{background:#0f172a;color:#fff;border-color:#0f172a;}
+@media (max-width:640px){.rv-card{flex-direction:column;} .rv-product-box{width:100%;flex-direction:row;text-align:left;}}
+</style>
+
 <main class="tt-main">
 <div class="rv-wrap">
   <div class="rv-head">
@@ -79,6 +110,14 @@ require __DIR__ . '/includes/header.php';
         · 평균 <strong><?= number_format((float)$stat['avg_rating'], 1) ?></strong>점
       <?php endif; ?>
     </p>
+  </div>
+
+  <div class="rv-event-banner">
+    <div class="txt">
+      <strong>구매 리뷰 쓰고 14,000P 받자!</strong>
+      <span>타이어픽 리뷰 이벤트</span>
+    </div>
+    <span class="badge">🎁 이벤트 자세히 보기</span>
   </div>
 
   <form method="get" class="rv-filter-bar">
@@ -94,25 +133,46 @@ require __DIR__ . '/includes/header.php';
     <div class="rv-empty"><p>등록된 리뷰가 없습니다.</p></div>
   <?php else: ?>
   <div class="rv-list">
-    <?php foreach ($reviews as $rv): ?>
+    <?php foreach ($reviews as $rv):
+        $sizeLabel = '';
+        if (!empty($rv['width_mm']) && !empty($rv['aspect_ratio']) && !empty($rv['rim_diameter'])) {
+            $sizeLabel = $rv['width_mm'] . '/' . $rv['aspect_ratio'] . 'R' . $rv['rim_diameter'];
+        } elseif (!empty($rv['spec'])) {
+            $sizeLabel = $rv['spec'];
+        }
+        $tags = review_parse_option_tags($rv['option_tags'] ?? null);
+    ?>
       <div class="rv-card">
-        <a href="<?= BASE_URL ?>/product-detail.php?id=<?= (int)$rv['product_id'] ?>" class="rv-card-thumb">
-          <?php if (!empty($rv['thumbnail_url'])): ?>
-            <img src="<?= h($rv['thumbnail_url']) ?>" alt="<?= h($rv['product_name']) ?>">
-          <?php else: ?>
-            <span class="ph">🛞</span>
-          <?php endif; ?>
-        </a>
-        <div class="rv-card-body">
-          <a href="<?= BASE_URL ?>/product-detail.php?id=<?= (int)$rv['product_id'] ?>" class="rv-card-product">
-            <?= h($rv['product_name']) ?>
-          </a>
+        <div class="rv-card-main">
           <div class="rv-card-meta">
+            <span class="rv-card-brand"><?= h($rv['brand_name'] ?? '') ?> · <?= h(maskUserName($rv['user_name'])) ?></span>
             <span class="rv-stars"><?= starHtml((int)$rv['rating']) ?></span>
-            <span class="rv-user"><?= h(maskUserName($rv['user_name'])) ?></span>
-            <span class="rv-date"><?= h(date('Y.m.d', strtotime($rv['created_at']))) ?></span>
+            <span class="rv-date"><?= h(date('y.m.d', strtotime($rv['created_at']))) ?></span>
           </div>
+
+          <?php if (!empty($tags)): ?>
+            <div class="rv-tag-row">
+              <?php foreach ($tags as $t): ?>
+                <span class="rv-tag-chip">✅ <?= h($t) ?></span>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+
           <p class="rv-content"><?= nl2br(h($rv['content'])) ?></p>
+        </div>
+
+        <div class="rv-product-box">
+          <div class="rv-product-thumb">
+            <?php if (!empty($rv['thumbnail_url'])): ?>
+              <img src="<?= h($rv['thumbnail_url']) ?>" alt="<?= h($rv['product_name']) ?>">
+            <?php else: ?>
+              <span>🛞</span>
+            <?php endif; ?>
+          </div>
+          <?php if (!empty($rv['brand_name'])): ?><span class="rv-product-brand"><?= h($rv['brand_name']) ?></span><?php endif; ?>
+          <span class="rv-product-name"><?= h($rv['product_name']) ?></span>
+          <?php if ($sizeLabel !== ''): ?><span class="rv-product-spec"><?= h($sizeLabel) ?></span><?php endif; ?>
+          <a class="rv-product-btn" href="<?= BASE_URL ?>/product-detail.php?id=<?= (int)$rv['product_id'] ?>">상품 보기</a>
         </div>
       </div>
     <?php endforeach; ?>
