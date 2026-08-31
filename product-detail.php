@@ -214,8 +214,12 @@ if (!empty($product['tech']))             $specRows[] = ['Tech.', $product['tech
 $specRows[]                                = ['런플랫(Runflat)', ($product['runflat'] ?? 'N') === 'Y' ? 'Y (런플랫 타이어)' : 'N (일반 타이어)'];
 if (!empty($product['dot_code']))         $specRows[] = ['대표 DOT / 생산연월', $product['dot_code']];
 
-/* [NEW] 리뷰 작성 모달용 선택 가능 태그 목록 (어드민 관리) */
+/* 리뷰 작성 모달용 선택 가능 태그 목록 (어드민 관리) */
 $reviewOptionTags = review_option_tag_options();
+/* [NEW] 방문형태 / 추가서비스 / 방문가능 매장 목록 */
+$reviewVisitTypes    = review_visit_type_options();
+$reviewExtraServices = review_extra_service_options();
+$activeStores        = store_active_options();
 
 $pageTitle = $product['name'];
 require __DIR__ . '/includes/header.php';
@@ -300,8 +304,6 @@ require __DIR__ . '/includes/header.php';
 .star-rating input{display:none;}
 .star-rating label{font-size:30px;color:#e2e8f0;cursor:pointer;transition:color .12s,transform .12s;}
 .star-rating input:checked ~ label,.star-rating label:hover,.star-rating label:hover ~ label{color:#fbbf24;}
-/* [NEW] 리뷰 태그(체크박스 칩) — 반드시 인접 형제 선택자(+)만 사용해서
-   "하나 체크하면 뒤의 모든 라벨이 같이 하이라이트되는" 버그를 방지한다. (~ 사용 금지) */
 .rv-modal-field-label{font-size:13px;font-weight:700;color:#334155;margin-bottom:10px;}
 .rv-chip-group{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
 .rv-chip-input{position:absolute;opacity:0;width:0;height:0;pointer-events:none;}
@@ -315,10 +317,9 @@ require __DIR__ . '/includes/header.php';
 .btn-modal-submit:hover{transform:translateY(-1px);}
 .pd-review-item{display:flex;flex-direction:column;gap:6px;padding:16px 0;border-bottom:1px solid #f1f5f9;}
 .pd-review-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
-.pd-review-meta{display:flex;align-items:center;gap:8px;}
+.pd-review-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .btn-review-delete{background:none;border:1px solid #e2e8f0;color:#94a3b8;font-size:12px;padding:4px 10px;border-radius:999px;cursor:pointer;transition:color .12s,border-color .12s;}
 .btn-review-delete:hover{color:#ef4444;border-color:#fca5a5;}
-/* [NEW] 리뷰 목록에 표시되는 태그 칩 (읽기 전용) */
 .pd-review-tag-row{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px;}
 .pd-review-tag-chip{background:#f0f0ff;color:#6366f1;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;}
 .pd-flash-msg{padding:12px 16px;border-radius:12px;margin-bottom:16px;font-size:14px;}
@@ -348,6 +349,30 @@ require __DIR__ . '/includes/header.php';
 .pd-shipping-box ul{margin:0;padding-left:18px;}
 .pd-shipping-box li{margin-bottom:6px;}
 .pd-shipping-sub{font-size:13px;font-weight:700;color:#475569;margin:14px 0 6px;}
+
+/* [NEW] 리뷰 카드 확장 영역 — 차량모델 / 방문형태 / 추가서비스 / HOT / 매장정보 / 사진 / 도움돼요 */
+.pd-review-vehicle{font-size:12px;color:#64748b;font-weight:600;}
+.pd-review-badge-row{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px;}
+.pd-review-badge{border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;}
+.pd-review-badge.visit{background:#eff6ff;color:#2563eb;}
+.pd-review-badge.extra{background:#f0fdf4;color:#16a34a;}
+.pd-review-badge.hot{background:#fef2f2;color:#ef4444;}
+.pd-review-store-box{font-size:12px;color:#475569;background:#f8fafc;border:1px solid #eef1f6;border-radius:10px;padding:8px 12px;margin:4px 0;}
+.pd-review-photo-row{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap;}
+.pd-review-photo-row img{width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;}
+.pd-review-helpful-row{display:flex;align-items:center;gap:8px;margin-top:6px;}
+.btn-review-helpful{display:inline-flex;align-items:center;gap:6px;border:1px solid #e2e8f0;background:#fff;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;color:#64748b;cursor:pointer;transition:.15s;}
+.btn-review-helpful:hover{border-color:#c7d2fe;background:#f5f5ff;}
+.btn-review-helpful.active{background:#eef2ff;border-color:#6366f1;color:#4338ca;}
+.rv-visit-toggle-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+.rv-store-select-wrap{margin-bottom:16px;}
+.rv-store-select-wrap select{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;}
+.rv-vehicle-input-wrap{margin-bottom:16px;}
+.rv-vehicle-input-wrap input{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;box-sizing:border-box;}
+.rv-photo-upload-wrap{margin-bottom:18px;}
+.rv-photo-upload-wrap input[type=file]{font-size:13px;}
+.rv-photo-preview{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
+.rv-photo-preview img{width:60px;height:60px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0;}
 </style>
 
 <main class="tt-main">
@@ -581,10 +606,15 @@ require __DIR__ . '/includes/header.php';
     <?php endif; ?>
 
     <?php
+    /* [수정] 차량모델 / 방문형태 / 추가서비스 / 매장정보 / 도움돼요 카운트까지 함께 조회 */
     $rvStmt = $pdo->prepare("
-        SELECT r.id, r.user_id, r.rating, r.content, r.option_tags, r.created_at, u.name AS user_name
+        SELECT r.id, r.user_id, r.rating, r.content, r.option_tags, r.created_at,
+               r.vehicle_model, r.visit_type, r.extra_service, r.store_id, r.helpful_count,
+               u.name AS user_name,
+               s.name AS store_name, s.address AS store_address
         FROM tt_reviews r
         JOIN tt_users u ON u.id = r.user_id
+        LEFT JOIN tt_stores s ON s.id = r.store_id
         WHERE r.product_id = :pid
         ORDER BY r.created_at DESC
         LIMIT 20
@@ -592,6 +622,28 @@ require __DIR__ . '/includes/header.php';
     $rvStmt->execute(['pid' => $productId]);
     $productReviews = $rvStmt->fetchAll(PDO::FETCH_ASSOC);
     $currentUid = Auth::isLoggedIn() ? (int)Auth::currentUserId() : 0;
+
+    /* [NEW] 로그인 사용자가 이미 "도움이 돼요"를 누른 리뷰 id 집합 */
+    $myHelpfulSet = [];
+    if ($currentUid && !empty($productReviews)) {
+        $rIds = array_column($productReviews, 'id');
+        $ph = implode(',', array_fill(0, count($rIds), '?'));
+        $hStmt = $pdo->prepare("SELECT review_id FROM tt_review_helpful WHERE user_id = ? AND review_id IN ($ph)");
+        $hStmt->execute(array_merge([$currentUid], $rIds));
+        $myHelpfulSet = array_flip($hStmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    /* [NEW] 리뷰별 첨부 사진 조회 */
+    $reviewPhotosByReview = [];
+    if (!empty($productReviews)) {
+        $rIds2 = array_column($productReviews, 'id');
+        $ph2 = implode(',', array_fill(0, count($rIds2), '?'));
+        $pStmt = $pdo->prepare("SELECT review_id, image_url FROM tt_review_photos WHERE review_id IN ($ph2) ORDER BY sort_order ASC");
+        $pStmt->execute($rIds2);
+        foreach ($pStmt->fetchAll(PDO::FETCH_ASSOC) as $prow) {
+            $reviewPhotosByReview[$prow['review_id']][] = $prow['image_url'];
+        }
+    }
 
     $canWriteReview = false;
     $reviewDeadline = null;
@@ -647,13 +699,20 @@ require __DIR__ . '/includes/header.php';
         <p style="color:var(--gray4);">등록된 후기가 없습니다.</p>
     <?php else: ?>
         <div class="pd-review-list">
-            <?php foreach ($productReviews as $rv): ?>
+            <?php foreach ($productReviews as $rv):
+                $rvTags   = review_parse_option_tags($rv['option_tags'] ?? null);
+                $rvExtras = review_parse_extra_service($rv['extra_service'] ?? null);
+                $isHot    = is_review_hot((int)$rv['helpful_count']);
+            ?>
                 <div class="pd-review-item">
                     <div class="pd-review-item-top">
                         <div class="pd-review-meta">
                             <span class="pd-review-stars"><?= str_repeat('★', (int)$rv['rating']) . str_repeat('☆', 5 - (int)$rv['rating']) ?></span>
                             <span class="pd-review-user"><?= h(mb_substr($rv['user_name'], 0, 1) . str_repeat('*', max(0, mb_strlen($rv['user_name']) - 1))) ?></span>
-                            <span class="pd-review-date"><?= h(date('Y.m.d', strtotime($rv['created_at']))) ?></span>
+                            <?php if (!empty($rv['vehicle_model'])): ?>
+                                <span class="pd-review-vehicle"><?= h($rv['vehicle_model']) ?></span>
+                            <?php endif; ?>
+                            <span class="pd-review-date"><?= h(date('y.m.d', strtotime($rv['created_at']))) ?></span>
                         </div>
                         <?php if ($currentUid && $currentUid === (int)$rv['user_id']): ?>
                             <form method="post" action="<?= BASE_URL ?>/review-delete.php" onsubmit="return confirm('후기를 삭제하시겠습니까? 삭제된 후기는 되돌릴 수 없습니다.');" style="margin:0;">
@@ -665,7 +724,19 @@ require __DIR__ . '/includes/header.php';
                             </form>
                         <?php endif; ?>
                     </div>
-                    <?php $rvTags = review_parse_option_tags($rv['option_tags'] ?? null); ?>
+
+                    <?php if ($isHot || !empty($rv['visit_type']) || !empty($rvExtras)): ?>
+                        <div class="pd-review-badge-row">
+                            <?php if ($isHot): ?><span class="pd-review-badge hot">🔥 HOT</span><?php endif; ?>
+                            <?php if (!empty($rv['visit_type']) && isset($reviewVisitTypes[$rv['visit_type']])): ?>
+                                <span class="pd-review-badge visit"><?= h($reviewVisitTypes[$rv['visit_type']]) ?></span>
+                            <?php endif; ?>
+                            <?php foreach ($rvExtras as $ex): ?>
+                                <span class="pd-review-badge extra"><?= h($ex) ?> 추가</span>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
                     <?php if (!empty($rvTags)): ?>
                         <div class="pd-review-tag-row">
                             <?php foreach ($rvTags as $t): ?>
@@ -673,7 +744,30 @@ require __DIR__ . '/includes/header.php';
                             <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
+
                     <p class="pd-review-content"><?= nl2br(h($rv['content'])) ?></p>
+
+                    <?php if (!empty($reviewPhotosByReview[$rv['id']])): ?>
+                        <div class="pd-review-photo-row">
+                            <?php foreach ($reviewPhotosByReview[$rv['id']] as $purl): ?>
+                                <img src="<?= h($purl) ?>" alt="후기 사진" loading="lazy">
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($rv['visit_type'] === 'store' && !empty($rv['store_name'])): ?>
+                        <div class="pd-review-store-box">
+                            🏬 <?= h($rv['store_name']) ?><?= !empty($rv['store_address']) ? ' · ' . h($rv['store_address']) : '' ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="pd-review-helpful-row">
+                        <button type="button"
+                                class="btn-review-helpful <?= isset($myHelpfulSet[$rv['id']]) ? 'active' : '' ?>"
+                                data-review-id="<?= (int)$rv['id'] ?>">
+                            👍 도움이 돼요 <span class="hp-count"><?= (int)$rv['helpful_count'] ?></span>
+                        </button>
+                    </div>
                 </div>
             <?php endforeach; ?>
         </div>
@@ -707,7 +801,53 @@ require __DIR__ . '/includes/header.php';
         </div>
         <?php endif; ?>
 
+        <!-- [NEW] 방문 형태 -->
+        <div class="rv-modal-field-label">방문 형태</div>
+        <div class="rv-visit-toggle-row">
+            <?php foreach ($reviewVisitTypes as $vKey => $vLabel): ?>
+                <input type="radio" class="rv-chip-input" id="rvVisit_<?= h($vKey) ?>" name="visit_type" value="<?= h($vKey) ?>" <?= $vKey === 'store' ? 'checked' : '' ?>>
+                <label class="rv-chip-label" for="rvVisit_<?= h($vKey) ?>"><?= h($vLabel) ?></label>
+            <?php endforeach; ?>
+        </div>
+
+        <!-- [NEW] 방문 매장 선택 (매장방문일 때만 노출) -->
+        <?php if (!empty($activeStores)): ?>
+        <div class="rv-store-select-wrap" id="rvStoreSelectWrap">
+            <div class="rv-modal-field-label">방문 매장</div>
+            <select name="store_id" id="rvStoreSelect">
+                <?php foreach ($activeStores as $st): ?>
+                    <option value="<?= (int)$st['id'] ?>"><?= h($st['name']) ?> (<?= h($st['address']) ?>)</option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <?php endif; ?>
+
+        <!-- [NEW] 차량 모델 -->
+        <div class="rv-vehicle-input-wrap">
+            <div class="rv-modal-field-label">차량 모델 (선택)</div>
+            <input type="text" name="vehicle_model" maxlength="60" placeholder="예) 렉서스 ES">
+        </div>
+
+        <!-- [NEW] 추가로 진행한 서비스 -->
+        <?php if (!empty($reviewExtraServices)): ?>
+        <div class="rv-modal-field-label">추가로 진행한 서비스 (선택, 여러 개 선택 가능)</div>
+        <div class="rv-chip-group">
+            <?php foreach ($reviewExtraServices as $eIdx => $eLabel): ?>
+                <input type="checkbox" class="rv-chip-input" id="rvExtra<?= $eIdx ?>" name="extra_service[]" value="<?= h($eLabel) ?>">
+                <label class="rv-chip-label" for="rvExtra<?= $eIdx ?>"><?= h($eLabel) ?></label>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
         <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 후기를 남겨주세요." required></textarea>
+
+        <!-- [NEW] 리뷰 사진 첨부 -->
+        <div class="rv-photo-upload-wrap">
+            <div class="rv-modal-field-label">사진 첨부 (선택, 최대 3장 / 장당 5MB 이하)</div>
+            <input type="file" name="photos[]" id="rvPhotoInput" accept="image/jpeg,image/png,image/webp" multiple>
+            <div class="rv-photo-preview" id="rvPhotoPreview"></div>
+        </div>
+
         <div class="review-modal-actions">
             <button type="button" class="btn-modal-cancel" id="reviewModalCancel">취소</button>
             <button type="submit" class="btn-modal-submit">등록하기</button>
@@ -781,207 +921,38 @@ document.getElementById('pdQtyPlus').addEventListener('click', () => {
 qtyInput.addEventListener('input', recalcTotal);
 
 if (optionSelect) {
-  const basePriceLabel = priceNowEl.textContent;
-  optionSelect.addEventListener('change', () => {
-    if (optionSelect.value === '') {
-      stockWarn.style.display = 'none';
-      priceNowEl.textContent = basePriceLabel;
-      recalcTotal();
-      return;
-    }
-    const opt = optionSelect.options[optionSelect.selectedIndex];
-    const stock = parseInt(opt.dataset.stock, 10) || 0;
-    stockWarn.style.display = (stock <= 0) ? 'block' : 'none';
-    priceNowEl.textContent = (parseInt(opt.dataset.price, 10) || 0).toLocaleString('ko-KR') + '원';
-    recalcTotal();
-  });
-}
+  const basePriceLabel = priceNowEl.textContrestockBtn.disabled = true;
+restockBtn.textContent = '재고 요청 중...';
+try {
+  const formData = new FormData();
+  formData.append('product_id', productId);
+  formData.append('qty', qty);
+  formData.append('csrf_token', csrfToken);
 
-async function postJson(url, payload) {
-  const res = await fetch(url, {
+  const res = await fetch(BASE_URL + '/ajax-stock-request.php', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: formData
   });
-  const data = await res.json();
-  return { status: res.status, data };
-}
 
-wishBtn.addEventListener('click', async function () {
-  try {
-    const { status, data } = await postJson(BASE_URL + '/wish-toggle.php', {
-      product_id: productId,
-      csrf_token: csrfToken
-    });
-    if (status === 401) {
-      alert('로그인이 필요합니다.');
-      location.href = BASE_URL + '/login.php';
-      return;
-    }
-    if (!data.success) {
-      alert(data.message || '찜 목록 처리 중 오류가 발생했습니다.');
-      return;
-    }
-    const wished = data.data.wished;
-    wishBtn.classList.toggle('active', wished);
-    wishBtn.textContent = wished ? '♥' : '♡';
-  } catch (e) {
-    alert('네트워크 오류로 찜 처리에 실패했습니다.');
-  }
-});
-
-cartBtn.addEventListener('click', async function () {
-  if (hasOptions && optionSelect && optionSelect.value !== '') {
-    const opt = optionSelect.options[optionSelect.selectedIndex];
-    if ((parseInt(opt.dataset.stock, 10) || 0) <= 0) {
-      alert('품절된 옵션입니다. 다른 옵션을 선택해주세요.');
-      return;
-    }
-  }
-  const optionIdPayload = (hasOptions && optionSelect && optionSelect.value !== '')
-    ? parseInt(optionSelect.value, 10)
-    : null;
-  try {
-    const { status, data } = await postJson(BASE_URL + '/cart-add.php', {
-      product_id: productId,
-      option_id: optionIdPayload,
-      qty: parseInt(qtyInput.value, 10) || 1,
-      csrf_token: csrfToken
-    });
-    if (status === 401) {
-      alert('로그인이 필요합니다.');
-      location.href = BASE_URL + '/login.php';
-      return;
-    }
-    if (!data.success) {
-      alert(data.message || '장바구니 담기에 실패했습니다.');
-      return;
-    }
-    if (typeof window.ttSetCartCount === 'function') {
-      window.ttSetCartCount(data.data.cart_count);
-    }
-    alert(data.data.message || '장바구니에 담겼습니다.');
-  } catch (e) {
-    alert('네트워크 오류로 장바구니 처리에 실패했습니다.');
-  }
-});
-
-buyBtn.addEventListener('click', function () {
-  if (!isLoggedIn) {
+  if (res.status === 401) {
     alert('로그인이 필요합니다.');
     location.href = BASE_URL + '/login.php';
     return;
   }
-  if (hasOptions && optionSelect && optionSelect.value !== '') {
-    const opt = optionSelect.options[optionSelect.selectedIndex];
-    if ((parseInt(opt.dataset.stock, 10) || 0) <= 0) {
-      alert('품절된 옵션입니다.');
-      return;
-    }
-    document.getElementById('buyNowOptionId').value = optionSelect.value;
+
+  const data = await res.json();
+  if (data.success) {
+    restockBtn.textContent = '✓ 재고 요청';
+    restockBtn.style.background = '#22c55e';
+    restockBtn.style.color = '#fff';
+    alert(data.message || '재고 입고 요청이 등록되었습니다.');
   } else {
-    document.getElementById('buyNowOptionId').value = '';
+    restockBtn.disabled = false;
+    restockBtn.textContent = '재고 입고요청';
+    alert(data.message || '요청 처리 중 오류가 발생했습니다.');
   }
-  document.getElementById('buyNowQty').value = Math.max(1, Math.min(99, parseInt(qtyInput.value, 10) || 1));
-  buyBtn.disabled = true;
-  document.getElementById('buyNowForm').submit();
-});
-
-document.querySelectorAll('.pd-tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.pd-tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.pd-tab-panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelector(`.pd-tab-panel[data-panel="${btn.dataset.tab}"]`).classList.add('active');
-  });
-});
-
-const reviewBtn     = document.getElementById('pdReviewWriteBtn');
-const reviewOverlay = document.getElementById('reviewModalOverlay');
-const reviewClose   = document.getElementById('reviewModalClose');
-const reviewCancel  = document.getElementById('reviewModalCancel');
-
-function openReviewModal() {
-  reviewOverlay.classList.add('active');
-  document.body.style.overflow = 'hidden';
+} catch (e) {
+  restockBtn.disabled = false;
+  restockBtn.textContent = '재고 입고요청';
+  alert('네트워크 오류로 요청 처리에 실패했습니다.');
 }
-function closeReviewModal() {
-  reviewOverlay.classList.remove('active');
-  document.body.style.overflow = '';
-}
-
-if (reviewBtn && reviewOverlay) {
-  reviewBtn.addEventListener('click', openReviewModal);
-  reviewClose?.addEventListener('click', closeReviewModal);
-  reviewCancel?.addEventListener('click', closeReviewModal);
-  reviewOverlay.addEventListener('click', (e) => {
-    if (e.target === reviewOverlay) closeReviewModal();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && reviewOverlay.classList.contains('active')) closeReviewModal();
-  });
-}
-
-if (autoOpenReview) {
-  const reviewTabBtn = document.querySelector('.pd-tab-btn[data-tab="review"]');
-  const reviewPanel  = document.querySelector('.pd-tab-panel[data-panel="review"]');
-
-  document.querySelectorAll('.pd-tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.pd-tab-panel').forEach(p => p.classList.remove('active'));
-  reviewTabBtn?.classList.add('active');
-  reviewPanel?.classList.add('active');
-
-  document.getElementById('review')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  if (reviewOverlay) {
-    setTimeout(openReviewModal, 350);
-  }
-}
-
-const restockBtn = document.getElementById('pdRestockBtn');
-if (restockBtn) {
-  restockBtn.addEventListener('click', async function(){
-    const productId = parseInt(restockBtn.dataset.productId, 10);
-    const qtyInput  = document.getElementById('pdRestockQty');
-    const qty       = Math.max(1, parseInt(qtyInput?.value, 10) || 1);
-
-    restockBtn.disabled = true;
-    restockBtn.textContent = '재고 요청 중...';
-    try {
-      const formData = new FormData();
-      formData.append('product_id', productId);
-      formData.append('qty', qty);
-      formData.append('csrf_token', csrfToken);
-
-      const res = await fetch(BASE_URL + '/ajax-stock-request.php', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (res.status === 401) {
-        alert('로그인이 필요합니다.');
-        location.href = BASE_URL + '/login.php';
-        return;
-      }
-
-      const data = await res.json();
-      if (data.success) {
-        restockBtn.textContent = '✓ 재고 요청';
-        restockBtn.style.background = '#22c55e';
-        restockBtn.style.color = '#fff';
-        alert(data.message || '재고 입고 요청이 등록되었습니다.');
-      } else {
-        restockBtn.disabled = false;
-        restockBtn.textContent = '재고 입고요청';
-        alert(data.message || '요청 처리 중 오류가 발생했습니다.');
-      }
-    } catch (e) {
-      restockBtn.disabled = false;
-      restockBtn.textContent = '재고 입고요청';
-      alert('네트워크 오류로 요청 처리에 실패했습니다.');
-    }
-  });
-}
-</script>
-
-<?php require __DIR__ . '/includes/footer.php'; ?>

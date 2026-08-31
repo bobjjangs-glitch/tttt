@@ -3,196 +3,74 @@ declare(strict_types=1);
 require_once __DIR__ . '/core/bootstrap.php';
 ensure_review_extra_columns();
 
-if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
-    define('REVIEW_WRITE_WINDOW_DAYS', 7);
-}
-
-function review_submit_redirect(int $productId, string $returnTo): void
-{
-    if ($returnTo === 'mypage') {
-        redirect('/mypage.php#myreviews');
-    } else {
-        redirect('/product-detail.php?id=' . $productId . '#review');
-    }
-    exit;
-}
+header('Content-Type: application/json; charset=utf-8');
 
 if (!Auth::isLoggedIn()) {
-    flash('error', '로그인이 필요합니다.');
-    redirect('/login.php');
-    exit;
-}
-if (!is_post()) {
-    redirect('/');
+    http_response_code(401);
+    echo json_encode(['success' => false, 'message' => '로그인이 필요합니다.'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-$returnTo = ($_POST['return_to'] ?? '') === 'mypage' ? 'mypage' : 'product';
+$input = json_decode(file_get_contents('php://input'), true) ?: [];
+$csrfToken = (string)($input['csrf_token'] ?? '');
+$reviewId  = (int)($input['review_id'] ?? 0);
 
-if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
-    flash('error', '잘못된 요청입니다.');
-    review_submit_redirect((int)($_POST['product_id'] ?? 0), $returnTo);
+if (!Csrf::verify($csrfToken)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => '잘못된 요청입니다.'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+if ($reviewId <= 0) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => '잘못된 리뷰입니다.'], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 
-$userId    = (int)Auth::currentUserId();
-$productId = (int)($_POST['product_id'] ?? 0);
-$rating    = (int)($_POST['rating'] ?? 0);
-$content   = trim($_POST['content'] ?? '');
-
-if ($productId <= 0 || $rating < 1 || $rating > 5 || $content === '') {
-    flash('error', '별점과 리뷰 내용을 모두 입력해 주세요.');
-    review_submit_redirect($productId, $returnTo);
-}
-if (mb_strlen($content) > 1000) {
-    flash('error', '리뷰는 1000자 이내로 작성해 주세요.');
-    review_submit_redirect($productId, $returnTo);
-}
-
-// 부가 옵션(느낌 태그) 화이트리스트 검증
-$optionTagsInput = (array)($_POST['option_tags'] ?? []);
-$optionTags      = array_values(array_intersect($optionTagsInput, review_option_tag_options()));
-$optionTagsStr   = implode(',', $optionTags);
-
-// [NEW] 차량모델 (자유입력, 60자 제한)
-$vehicleModel = trim((string)($_POST['vehicle_model'] ?? ''));
-if (mb_strlen($vehicleModel) > 60) {
-    $vehicleModel = mb_substr($vehicleModel, 0, 60);
-}
-$vehicleModel = $vehicleModel !== '' ? $vehicleModel : null;
-
-// [NEW] 방문방식 화이트리스트 검증
-$visitTypeInput = (string)($_POST['visit_type'] ?? '');
-$visitOptions   = review_visit_type_options();
-$visitType      = array_key_exists($visitTypeInput, $visitOptions) ? $visitTypeInput : null;
-
-// [NEW] 추가서비스 화이트리스트 검증 (복수 선택)
-$extraServiceInput = (array)($_POST['extra_service'] ?? []);
-$extraServices      = array_values(array_intersect($extraServiceInput, review_extra_service_options()));
-$extraServiceStr    = implode(',', $extraServices);
-
-// [NEW] 매장 ID — 방문방식이 '매장방문'일 때만 유효
-$storeId = null;
-if ($visitType === '매장방문') {
-    $storeIdInput = (int)($_POST['store_id'] ?? 0);
-    if ($storeIdInput > 0) {
-        $storeCheck = Database::connection()->prepare('SELECT id FROM tt_stores WHERE id = :id AND is_active = 1');
-        $storeCheck->execute(['id' => $storeIdInput]);
-        if ($storeCheck->fetch()) {
-            $storeId = $storeIdInput;
-        }
-    }
-}
-
+$userId = (int)Auth::currentUserId();
 $pdo = Database::connection();
 
-$buyStmt = $pdo->prepare("
-    SELECT oi.id, o.confirmed_at
-    FROM tt_order_items oi
-    JOIN tt_orders o ON o.id = oi.order_id
-    WHERE o.user_id = :uid AND oi.product_id = :pid AND o.confirmed_at IS NOT NULL
-    ORDER BY o.confirmed_at DESC
-    LIMIT 1
-");
-$buyStmt->execute(['uid' => $userId, 'pid' => $productId]);
-$orderItem = $buyStmt->fetch(PDO::FETCH_ASSOC);
-
-if (!$orderItem || empty($orderItem['id'])) {
-    flash('error', '구매확정된 상품에만 리뷰를 작성할 수 있습니다.');
-    review_submit_redirect($productId, $returnTo);
-}
-
-$confirmedAt = new DateTime($orderItem['confirmed_at']);
-$deadline    = (clone $confirmedAt)->modify('+' . REVIEW_WRITE_WINDOW_DAYS . ' days');
-if (new DateTime() > $deadline) {
-    flash('error', '리뷰 작성 가능 기간(구매확정 후 7일)이 지났습니다.');
-    review_submit_redirect($productId, $returnTo);
-}
-
-$dupStmt = $pdo->prepare('SELECT id FROM tt_reviews WHERE user_id = :uid AND product_id = :pid LIMIT 1');
-$dupStmt->execute(['uid' => $userId, 'pid' => $productId]);
-if ($dupStmt->fetch()) {
-    flash('error', '이미 이 상품에 리뷰를 작성하셨습니다.');
-    review_submit_redirect($productId, $returnTo);
-}
-
-// 리뷰 사진 업로드 처리 (최대 3장, jpg/png/webp, 장당 5MB 이하)
-$uploadedPhotoUrls = [];
-if (!empty($_FILES['photos']['tmp_name']) && is_array($_FILES['photos']['tmp_name'])) {
-    $allowedExt = ['jpg', 'jpeg', 'png', 'webp'];
-    $maxBytes   = 5 * 1024 * 1024;
-    $maxCount   = 3;
-    $count      = 0;
-
-    foreach ($_FILES['photos']['tmp_name'] as $idx => $tmpPath) {
-        if ($count >= $maxCount) break;
-        if (($_FILES['photos']['error'][$idx] ?? 1) !== UPLOAD_ERR_OK) continue;
-        if (($_FILES['photos']['size'][$idx] ?? 0) > $maxBytes) continue;
-
-        $origName = (string)($_FILES['photos']['name'][$idx] ?? '');
-        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-        if (!in_array($ext, $allowedExt, true)) continue;
-        if (@getimagesize($tmpPath) === false) continue;
-
-        $subDir  = 'uploads/reviews/' . date('Ym');
-        $destDir = __DIR__ . '/' . $subDir;
-        if (!is_dir($destDir)) {
-            mkdir($destDir, 0755, true);
-        }
-
-        $fileName = bin2hex(random_bytes(8)) . '.' . $ext;
-        if (move_uploaded_file($tmpPath, $destDir . '/' . $fileName)) {
-            $uploadedPhotoUrls[] = '/' . $subDir . '/' . $fileName;
-        }
-        $count++;
-    }
-}
-
 try {
+    $chkStmt = $pdo->prepare('SELECT id FROM tt_reviews WHERE id = :rid LIMIT 1');
+    $chkStmt->execute(['rid' => $reviewId]);
+    if (!$chkStmt->fetch()) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => '존재하지 않는 리뷰입니다.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     $pdo->beginTransaction();
 
-    $pdo->prepare('
-        INSERT INTO tt_reviews
-            (product_id, user_id, order_item_id, rating, content, option_tags,
-             vehicle_model, visit_type, extra_service, store_id, created_at)
-        VALUES
-            (:pid, :uid, :oid, :rating, :content, :option_tags,
-             :vehicle_model, :visit_type, :extra_service, :store_id, NOW())
-    ')->execute([
-        'pid'            => $productId,
-        'uid'            => $userId,
-        'oid'            => $orderItem['id'],
-        'rating'         => $rating,
-        'content'        => $content,
-        'option_tags'    => $optionTagsStr !== '' ? $optionTagsStr : null,
-        'vehicle_model'  => $vehicleModel,
-        'visit_type'     => $visitType,
-        'extra_service'  => $extraServiceStr !== '' ? $extraServiceStr : null,
-        'store_id'       => $storeId,
-    ]);
+    $existStmt = $pdo->prepare('SELECT id FROM tt_review_helpful WHERE review_id = :rid AND user_id = :uid LIMIT 1');
+    $existStmt->execute(['rid' => $reviewId, 'uid' => $userId]);
+    $existing = $existStmt->fetch(PDO::FETCH_ASSOC);
 
-    $reviewId = (int)$pdo->lastInsertId();
-
-    if (!empty($uploadedPhotoUrls)) {
-        $photoStmt = $pdo->prepare('INSERT INTO tt_review_photos (review_id, image_url, sort_order) VALUES (:rid, :url, :sort)');
-        foreach ($uploadedPhotoUrls as $i => $url) {
-            $photoStmt->execute(['rid' => $reviewId, 'url' => $url, 'sort' => $i]);
-        }
+    if ($existing) {
+        $pdo->prepare('DELETE FROM tt_review_helpful WHERE id = :id')->execute(['id' => $existing['id']]);
+        $pdo->prepare('UPDATE tt_reviews SET helpful_count = GREATEST(0, helpful_count - 1) WHERE id = :id')->execute(['id' => $reviewId]);
+        $helpfulNow = false;
+    } else {
+        $pdo->prepare('INSERT INTO tt_review_helpful (review_id, user_id) VALUES (:rid, :uid)')->execute(['rid' => $reviewId, 'uid' => $userId]);
+        $pdo->prepare('UPDATE tt_reviews SET helpful_count = helpful_count + 1 WHERE id = :id')->execute(['id' => $reviewId]);
+        $helpfulNow = true;
     }
 
-    $pdo->prepare('
-        UPDATE tt_products p
-        SET review_count = (SELECT COUNT(*) FROM tt_reviews WHERE product_id = p.id),
-            rating_avg   = (SELECT COALESCE(AVG(rating),0) FROM tt_reviews WHERE product_id = p.id)
-        WHERE p.id = :pid
-    ')->execute(['pid' => $productId]);
+    $countStmt = $pdo->prepare('SELECT helpful_count FROM tt_reviews WHERE id = :id');
+    $countStmt->execute(['id' => $reviewId]);
+    $newCount = (int)$countStmt->fetchColumn();
 
     $pdo->commit();
-    flash('success', '리뷰가 등록되었습니다.');
+
+    echo json_encode([
+        'success' => true,
+        'data' => [
+            'helpful'       => $helpfulNow,
+            'helpful_count' => $newCount,
+        ],
+    ], JSON_UNESCAPED_UNICODE);
 
 } catch (Throwable $e) {
-    $pdo->rollBack();
-    error_log('[review-submit] ' . $e->getMessage());
-    flash('error', '리뷰 등록 중 오류가 발생했습니다.');
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    error_log('[review-helpful] ' . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => '처리 중 오류가 발생했습니다.'], JSON_UNESCAPED_UNICODE);
 }
-
-review_submit_redirect($productId, $returnTo);

@@ -366,9 +366,6 @@ function ensure_user_extra_columns(PDO $pdo): void
     }
 }
 
-/* =====================================================================
-   [NEW] 홈 화면 "브랜드별 베스트셀러" 섹션 — 어드민에서 여러 개 생성 가능
-   ===================================================================== */
 function ensure_brand_best_sections_table(): void
 {
     static $checked = false;
@@ -397,14 +394,9 @@ function ensure_brand_best_sections_table(): void
     }
 }
 
-/**
- * 지정한 브랜드(또는 전체)의 "최근 N일 기준 베스트셀러"를 조회한다.
- * tt_products.sales_count는 전체 누적치라서 기간 필터링이 불가능하므로
- * tt_order_items + tt_orders(created_at, status)를 직접 집계한다.
- */
 function get_brand_best_products(PDO $pdo, ?int $brandId, int $periodDays, int $limit): array
 {
-    $limit      = max(1, min(5, $limit));       // 한 줄 최대 5개 강제
+    $limit      = max(1, min(5, $limit));
     $periodDays = max(1, $periodDays);
 
     $sql = "
@@ -434,11 +426,6 @@ function get_brand_best_products(PDO $pdo, ?int $brandId, int $periodDays, int $
     return $stmt->fetchAll();
 }
 
-/* =====================================================================
-   [NEW] 리뷰 작성 시 선택 가능한 서비스 유형 화이트리스트
-   - review-submit.php, product-detail.php 에서 공통으로 참조
-   - 현재 UI(리뷰 모달)에서는 사용하지 않지만, 하위호환을 위해 함수/컬럼은 유지한다.
-   ===================================================================== */
 function review_service_type_options(): array
 {
     return [
@@ -451,14 +438,7 @@ function review_service_type_options(): array
         'brake'        => '브레이크교체',
     ];
 }
-/* =====================================================================
-   [수정] 리뷰 작성 모달에서 선택 가능한 "이런 점이 좋았어요" 태그 목록
-   - [기존] 하드코딩 배열로 반환하던 방식 → [변경] tt_review_option_tags 테이블 조회로 전환
-   - 이렇게 바꾸는 이유: 어드민(admin/reviews.php)에서 코드 수정 없이 태그를
-     추가/삭제/숨김 처리할 수 있어야 하기 때문. review-submit.php 는 이 목록을
-     화이트리스트로 사용해 제출된 태그를 검증하므로, 여기서 비활성 처리된 태그는
-     더 이상 새 리뷰에 선택될 수 없다.
-   ===================================================================== */
+
 function review_option_tag_options(): array
 {
     ensure_review_extra_columns();
@@ -476,10 +456,6 @@ function review_option_tag_options(): array
     return $cache;
 }
 
-/**
- * [NEW] 어드민 관리 화면(admin/reviews.php)용 — id / label / is_active / sort_order
- * 를 모두 포함한 전체 목록(비활성 태그도 포함)을 조회한다.
- */
 function review_option_tag_options_admin(): array
 {
     ensure_review_extra_columns();
@@ -493,10 +469,6 @@ function review_option_tag_options_admin(): array
     }
 }
 
-/**
- * [NEW] tt_reviews.option_tags 에 저장된 콤마 구분 문자열("a,b,c")을
- * product-detail.php / review.php / admin/reviews.php 에서 안전하게 배열로 변환할 때 사용.
- */
 function review_parse_option_tags(?string $csv): array
 {
     if ($csv === null || $csv === '') return [];
@@ -504,11 +476,102 @@ function review_parse_option_tags(?string $csv): array
 }
 
 /* =====================================================================
-   [기존 + 수정] tt_reviews 에 service_type / option_tags 컬럼 추가,
-   리뷰 사진 저장용 tt_review_photos 테이블 생성.
-   [추가] 리뷰 태그를 어드민에서 관리할 수 있는 tt_review_option_tags 테이블을
-   신규 생성하고, 데이터가 하나도 없을 때만 기본 5개 문구를 자동 시딩한다.
+   [NEW] 방문형태(매장방문/택배수령) 화이트리스트
    ===================================================================== */
+function review_visit_type_options(): array
+{
+    return [
+        'store'    => '매장방문',
+        'delivery' => '택배수령',
+    ];
+}
+
+/* =====================================================================
+   [NEW] 리뷰 작성 모달의 "추가로 진행한 서비스" 체크박스 목록
+   - tt_review_option_tags 와 완전히 동일한 패턴 (어드민에서 관리, 화이트리스트 검증용)
+   ===================================================================== */
+function review_extra_service_options(): array
+{
+    ensure_review_extra_columns();
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    try {
+        $rows = Database::connection()->query(
+            "SELECT label FROM tt_review_extra_services WHERE is_active = 1 ORDER BY sort_order ASC, id ASC"
+        )->fetchAll(PDO::FETCH_COLUMN);
+        $cache = $rows ?: [];
+    } catch (Throwable $e) {
+        error_log('[review_extra_service_options] ' . $e->getMessage());
+        $cache = [];
+    }
+    return $cache;
+}
+
+function review_extra_service_options_admin(): array
+{
+    ensure_review_extra_columns();
+    try {
+        return Database::connection()->query(
+            "SELECT id, label, is_active, sort_order FROM tt_review_extra_services ORDER BY sort_order ASC, id ASC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        error_log('[review_extra_service_options_admin] ' . $e->getMessage());
+        return [];
+    }
+}
+
+function review_parse_extra_service(?string $csv): array
+{
+    return review_parse_option_tags($csv);
+}
+
+/* =====================================================================
+   [NEW] 매장 정보 — 리뷰 작성 시 "방문 매장" 선택용, 카드 노출용
+   ===================================================================== */
+function store_active_options(): array
+{
+    ensure_review_extra_columns();
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    try {
+        $cache = Database::connection()->query(
+            "SELECT id, name, address FROM tt_stores WHERE is_active = 1 ORDER BY sort_order ASC, id ASC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        error_log('[store_active_options] ' . $e->getMessage());
+        $cache = [];
+    }
+    return $cache;
+}
+
+function get_store_by_id(int $storeId): ?array
+{
+    if ($storeId <= 0) return null;
+    try {
+        $stmt = Database::connection()->prepare("SELECT id, name, address FROM tt_stores WHERE id = :id LIMIT 1");
+        $stmt->execute(['id' => $storeId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    } catch (Throwable $e) {
+        error_log('[get_store_by_id] ' . $e->getMessage());
+        return null;
+    }
+}
+
+/* =====================================================================
+   [NEW] "도움이 돼요" HOT 뱃지 판정 기준
+   - 지금은 helpful_count >= 5 로 단순 고정. 운영하며 임계값 조정이 필요하면
+     이 상수만 바꾸면 전체 화면(product-detail.php / review.php 등)에 일괄 반영된다.
+   ===================================================================== */
+if (!defined('REVIEW_HOT_HELPFUL_THRESHOLD')) {
+    define('REVIEW_HOT_HELPFUL_THRESHOLD', 5);
+}
+
+function is_review_hot(int $helpfulCount): bool
+{
+    return $helpfulCount >= REVIEW_HOT_HELPFUL_THRESHOLD;
+}
+
 function ensure_review_extra_columns(): void
 {
     static $done = false;
@@ -543,7 +606,6 @@ function ensure_review_extra_columns(): void
         error_log('[ensure_review_extra_columns:photos] ' . $e->getMessage());
     }
 
-    /* [NEW] 리뷰 작성 모달의 "이런 점이 좋았어요" 태그 관리 테이블 */
     try {
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS tt_review_option_tags (
@@ -568,13 +630,92 @@ function ensure_review_extra_columns(): void
     } catch (Throwable $e) {
         error_log('[ensure_review_extra_columns:tags] ' . $e->getMessage());
     }
+
+    /* [NEW] 차량모델 / 방문형태 / 추가서비스 / 매장 / 도움돼요 카운트 컬럼 */
+    try {
+        $reviewCols = $pdo->query("SHOW COLUMNS FROM tt_reviews")->fetchAll(PDO::FETCH_COLUMN);
+        $reviewCardCols = [
+            'vehicle_model' => "ALTER TABLE tt_reviews ADD COLUMN vehicle_model VARCHAR(60) NULL COMMENT '차량 모델' AFTER option_tags",
+            'visit_type'    => "ALTER TABLE tt_reviews ADD COLUMN visit_type ENUM('store','delivery') NOT NULL DEFAULT 'store' COMMENT '매장방문/택배수령' AFTER vehicle_model",
+            'extra_service' => "ALTER TABLE tt_reviews ADD COLUMN extra_service VARCHAR(255) NULL COMMENT '추가서비스(콤마구분)' AFTER visit_type",
+            'store_id'      => "ALTER TABLE tt_reviews ADD COLUMN store_id INT NULL COMMENT '방문 매장 ID' AFTER extra_service",
+            'helpful_count' => "ALTER TABLE tt_reviews ADD COLUMN helpful_count INT NOT NULL DEFAULT 0 COMMENT '도움돼요 누적수' AFTER store_id",
+        ];
+        foreach ($reviewCardCols as $col => $sql) {
+            if (!in_array($col, $reviewCols, true)) {
+                $pdo->exec($sql);
+                error_log("[ensure_review_extra_columns:card] 누락된 컬럼 '{$col}' 을 추가했습니다.");
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('[ensure_review_extra_columns:card] ' . $e->getMessage());
+    }
+
+    /* [NEW] 매장 테이블 — 기본 매장 1개 시딩 */
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_stores (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                address VARCHAR(255) NOT NULL,
+                phone VARCHAR(20) NULL,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $storeCnt = (int)$pdo->query("SELECT COUNT(*) FROM tt_stores")->fetchColumn();
+        if ($storeCnt === 0) {
+            $pdo->prepare("INSERT INTO tt_stores (name, address, is_active, sort_order) VALUES (:n, :a, 1, 0)")
+                ->execute(['n' => '타이어&피트(두꺼비카서비스)', 'a' => '서울특별시 서대문구 연희동']);
+            error_log('[ensure_review_extra_columns:stores] 기본 매장 1개를 시딩했습니다.');
+        }
+    } catch (Throwable $e) {
+        error_log('[ensure_review_extra_columns:stores] ' . $e->getMessage());
+    }
+
+    /* [NEW] "도움이 돼요" 중복 방지 매핑 테이블 (사용자당 리뷰당 1표) */
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_review_helpful (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                review_id INT NOT NULL,
+                user_id INT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_review_user (review_id, user_id),
+                INDEX idx_rh_review (review_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+    } catch (Throwable $e) {
+        error_log('[ensure_review_extra_columns:helpful] ' . $e->getMessage());
+    }
+
+    /* [NEW] 추가서비스 체크박스 관리 테이블 — 기본 4개 시딩 */
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_review_extra_services (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                label VARCHAR(40) NOT NULL,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_extra_service_label (label)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $esCnt = (int)$pdo->query("SELECT COUNT(*) FROM tt_review_extra_services")->fetchColumn();
+        if ($esCnt === 0) {
+            $defaultServices = ['휠 얼라인먼트 추가', '질소가스 충전', '밸브 교체', '폐타이어 처리'];
+            $ins = $pdo->prepare("INSERT INTO tt_review_extra_services (label, is_active, sort_order) VALUES (:label, 1, :sort)");
+            foreach ($defaultServices as $i => $label) {
+                $ins->execute(['label' => $label, 'sort' => $i]);
+            }
+            error_log('[ensure_review_extra_columns:extra_services] 기본 추가서비스 4개를 시딩했습니다.');
+        }
+    } catch (Throwable $e) {
+        error_log('[ensure_review_extra_columns:extra_services] ' . $e->getMessage());
+    }
 }
 
-/* =====================================================================
-   [기존] 홈 화면 "베스트 리뷰" 섹션에서 사용하는 최근 우수 리뷰 조회
-   index.php 가 호출하지만 파일에 정의가 없어서 500 에러(Fatal error:
-   Call to undefined function get_home_best_reviews())를 유발하던 함수.
-   ===================================================================== */
 function get_home_best_reviews(PDO $pdo, int $limit = 10): array
 {
     $limit = max(1, min(30, $limit));
