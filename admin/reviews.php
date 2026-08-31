@@ -42,7 +42,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'delete_review') {
     redirect('/admin/reviews.php');
 }
 
-/* [NEW] 리뷰 태그(옵션) 관리 — 추가 / 활성화 토글 / 삭제 / 순서변경 */
+/* 리뷰 태그(옵션) 관리 — 추가 / 활성화 토글 / 삭제 */
 if (is_post() && ($_POST['form_type'] ?? '') === 'add_review_tag') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
         flash('admin_error', '잘못된 요청입니다.');

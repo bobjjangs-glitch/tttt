@@ -441,9 +441,16 @@ function get_brand_best_products(PDO $pdo, ?int $brandId, int $periodDays, int $
    ===================================================================== */
 function review_service_type_options(): array
 {
-    return ['타이어교체', '매장방문', '출장교체', '발렛', '자동세차', '엔진오일교체', '배터리교체'];
+    return [
+        'tire'         => '타이어교체',
+        'alignment'    => '휠얼라인먼트',
+        'maintenance'  => '차량정비',
+        'battery'      => '배터리',
+        'engine_oil'   => '엔진오일교체',
+        'washer_fluid' => '워셔액교체',
+        'brake'        => '브레이크교체',
+    ];
 }
-
 /* =====================================================================
    [수정] 리뷰 작성 모달에서 선택 가능한 "이런 점이 좋았어요" 태그 목록
    - [기존] 하드코딩 배열로 반환하던 방식 → [변경] tt_review_option_tags 테이블 조회로 전환
