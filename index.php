@@ -258,6 +258,9 @@ require __DIR__ . '/includes/header.php';
 <!-- ===== [NEW] 메인화면 맨 하단 "실구매자 리뷰" 섹션 (타이어픽 스타일 참고, 기존 tt_reviews 그대로 사용) ===== -->
 <?php if (!empty($homeReviews)): ?>
 <section class="home-review-section" aria-label="실구매자 리뷰">
+<!-- ===== [NEW] 메인화면 맨 하단 "실구매자 리뷰" 섹션 (review-list.php 카드 디자인과 통일 + 클릭 시 상세 이동) ===== -->
+<?php if (!empty($homeReviews)): ?>
+<section class="home-review-section" aria-label="실구매자 리뷰">
   <div class="sec-inner">
     <div class="home-review-head">
       <p class="home-review-kicker">고객 후기</p>
@@ -267,7 +270,8 @@ require __DIR__ . '/includes/header.php';
 
     <div class="home-review-scroll" id="homeReviewScroll">
       <?php foreach ($homeReviews as $rv): ?>
-        <div class="home-review-card">
+        <a class="home-review-card"
+           href="<?= BASE_URL ?>/product-detail.php?id=<?= (int)$rv['product_id'] ?>&open_review=<?= (int)$rv['id'] ?>#review-<?= (int)$rv['id'] ?>">
           <div class="home-review-card-top">
             <div class="home-review-thumb">
               <?php if (!empty($rv['thumbnail_url'])): ?>
@@ -288,18 +292,39 @@ require __DIR__ . '/includes/header.php';
             <?= str_repeat('★', (int)$rv['rating']) . str_repeat('☆', 5 - (int)$rv['rating']) ?>
           </div>
 
+          <?php if ($rv['service_label'] !== '' || !empty($rv['option_tag_list'])): ?>
+            <div class="home-review-badges">
+              <?php if ($rv['service_label'] !== ''): ?>
+                <span class="home-review-badge service"><?= h($rv['service_label']) ?></span>
+              <?php endif; ?>
+              <?php foreach (array_slice($rv['option_tag_list'], 0, 2) as $tag): ?>
+                <span class="home-review-badge option"><?= h($tag) ?></span>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+
           <p class="home-review-content"><?= h(mb_strimwidth($rv['content'], 0, 80, '…')) ?></p>
+
+          <?php if (!empty($rv['photos'])): ?>
+            <div class="home-review-photos">
+              <?php foreach ($rv['photos'] as $purl): ?>
+                <img src="<?= h($purl) ?>" alt="후기 사진" loading="lazy">
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
 
           <div class="home-review-meta">
             <span class="home-review-user"><?= h($rv['user_name_masked']) ?></span>
             <span class="home-review-dot">·</span>
             <span class="home-review-date"><?= h(date('Y.m.d', strtotime($rv['created_at']))) ?></span>
           </div>
-        </div>
+        </a>
       <?php endforeach; ?>
     </div>
   </div>
 </section>
+<?php endif; ?>
+
 <?php endif; ?>
 
 <script>
@@ -352,13 +377,14 @@ require __DIR__ . '/includes/header.php';
 })();
 
 (function(){
-  // [NEW] 하단 리뷰 카드 가로 드래그 스크롤
+  // [NEW] 하단 리뷰 카드 가로 드래그 스크롤 (카드가 <a> 태그이므로 드래그 후 클릭 이동 방지 로직 포함)
   const scroller = document.getElementById('homeReviewScroll');
   if (!scroller) return;
-  let isDown = false, startX = 0, scrollLeft = 0;
+  let isDown = false, startX = 0, scrollLeft = 0, dragged = false;
 
   scroller.addEventListener('mousedown', (e) => {
     isDown = true;
+    dragged = false;
     scroller.classList.add('dragging');
     startX = e.pageX - scroller.offsetLeft;
     scrollLeft = scroller.scrollLeft;
@@ -373,9 +399,19 @@ require __DIR__ . '/includes/header.php';
     if (!isDown) return;
     e.preventDefault();
     const x = e.pageX - scroller.offsetLeft;
-    scroller.scrollLeft = scrollLeft - (x - startX) * 1.2;
+    const delta = x - startX;
+    if (Math.abs(delta) > 6) dragged = true;
+    scroller.scrollLeft = scrollLeft - delta * 1.2;
   });
+  // 드래그였다면 카드 클릭(페이지 이동)을 취소한다
+  scroller.addEventListener('click', (e) => {
+    if (dragged) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
 })();
+
 </script>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>

@@ -697,7 +697,8 @@ require __DIR__ . '/includes/header.php';
                 $rvExtras = review_parse_extra_service($rv['extra_service'] ?? null);
                 $isHot    = is_review_hot((int)$rv['helpful_count']);
             ?>
-                <div class="pd-review-item">
+              <div class="pd-review-item" id="review-<?= (int)$rv['id'] ?>">
+
                     <div class="pd-review-item-top">
                         <div class="pd-review-meta">
                             <span class="pd-review-stars"><?= str_repeat('★', (int)$rv['rating']) . str_repeat('☆', 5 - (int)$rv['rating']) ?></span>
@@ -1040,6 +1041,23 @@ const tabBtns   = document.querySelectorAll('.pd-tab-btn');
 const tabPanels = document.querySelectorAll('.pd-tab-panel');
 function activateTab(tabName) {
   tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+  /* ===== [NEW] 홈 화면 리뷰카드 클릭 시 해당 리뷰로 바로 이동 + 하이라이트 ===== */
+(function () {
+  const params = new URLSearchParams(window.location.search);
+  const openReviewId = params.get('open_review');
+  if (!openReviewId) return;
+
+  activateTab('review');
+
+  setTimeout(() => {
+    const target = document.getElementById('review-' + openReviewId);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('pd-review-highlight');
+    setTimeout(() => target.classList.remove('pd-review-highlight'), 2200);
+  }, 120);
+})();
+
   tabPanels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
 }
 tabBtns.forEach(btn => {

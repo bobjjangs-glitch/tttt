@@ -488,7 +488,6 @@ function review_visit_type_options(): array
 
 /* =====================================================================
    [NEW] 리뷰 작성 모달의 "추가로 진행한 서비스" 체크박스 목록
-   - tt_review_option_tags 와 완전히 동일한 패턴 (어드민에서 관리, 화이트리스트 검증용)
    ===================================================================== */
 function review_extra_service_options(): array
 {
@@ -560,8 +559,6 @@ function get_store_by_id(int $storeId): ?array
 
 /* =====================================================================
    [NEW] "도움이 돼요" HOT 뱃지 판정 기준
-   - 지금은 helpful_count >= 5 로 단순 고정. 운영하며 임계값 조정이 필요하면
-     이 상수만 바꾸면 전체 화면(product-detail.php / review.php 등)에 일괄 반영된다.
    ===================================================================== */
 if (!defined('REVIEW_HOT_HELPFUL_THRESHOLD')) {
     define('REVIEW_HOT_HELPFUL_THRESHOLD', 5);
@@ -579,6 +576,25 @@ function ensure_review_extra_columns(): void
     $done = true;
 
     $pdo = Database::connection();
+
+    /* ===============================================================
+       [FIX] order_item_id 컬럼 누락 수정
+       - review-submit.php의 INSERT 문에서 order_item_id 컬럼을 사용하는데
+         실제 tt_reviews 테이블에는 이 컬럼이 없어서
+         "SQLSTATE 42S22: Unknown column 'order_item_id'" 에러가 발생했음.
+       - 구매확정된 주문상품(order_item_id)을 근거로 리뷰를 작성했다는
+         증거 컬럼이므로 필수. NULL 허용으로 추가하고 조회 성능을 위해
+         인덱스도 함께 건다.
+       =============================================================== */
+    try {
+        if (!$pdo->query("SHOW COLUMNS FROM tt_reviews LIKE 'order_item_id'")->fetch()) {
+            $pdo->exec("ALTER TABLE tt_reviews ADD COLUMN order_item_id INT NULL COMMENT '리뷰 작성 근거 주문상품 ID' AFTER user_id");
+            error_log("[ensure_review_extra_columns:order_item_id] 누락된 컬럼 'order_item_id' 을 추가했습니다.");
+        }
+        try { $pdo->exec("ALTER TABLE tt_reviews ADD INDEX idx_order_item (order_item_id)"); } catch (Throwable $e) {}
+    } catch (Throwable $e) {
+        error_log('[ensure_review_extra_columns:order_item_id] ' . $e->getMessage());
+    }
 
     try {
         if (!$pdo->query("SHOW COLUMNS FROM tt_reviews LIKE 'service_type'")->fetch()) {
@@ -715,7 +731,6 @@ function ensure_review_extra_columns(): void
         error_log('[ensure_review_extra_columns:extra_services] ' . $e->getMessage());
     }
 }
-
 function get_home_best_reviews(PDO $pdo, int $limit = 10): array
 {
     $limit = max(1, min(30, $limit));
@@ -724,8 +739,9 @@ function get_home_best_reviews(PDO $pdo, int $limit = 10): array
         $stmt = $pdo->prepare("
             SELECT
                 r.id, r.rating, r.content, r.created_at,
+                r.service_type, r.option_tags,
                 u.name AS user_name,
-                p.name AS product_name, p.thumbnail_url,
+                p.id AS product_id, p.name AS product_name, p.thumbnail_url,
                 b.name AS brand_name
             FROM tt_reviews r
             JOIN tt_users u ON u.id = r.user_id
@@ -741,11 +757,38 @@ function get_home_best_reviews(PDO $pdo, int $limit = 10): array
         $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+        if (!$rows) return [];
+
+        /* [NEW] 홈 화면 리뷰카드에도 review-list.php와 동일하게 사진을 최대 3장씩 매핑 */
+        $ids = array_column($rows, 'id');
+        $photosByReview = [];
+        if ($ids) {
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            $photoStmt = $pdo->prepare("SELECT review_id, image_url FROM tt_review_photos WHERE review_id IN ($ph) ORDER BY sort_order ASC");
+            $photoStmt->execute($ids);
+            foreach ($photoStmt->fetchAll(PDO::FETCH_ASSOC) as $prow) {
+                $photosByReview[$prow['review_id']][] = $prow['image_url'];
+            }
+        }
+
+        $serviceOptions = review_service_type_options();
+
         foreach ($rows as &$row) {
             $name = (string)($row['user_name'] ?? '');
             $row['user_name_masked'] = $name !== ''
                 ? mb_substr($name, 0, 1) . str_repeat('*', max(0, mb_strlen($name) - 1))
                 : '익명';
+
+            $row['photos'] = array_slice($photosByReview[$row['id']] ?? [], 0, 3);
+
+            $row['service_label'] = (!empty($row['service_type']) && isset($serviceOptions[$row['service_type']]))
+                ? $serviceOptions[$row['service_type']]
+                : '';
+
+            /* review_parse_option_tags()는 product-detail.php에서 쓰는 방식과 동일하게
+               CSV로 저장된 태그 라벨을 그대로 배열로 반환 (review-list.php의 룩업 방식과
+               달리 실제로 동작이 보장되는 방식입니다) */
+            $row['option_tag_list'] = review_parse_option_tags($row['option_tags'] ?? null);
         }
         unset($row);
 
