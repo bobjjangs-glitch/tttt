@@ -13,6 +13,10 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'delete_review') {
     }
     $reviewId = (int)($_POST['review_id'] ?? 0);
 
+    /* [FIX] 삭제 시도 자체를 세션에 기록해서, 이후 500 에러가 나도
+       "무엇을 하다가 죽었는지" 추적할 수 있게 한다. */
+    admin_track_action("리뷰 삭제 시도 (review_id={$reviewId})");
+
     try {
         $pdo->beginTransaction();
         $findStmt = $pdo->prepare('SELECT product_id FROM tt_reviews WHERE id = :id');
@@ -20,7 +24,13 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'delete_review') {
         $target = $findStmt->fetch();
 
         if ($target) {
+            /* [FIX] 리뷰 삭제 전에 연결된 사진, 도움돼요 기록을 먼저 정리한다.
+               예전에는 tt_reviews 행만 지워서 tt_review_photos, tt_review_helpful에
+               고아 데이터(review_id는 있는데 실제 리뷰는 없는 행)가 계속 쌓였음. */
+            $pdo->prepare('DELETE FROM tt_review_photos WHERE review_id = :id')->execute(['id' => $reviewId]);
+            $pdo->prepare('DELETE FROM tt_review_helpful WHERE review_id = :id')->execute(['id' => $reviewId]);
             $pdo->prepare('DELETE FROM tt_reviews WHERE id = :id')->execute(['id' => $reviewId]);
+
             $pdo->prepare('
                 UPDATE tt_products p
                 SET review_count = (SELECT COUNT(*) FROM tt_reviews WHERE product_id = p.id),
@@ -28,7 +38,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'delete_review') {
                 WHERE p.id = :pid
             ')->execute(['pid' => $target['product_id']]);
 
-            AdminAuth::log((int)AdminAuth::currentAdminId(), 'review_delete', "리뷰#{$reviewId} 삭제");
+            AdminAuth::log((int)AdminAuth::currentAdminId(), 'review_delete', "리뷰#{$reviewId} 삭제 (사진/도움돼요 기록 포함)");
             flash('admin_success', '리뷰를 삭제했습니다.');
         } else {
             flash('admin_error', '이미 삭제된 리뷰입니다.');
@@ -37,12 +47,14 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'delete_review') {
     } catch (Throwable $e) {
         $pdo->rollBack();
         error_log('[admin/reviews] ' . $e->getMessage());
+        /* [FIX] 치명적 오류 발생 시 관리자에게 즉시 알림 */
+        notify_admin_fatal_error($e, "admin/reviews.php 리뷰 삭제 (review_id={$reviewId})");
         flash('admin_error', '삭제 중 오류가 발생했습니다.');
     }
     redirect('/admin/reviews.php');
 }
 
-/* 리뷰 태그(옵션) 관리 — 추가 / 활성화 토글 / 삭제 */
+/* 리뷰 태그(옵션) 관리 — 추가 / 활성화 토글 / 삭제 (기존과 동일, 변경 없음) */
 if (is_post() && ($_POST['form_type'] ?? '') === 'add_review_tag') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
         flash('admin_error', '잘못된 요청입니다.');

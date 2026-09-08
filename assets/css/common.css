@@ -1054,3 +1054,19 @@ button{cursor:pointer;font-family:inherit}
   .home-review-card{width:230px;}
   .home-review-title{font-size:20px;}
 }
+/* ===== [NEW] 홈 리뷰카드 — <a> 태그화 + 뱃지/사진 (review-list.php와 톤 통일) ===== */
+.home-review-card{display:block;color:inherit;text-decoration:none;cursor:pointer;transition:transform .15s,box-shadow .15s;}
+.home-review-card:hover{transform:translateY(-3px);box-shadow:0 8px 20px rgba(15,23,42,.10);}
+.home-review-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+.home-review-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}
+.home-review-badge.service{background:#eef2ff;color:#4338ca;}
+.home-review-badge.option{background:#f0fdf4;color:#15803d;}
+.home-review-photos{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;}
+.home-review-photos img{width:56px;height:56px;object-fit:cover;border-radius:8px;}
+
+/* ===== [NEW] product-detail.php 리뷰 직접 이동 시 강조 효과 ===== */
+.pd-review-item.pd-review-highlight{
+  background:#f5f5ff;border-radius:14px;
+  box-shadow:0 0 0 2px #6366f1 inset;
+  transition:background .3s ease;
+}
