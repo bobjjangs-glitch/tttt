@@ -19,12 +19,8 @@ if (!defined('REVIEW_WRITE_WINDOW_DAYS')) {
     define('REVIEW_WRITE_WINDOW_DAYS', 7);
 }
 
-/* [NEW-COUPON] 쿠폰 테이블/컬럼 자동 생성 보장 (core/functions.php 에 정의됨) */
 ensure_coupon_tables();
 
-/* =====================================================================
-   [FIX-3] 비밀번호 변경 시도 쓰로틀링 (세션 기반, DB 스키마 변경 없음)
-   ===================================================================== */
 function pwchange_check_locked(): ?string
 {
     $info = $_SESSION['_pw_change_fail'] ?? ['count' => 0, 'locked_until' => 0];
@@ -49,9 +45,6 @@ function pwchange_reset_fail(): void
     unset($_SESSION['_pw_change_fail']);
 }
 
-/**
- * 주문 한 건에 대해 "구매확정" 버튼 또는 리뷰 작성 가능 D-day 배지를 HTML로 반환한다.
- */
 function render_order_confirm_cell(array $o): string
 {
     $status      = $o['status'] ?? '';
@@ -187,7 +180,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'wish_remove') {
     redirect('/mypage.php#wish');
 }
 
-// ---------- 구매확정 처리 (기존 그대로: 확정 후 상품 상세페이지로 이동해 모달 자동 오픈) ----------
+// ---------- 구매확정 처리 ----------
 if (is_post() && ($_POST['form_type'] ?? '') === 'confirm_order') {
     if (!Csrf::verify($_POST['csrf_token'] ?? null)) {
         flash('error', '유효하지 않은 요청입니다.');
@@ -243,7 +236,6 @@ if (!$user) {
     redirect('/login.php');
 }
 
-/* [FIX-4] 주문내역 페이지네이션 (10건씩) */
 $perPage = 10;
 $page = max(1, (int)($_GET['page'] ?? 1));
 
@@ -258,7 +250,6 @@ $orderStmt = $pdo->prepare("SELECT * FROM tt_orders WHERE user_id = :uid ORDER B
 $orderStmt->execute(['uid' => $uid]);
 $orders = $orderStmt->fetchAll();
 
-/* [FIX-5] 더블쿼트로 SQL을 감싸서 내부 홑따옴표(status='active')로 인한 파싱 에러 재발을 방지 */
 $wishStmt = $pdo->prepare("
     SELECT w.id AS wish_id, p.id AS product_id, p.name, p.model, p.thumbnail_url,
            p.price_sale, p.price_original, p.rating_avg, p.review_count,
@@ -272,7 +263,6 @@ $wishStmt = $pdo->prepare("
 $wishStmt->execute(['uid' => $uid]);
 $wishlist = $wishStmt->fetchAll();
 
-/* ===== [NEW] 마이페이지 안에서 바로 리뷰를 쓸 수 있는 대상: 구매확정 후 7일 이내 & 미작성 상품 ===== */
 $reviewableStmt = $pdo->prepare("
     SELECT oi.product_id, MAX(o.confirmed_at) AS confirmed_at,
            p.name AS product_name, p.thumbnail_url
@@ -303,7 +293,6 @@ foreach ($reviewableRows as $row) {
     }
 }
 
-/* ===== [NEW] 내가 작성한 리뷰 목록 (삭제 버튼 노출용) ===== */
 $myReviewsStmt = $pdo->prepare("
     SELECT r.id, r.product_id, r.rating, r.content, r.created_at,
            p.name AS product_name, p.thumbnail_url
@@ -315,11 +304,6 @@ $myReviewsStmt = $pdo->prepare("
 $myReviewsStmt->execute(['uid' => $uid]);
 $myReviews = $myReviewsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-/* =====================================================================
-   [NEW-COUPON] 마이페이지 쿠폰함 데이터 조회
-   - 미사용 쿠폰 중 유효기간이 지난 것은 조회 시점에 즉시 expired로 갱신한다.
-   - 정렬: 사용가능 쿠폰을 맨 위로, 그 안에서는 최근 발급순.
-   ===================================================================== */
 $couponStmt = $pdo->prepare("
     SELECT uc.id AS user_coupon_id, uc.status, uc.issued_at, uc.used_at,
            c.name, c.description, c.image_url, c.discount_type, c.discount_value,
@@ -384,7 +368,6 @@ require __DIR__ . '/includes/header.php';
 .badge-confirmed.expired { background: #f1f5f9; color: #94a3b8; }
 .badge-muted { color: #cbd5e1; font-size: 12px; }
 
-/* ===== [NEW] 구매 후기 작성 카드 ===== */
 .review-write-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
 .review-write-card {
   border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px;
@@ -405,7 +388,6 @@ require __DIR__ . '/includes/header.php';
 }
 .btn-review-write:hover { transform: translateY(-1px); }
 
-/* ===== [NEW] 내가 쓴 리뷰 ===== */
 .my-review-list { display: flex; flex-direction: column; gap: 14px; }
 .my-review-item {
   display: grid; grid-template-columns: 72px 1fr auto; gap: 14px; align-items: start;
@@ -424,7 +406,6 @@ require __DIR__ . '/includes/header.php';
 }
 .btn-review-delete:hover { background: #fee2e2; }
 
-/* ===== [NEW-COUPON] 마이페이지 쿠폰함 ===== */
 .coupon-box-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
 .my-coupon-card{
   display:flex; background:#fff; border:1px solid #e2e8f0; border-radius:14px;
@@ -452,30 +433,35 @@ require __DIR__ . '/includes/header.php';
 }
 .status-used .mc-status-badge, .status-expired .mc-status-badge{background:#f1f5f9;color:#94a3b8}
 
-/* ===== [NEW] 리뷰 작성 모달 (마이페이지 전용, product-detail.php와 동일 스타일) ===== */
+/* [FIX-1] z-index를 헤더보다 확실히 높게, 모달을 header/scroll/actions 3단 구조로 분리 → 버튼 잘림 방지 */
 .review-modal-overlay {
   position: fixed; inset: 0;
   background: rgba(15, 23, 42, .55);
   display: flex; align-items: center; justify-content: center;
   opacity: 0; visibility: hidden;
   transition: opacity .2s ease;
-  z-index: 999;
+  z-index: 20000;
 }
 .review-modal-overlay.active { opacity: 1; visibility: visible; }
 .review-modal-box {
-  background: #fff; border-radius: 20px; padding: 32px;
+  background: #fff; border-radius: 20px; padding: 0;
   width: 92%; max-width: 440px; position: relative;
   transform: translateY(16px) scale(.97);
   transition: transform .2s ease;
   box-shadow: 0 24px 60px rgba(0,0,0,.25);
+  max-height: min(88vh, 88dvh);
+  display: flex; flex-direction: column; overflow: hidden;
 }
 .review-modal-overlay.active .review-modal-box { transform: translateY(0) scale(1); }
 .review-modal-close {
   position: absolute; top: 16px; right: 16px;
   background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer;
+  z-index: 2;
 }
+.review-modal-head { flex-shrink: 0; padding: 32px 32px 0; }
 .review-modal-title { font-size: 19px; font-weight: 800; margin-bottom: 4px; }
 .review-modal-sub { font-size: 13px; color: #64748b; margin-bottom: 18px; }
+.review-modal-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 32px; }
 .star-rating { display: flex; flex-direction: row-reverse; gap: 4px; margin-bottom: 16px; }
 .star-rating input { display: none; }
 .star-rating label { font-size: 30px; color: #e2e8f0; cursor: pointer; transition: color .12s, transform .12s; }
@@ -486,7 +472,14 @@ require __DIR__ . '/includes/header.php';
   width: 100%; border: 1px solid #e2e8f0; border-radius: 12px;
   padding: 12px 14px; font-size: 14px; resize: vertical; margin-bottom: 18px; box-sizing: border-box;
 }
-.review-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+/* [FIX-1] 등록/취소 버튼을 하단에 고정 — 폼 내용이 길어져도 항상 화면에 보이게 함 */
+.review-modal-actions {
+  flex-shrink: 0;
+  display: flex; gap: 10px; justify-content: flex-end;
+  padding: 16px 32px 28px;
+  background: #fff;
+  border-top: 1px solid #f1f5f9;
+}
 .btn-modal-cancel {
   background: #f1f5f9; color: #475569; border: none;
   padding: 10px 20px; border-radius: 999px; font-weight: 600; cursor: pointer;
@@ -498,6 +491,15 @@ require __DIR__ . '/includes/header.php';
   transition: transform .12s ease;
 }
 .btn-modal-submit:hover { transform: translateY(-1px); }
+.btn-modal-submit:disabled { opacity: .6; cursor: not-allowed; }
+body.tt-modal-lock { overflow: hidden; }
+
+/* [FIX-3] 성공 플래시 강조 애니메이션 */
+.error-msg.pulse { animation: mpFlashPulse 1.4s ease 2; }
+@keyframes mpFlashPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(21,128,61,0); }
+  50% { box-shadow: 0 0 0 6px rgba(21,128,61,.15); }
+}
 </style>
 
 <div class="mypage-wrap">
@@ -521,7 +523,7 @@ require __DIR__ . '/includes/header.php';
   <div class="mypage-main">
 
     <?php if ($successMsg): ?>
-      <p class="error-msg" style="background:#f0fdf4;color:#15803d"><?= h($successMsg) ?></p>
+      <p class="error-msg" id="mpSuccessMsg" style="background:#f0fdf4;color:#15803d"><?= h($successMsg) ?></p>
     <?php endif; ?>
     <?php if ($errorMsg): ?>
       <p class="error-msg"><?= h($errorMsg) ?></p>
@@ -575,7 +577,7 @@ require __DIR__ . '/includes/header.php';
       <?php endif; ?>
     </section>
 
-    <!-- [NEW] 구매 후기 작성 -->
+    <!-- 구매 후기 작성 -->
     <section class="mypage-section" id="write-review">
       <h2>구매 후기 작성</h2>
       <?php if ($reviewableProducts): ?>
@@ -606,7 +608,7 @@ require __DIR__ . '/includes/header.php';
       <?php endif; ?>
     </section>
 
-    <!-- [NEW] 내가 쓴 리뷰 -->
+    <!-- 내가 쓴 리뷰 -->
     <section class="mypage-section" id="myreviews">
       <h2>내가 쓴 리뷰</h2>
       <?php if ($myReviews): ?>
@@ -641,7 +643,7 @@ require __DIR__ . '/includes/header.php';
       <?php endif; ?>
     </section>
 
-    <!-- [NEW-COUPON] 쿠폰함 -->
+    <!-- 쿠폰함 -->
     <section class="mypage-section" id="coupons">
       <h2>쿠폰함</h2>
       <?php if ($myCoupons): ?>
@@ -759,13 +761,18 @@ require __DIR__ . '/includes/header.php';
           <label>상세주소</label>
           <input type="text" name="address2" value="<?= h($user['address2'] ?? '') ?>" placeholder="상세 주소">
         </div>
-        <button type="submit" class="btn-primary">정보 수정하기</button>
+        <button type="submit" class="btn-mp-save">저장하기</button>
       </form>
     </section>
 
     <!-- 비밀번호 변경 -->
     <section class="mypage-section" id="password">
       <h2>비밀번호 변경</h2>
+      <?php if ($errors): ?>
+        <div class="error-msg">
+          <?php foreach ($errors as $msg): ?><div><?= h($msg) ?></div><?php endforeach; ?>
+        </div>
+      <?php endif; ?>
       <form method="post" action="<?= BASE_URL ?>/mypage.php#password">
         <input type="hidden" name="form_type" value="password">
         <?= Csrf::field() ?>
@@ -781,73 +788,103 @@ require __DIR__ . '/includes/header.php';
           <label>새 비밀번호 확인</label>
           <input type="password" name="new_password_confirm" required>
         </div>
-        <button type="submit" class="btn-primary">비밀번호 변경하기</button>
+        <button type="submit" class="btn-mp-save">비밀번호 변경</button>
       </form>
     </section>
 
   </div>
 </div>
 
-<!-- [NEW] 마이페이지 전용 리뷰 작성 모달: 여러 상품 공용, JS로 product_id/제목만 교체 -->
+<!-- [NEW] 리뷰 작성 모달 (마이페이지 전용) -->
 <div class="review-modal-overlay" id="mpReviewModalOverlay">
   <div class="review-modal-box">
     <button type="button" class="review-modal-close" id="mpReviewModalClose" aria-label="닫기">&times;</button>
-    <h3 class="review-modal-title" id="mpReviewModalTitle">리뷰 작성하기</h3>
-    <p class="review-modal-sub">솔직한 사용 후기를 남겨주시면 다른 고객에게 큰 도움이 됩니다.</p>
-    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="mp-review-form">
-        <?= Csrf::field() ?>
-        <input type="hidden" name="return_to" value="mypage">
-        <input type="hidden" name="product_id" id="mpReviewProductId" value="">
+
+    <div class="review-modal-head">
+      <h3 class="review-modal-title" id="mpReviewModalTitle">후기 작성하기</h3>
+      <p class="review-modal-sub">솔직한 상품 후기를 남겨주시면 다른 고객님들께 큰 도움이 됩니다.</p>
+    </div>
+
+    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="mp-review-form" enctype="multipart/form-data">
+      <?= Csrf::field() ?>
+      <input type="hidden" name="return_to" value="mypage">
+      <input type="hidden" name="product_id" id="mpReviewProductId" value="">
+
+      <div class="review-modal-scroll">
         <div class="star-rating">
-            <?php for ($i = 5; $i >= 1; $i--): ?>
-                <input type="radio" id="mpStar<?= $i ?>" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>>
-                <label for="mpStar<?= $i ?>">★</label>
-            <?php endfor; ?>
+          <?php for ($i = 5; $i >= 1; $i--): ?>
+            <input type="radio" id="mpStar<?= $i ?>" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>>
+            <label for="mpStar<?= $i ?>">★</label>
+          <?php endfor; ?>
         </div>
-        <textarea name="content" rows="4" maxlength="1000" placeholder="사용해 보신 솔직한 후기를 남겨주세요." required></textarea>
-        <div class="review-modal-actions">
-            <button type="button" class="btn-modal-cancel" id="mpReviewModalCancel">취소</button>
-            <button type="submit" class="btn-modal-submit">등록하기</button>
-        </div>
+        <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 후기를 남겨주세요." required></textarea>
+      </div>
+
+      <div class="review-modal-actions">
+        <button type="button" class="btn-modal-cancel" id="mpReviewModalCancel">취소</button>
+        <button type="submit" class="btn-modal-submit" id="mpReviewModalSubmitBtn">등록하기</button>
+      </div>
     </form>
   </div>
 </div>
 
 <script>
-(function(){
-  const overlay        = document.getElementById('mpReviewModalOverlay');
-  const closeBtn        = document.getElementById('mpReviewModalClose');
+(function () {
+  const overlay         = document.getElementById('mpReviewModalOverlay');
+  const closeBtn         = document.getElementById('mpReviewModalClose');
   const cancelBtn        = document.getElementById('mpReviewModalCancel');
   const titleEl          = document.getElementById('mpReviewModalTitle');
-  const productIdInput  = document.getElementById('mpReviewProductId');
+  const productIdInput   = document.getElementById('mpReviewProductId');
+  const submitBtn        = document.getElementById('mpReviewModalSubmitBtn');
+  const reviewForm        = overlay ? overlay.querySelector('.mp-review-form') : null;
 
   if (!overlay) return;
 
   function openModal(productId, productName) {
     productIdInput.value = productId;
-    titleEl.textContent = productName ? (productName + ' 리뷰 작성하기') : '리뷰 작성하기';
+    titleEl.textContent = productName ? (productName + ' 후기 작성하기') : '후기 작성하기';
     overlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
+    document.body.classList.add('tt-modal-lock');
   }
   function closeModal() {
     overlay.classList.remove('active');
-    document.body.style.overflow = '';
+    document.body.classList.remove('tt-modal-lock');
   }
 
-  document.querySelectorAll('.mp-open-review-modal').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      openModal(btn.dataset.productId, btn.dataset.productName);
-    });
+  document.querySelectorAll('.mp-open-review-modal').forEach(btn => {
+    btn.addEventListener('click', () => openModal(btn.dataset.productId, btn.dataset.productName));
   });
 
   closeBtn?.addEventListener('click', closeModal);
   cancelBtn?.addEventListener('click', closeModal);
-  overlay.addEventListener('click', function (e) {
+  overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closeModal();
   });
-  document.addEventListener('keydown', function (e) {
+  document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && overlay.classList.contains('active')) closeModal();
   });
+
+  reviewForm?.addEventListener('submit', () => {
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = '등록 중...';
+    }
+  });
+
+  /* [FIX-3] 리뷰 제출 후 submitted=1 로 리다이렉트 되었을 때
+     "내가 쓴 리뷰" 탭으로 스크롤하고 성공 메시지를 강조 애니메이션으로 보여준다. */
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('submitted') === '1') {
+    setTimeout(() => {
+      const flashEl = document.getElementById('mpSuccessMsg');
+      const target = document.getElementById('myreviews');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (flashEl) flashEl.classList.add('pulse');
+    }, 150);
+
+    const cleanUrl = window.location.pathname + '#myreviews';
+    history.replaceState(null, '', cleanUrl);
+  }
 })();
 </script>
 

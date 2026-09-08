@@ -169,9 +169,16 @@ if (Auth::isLoggedIn()) {
 $csrfToken = Csrf::token();
 $autoOpenReview = (($_GET['write_review'] ?? '') === '1');
 
+/* [FIX-핵심] flash() 헬퍼는 $_SESSION['flash'][타입] = 메시지 구조로 저장한다.
+   (mypage.php에서 flash('success'), flash('error')를 각각 개별 키로 조회하는 것과 동일한 구조)
+   기존 코드는 $_SESSION['flash'] 전체를 그대로 담아 'type'/'message' 키로 읽었기 때문에
+   실제로는 항상 빈 문자열만 출력되고 있었다. 아래처럼 타입/메시지 쌍을 정확히 꺼내야 한다. */
 $flashMsg = null;
-if (!empty($_SESSION['flash'])) {
-    $flashMsg = $_SESSION['flash'];
+if (!empty($_SESSION['flash']) && is_array($_SESSION['flash'])) {
+    foreach ($_SESSION['flash'] as $flashType => $flashMessage) {
+        $flashMsg = ['type' => $flashType, 'message' => $flashMessage];
+        break;
+    }
     unset($_SESSION['flash']);
 }
 
@@ -291,13 +298,22 @@ require __DIR__ . '/includes/header.php';
 .btn-review-write:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(99,102,241,.45);}
 .btn-review-write:active{transform:translateY(0);}
 .pd-review-ddays{font-size:13px;color:#64748b;}
-.review-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transition:opacity .2s ease;z-index:999;}
+
+/* [FIX] body가 스크롤 잠기는 동안 배경 스크롤 방지 */
+body.tt-modal-lock{overflow:hidden;}
+
+/* [FIX-핵심 1] z-index를 헤더(9000)보다 훨씬 높게. 기존 999는 헤더 밑으로 깔려서 모달 상단이 잘려 보였다.
+   [FIX-핵심 2] 모달 박스를 head/scroll/actions 3단 flex 구조로 재설계.
+   어떤 화면 높이에서도 취소/등록 버튼과 사진 미리보기가 화면 밖으로 밀려날 수 없게 만든다. */
+.review-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transition:opacity .2s ease;z-index:20000;padding:24px 0;}
 .review-modal-overlay.active{opacity:1;visibility:visible;}
-.review-modal-box{background:#fff;border-radius:20px;padding:32px;width:92%;max-width:460px;position:relative;transform:translateY(16px) scale(.97);transition:transform .2s ease;box-shadow:0 24px 60px rgba(0,0,0,.25);max-height:88vh;overflow-y:auto;}
+.review-modal-box{background:#fff;border-radius:20px;width:92%;max-width:460px;position:relative;transform:translateY(16px) scale(.97);transition:transform .2s ease;box-shadow:0 24px 60px rgba(0,0,0,.25);max-height:min(88vh,88dvh);display:flex;flex-direction:column;overflow:hidden;}
 .review-modal-overlay.active .review-modal-box{transform:translateY(0) scale(1);}
-.review-modal-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;}
+.review-modal-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:22px;color:#94a3b8;cursor:pointer;z-index:2;}
+.review-modal-head{flex-shrink:0;padding:32px 32px 0;}
 .review-modal-title{font-size:19px;font-weight:800;margin-bottom:4px;}
 .review-modal-sub{font-size:13px;color:#64748b;margin-bottom:18px;}
+.review-modal-scroll{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 32px;}
 .star-rating{display:flex;flex-direction:row-reverse;gap:4px;margin-bottom:16px;}
 .star-rating input{display:none;}
 .star-rating label{font-size:30px;color:#e2e8f0;cursor:pointer;transition:color .12s,transform .12s;}
@@ -309,7 +325,9 @@ require __DIR__ . '/includes/header.php';
 .rv-chip-label:hover{border-color:#c7d2fe;background:#f5f5ff;}
 .rv-chip-input:checked + .rv-chip-label{background:linear-gradient(135deg,#6366f1,#8b5cf6);border-color:transparent;color:#fff;box-shadow:0 4px 10px rgba(99,102,241,.35);}
 .review-modal-box textarea{width:100%;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;font-size:14px;resize:vertical;margin-bottom:18px;box-sizing:border-box;}
-.review-modal-actions{display:flex;gap:10px;justify-content:flex-end;}
+
+/* [FIX] 취소/등록 버튼 영역을 스크롤 밖 하단 고정 footer로 분리 */
+.review-modal-actions{flex-shrink:0;display:flex;gap:10px;justify-content:flex-end;padding:16px 32px 24px;border-top:1px solid #f1f5f9;background:#fff;}
 .btn-modal-cancel{background:#f1f5f9;color:#475569;border:none;padding:10px 20px;border-radius:999px;font-weight:600;cursor:pointer;}
 .btn-modal-submit{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;padding:10px 24px;border-radius:999px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(99,102,241,.35);transition:transform .12s ease;}
 .btn-modal-submit:hover{transform:translateY(-1px);}
@@ -323,6 +341,9 @@ require __DIR__ . '/includes/header.php';
 .pd-flash-msg{padding:12px 16px;border-radius:12px;margin-bottom:16px;font-size:14px;}
 .pd-flash-msg.success{background:#ecfdf5;color:#047857;}
 .pd-flash-msg.error{background:#fef2f2;color:#b91c1c;}
+/* [FIX] 리뷰 작성 완료 후 돌아왔을 때 시선을 끌기 위한 짧은 펄스 강조 효과 */
+@keyframes pdFlashPulse{0%{box-shadow:0 0 0 0 rgba(99,102,241,.45);}100%{box-shadow:0 0 0 12px rgba(99,102,241,0);}}
+.pd-flash-msg.pd-flash-pulse{animation:pdFlashPulse 1s ease-out;}
 .pd-desc-html{font-size:15px;line-height:1.75;color:#334155;word-break:break-word;margin-bottom:20px;}
 .pd-desc-html a{color:#4338ca;text-decoration:underline;}
 .pd-desc-html ul,.pd-desc-html ol{padding-left:20px;margin:10px 0;}
@@ -360,6 +381,9 @@ require __DIR__ . '/includes/header.php';
 .btn-review-helpful{display:inline-flex;align-items:center;gap:6px;border:1px solid #e2e8f0;background:#fff;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;color:#64748b;cursor:pointer;transition:.15s;}
 .btn-review-helpful:hover{border-color:#c7d2fe;background:#f5f5ff;}
 .btn-review-helpful.active{background:#eef2ff;border-color:#6366f1;color:#4338ca;}
+/* [FIX] JS에서 사용 중인데 정의가 빠져 있던 리뷰 하이라이트 애니메이션을 추가 */
+@keyframes pdReviewHighlight{0%{background:#eef2ff;}100%{background:transparent;}}
+.pd-review-highlight{animation:pdReviewHighlight 2s ease;border-radius:12px;}
 .rv-visit-toggle-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
 .rv-store-select-wrap{margin-bottom:16px;}
 .rv-store-select-wrap select{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;}
@@ -367,8 +391,10 @@ require __DIR__ . '/includes/header.php';
 .rv-vehicle-input-wrap input{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;box-sizing:border-box;}
 .rv-photo-upload-wrap{margin-bottom:18px;}
 .rv-photo-upload-wrap input[type=file]{font-size:13px;}
+.rv-photo-count-hint{font-size:12px;color:#94a3b8;margin-top:6px;}
 .rv-photo-preview{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
-.rv-photo-preview img{width:60px;height:60px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0;}
+.rv-photo-preview .rv-photo-thumb{width:60px;height:60px;}
+.rv-photo-preview img{width:60px;height:60px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0;display:block;}
 </style>
 
 <main class="tt-main">
@@ -772,69 +798,77 @@ require __DIR__ . '/includes/header.php';
 <div class="review-modal-overlay" id="reviewModalOverlay">
   <div class="review-modal-box">
     <button type="button" class="review-modal-close" id="reviewModalClose" aria-label="닫기">&times;</button>
-    <h3 class="review-modal-title">후기 작성하기</h3>
-    <p class="review-modal-sub">솔직한 상품 후기를 남겨주시면 다른 고객님들께 큰 도움이 됩니다.</p>
-    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form" enctype="multipart/form-data">
+
+    <div class="review-modal-head">
+      <h3 class="review-modal-title">후기 작성하기</h3>
+      <p class="review-modal-sub">솔직한 상품 후기를 남겨주시면 다른 고객님들께 큰 도움이 됩니다.</p>
+    </div>
+
+    <form method="post" action="<?= BASE_URL ?>/review-submit.php" class="pd-review-form" enctype="multipart/form-data" id="pdReviewForm">
         <?= Csrf::field() ?>
         <input type="hidden" name="product_id" value="<?= (int)$productId ?>">
         <input type="hidden" name="return_to" value="product">
-        <div class="star-rating">
-            <?php for ($i = 5; $i >= 1; $i--): ?>
-                <input type="radio" id="star<?= $i ?>" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>>
-                <label for="star<?= $i ?>">★</label>
-            <?php endfor; ?>
-        </div>
 
-        <?php if (!empty($reviewOptionTags)): ?>
-        <div class="rv-modal-field-label">어떤 점이 좋았나요? (선택, 여러개 선택 가능)</div>
-        <div class="rv-chip-group">
-            <?php foreach ($reviewOptionTags as $idx => $tagLabel): ?>
-                <input type="checkbox" class="rv-chip-input" id="rvTag<?= $idx ?>" name="option_tags[]" value="<?= h($tagLabel) ?>">
-                <label class="rv-chip-label" for="rvTag<?= $idx ?>"><?= h($tagLabel) ?></label>
-            <?php endforeach; ?>
-        </div>
-        <?php endif; ?>
+        <div class="review-modal-scroll">
+            <div class="star-rating">
+                <?php for ($i = 5; $i >= 1; $i--): ?>
+                    <input type="radio" id="star<?= $i ?>" name="rating" value="<?= $i ?>" <?= $i === 5 ? 'checked' : '' ?>>
+                    <label for="star<?= $i ?>">★</label>
+                <?php endfor; ?>
+            </div>
 
-        <div class="rv-modal-field-label">방문 형태</div>
-        <div class="rv-visit-toggle-row">
-            <?php foreach ($reviewVisitTypes as $vKey => $vLabel): ?>
-                <input type="radio" class="rv-chip-input" id="rvVisit_<?= h($vKey) ?>" name="visit_type" value="<?= h($vKey) ?>" <?= $vKey === 'store' ? 'checked' : '' ?>>
-                <label class="rv-chip-label" for="rvVisit_<?= h($vKey) ?>"><?= h($vLabel) ?></label>
-            <?php endforeach; ?>
-        </div>
-
-        <?php if (!empty($activeStores)): ?>
-        <div class="rv-store-select-wrap" id="rvStoreSelectWrap">
-            <div class="rv-modal-field-label">방문 매장</div>
-            <select name="store_id" id="rvStoreSelect">
-                <?php foreach ($activeStores as $st): ?>
-                    <option value="<?= (int)$st['id'] ?>"><?= h($st['name']) ?> (<?= h($st['address']) ?>)</option>
+            <?php if (!empty($reviewOptionTags)): ?>
+            <div class="rv-modal-field-label">어떤 점이 좋았나요? (선택, 여러개 선택 가능)</div>
+            <div class="rv-chip-group">
+                <?php foreach ($reviewOptionTags as $idx => $tagLabel): ?>
+                    <input type="checkbox" class="rv-chip-input" id="rvTag<?= $idx ?>" name="option_tags[]" value="<?= h($tagLabel) ?>">
+                    <label class="rv-chip-label" for="rvTag<?= $idx ?>"><?= h($tagLabel) ?></label>
                 <?php endforeach; ?>
-            </select>
-        </div>
-        <?php endif; ?>
+            </div>
+            <?php endif; ?>
 
-        <div class="rv-vehicle-input-wrap">
-            <div class="rv-modal-field-label">탑승 차량 (선택)</div>
-            <input type="text" name="vehicle_model" maxlength="60" placeholder="예) 소나타 ES">
-        </div>
+            <div class="rv-modal-field-label">방문 형태</div>
+            <div class="rv-visit-toggle-row">
+                <?php foreach ($reviewVisitTypes as $vKey => $vLabel): ?>
+                    <input type="radio" class="rv-chip-input" id="rvVisit_<?= h($vKey) ?>" name="visit_type" value="<?= h($vKey) ?>" <?= $vKey === 'store' ? 'checked' : '' ?>>
+                    <label class="rv-chip-label" for="rvVisit_<?= h($vKey) ?>"><?= h($vLabel) ?></label>
+                <?php endforeach; ?>
+            </div>
 
-        <?php if (!empty($reviewExtraServices)): ?>
-        <div class="rv-modal-field-label">추가로 진행한 서비스 (선택, 여러개 선택 가능)</div>
-        <div class="rv-chip-group">
-            <?php foreach ($reviewExtraServices as $eIdx => $eLabel): ?>
-                <input type="checkbox" class="rv-chip-input" id="rvExtra<?= $eIdx ?>" name="extra_service[]" value="<?= h($eLabel) ?>">
-                <label class="rv-chip-label" for="rvExtra<?= $eIdx ?>"><?= h($eLabel) ?></label>
-            <?php endforeach; ?>
-        </div>
-        <?php endif; ?>
+            <?php if (!empty($activeStores)): ?>
+            <div class="rv-store-select-wrap" id="rvStoreSelectWrap">
+                <div class="rv-modal-field-label">방문 매장</div>
+                <select name="store_id" id="rvStoreSelect">
+                    <?php foreach ($activeStores as $st): ?>
+                        <option value="<?= (int)$st['id'] ?>"><?= h($st['name']) ?> (<?= h($st['address']) ?>)</option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <?php endif; ?>
 
-        <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 후기를 남겨주세요." required></textarea>
+            <div class="rv-vehicle-input-wrap">
+                <div class="rv-modal-field-label">탑승 차량 (선택)</div>
+                <input type="text" name="vehicle_model" maxlength="60" placeholder="예) 소나타 ES">
+            </div>
 
-        <div class="rv-photo-upload-wrap">
-            <div class="rv-modal-field-label">사진 첨부 (선택, 최대 3장 / 각각 5MB 이하)</div>
-            <input type="file" name="photos[]" id="rvPhotoInput" accept="image/jpeg,image/png,image/webp" multiple>
-            <div class="rv-photo-preview" id="rvPhotoPreview"></div>
+            <?php if (!empty($reviewExtraServices)): ?>
+            <div class="rv-modal-field-label">추가로 진행한 서비스 (선택, 여러개 선택 가능)</div>
+            <div class="rv-chip-group">
+                <?php foreach ($reviewExtraServices as $eIdx => $eLabel): ?>
+                    <input type="checkbox" class="rv-chip-input" id="rvExtra<?= $eIdx ?>" name="extra_service[]" value="<?= h($eLabel) ?>">
+                    <label class="rv-chip-label" for="rvExtra<?= $eIdx ?>"><?= h($eLabel) ?></label>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+
+            <textarea name="content" rows="4" maxlength="1000" placeholder="상품에 대한 솔직한 후기를 남겨주세요." required></textarea>
+
+            <div class="rv-photo-upload-wrap">
+                <div class="rv-modal-field-label">사진 첨부 (선택, 최대 3장 / 각각 5MB 이하)</div>
+                <input type="file" name="photos[]" id="rvPhotoInput" accept="image/jpeg,image/png,image/webp" multiple>
+                <p class="rv-photo-count-hint" id="rvPhotoCountHint"></p>
+                <div class="rv-photo-preview" id="rvPhotoPreview"></div>
+            </div>
         </div>
 
         <div class="review-modal-actions">
@@ -922,7 +956,6 @@ if (optionSelect) {
 
   optionSelect.addEventListener('change', () => {
     if (optionSelect.value === '') {
-      // 옵션을 선택하지 않으면 기본 상품가/기본 할인율로 복원
       priceNowEl.textContent = baseSalePrice.toLocaleString('ko-KR') + '원';
       if (discountEl) {
         discountEl.textContent = baseDiscountPct + '%';
@@ -961,20 +994,19 @@ if (optionSelect) {
   });
 }
 
-/* ===================== [수정] 바로구매 버튼 — DOT 옵션 미선택 시에도 진행 ===================== */
+/* ===================== 바로구매 버튼 — DOT 옵션 미선택 시에도 진행 ===================== */
 buyBtn.addEventListener('click', () => {
   if (!isLoggedIn) {
     alert('로그인이 필요합니다.');
     location.href = BASE_URL + '/login.php';
     return;
   }
-  // DOT 옵션을 선택하지 않아도 기본 상품 정보로 그대로 결제 진행합니다.
   document.getElementById('buyNowOptionId').value = (optionSelect && optionSelect.value !== '') ? optionSelect.value : '';
   document.getElementById('buyNowQty').value = qtyInput.value;
   document.getElementById('buyNowForm').submit();
 });
 
-/* ===================== [수정] 장바구니 담기 버튼 — DOT 옵션 미선택 시에도 진행 ===================== */
+/* ===================== 장바구니 담기 버튼 — DOT 옵션 미선택 시에도 진행 ===================== */
 cartBtn.addEventListener('click', async () => {
   if (!isLoggedIn) {
     alert('로그인이 필요합니다.');
@@ -1041,14 +1073,22 @@ const tabBtns   = document.querySelectorAll('.pd-tab-btn');
 const tabPanels = document.querySelectorAll('.pd-tab-panel');
 function activateTab(tabName) {
   tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
-  /* ===== [NEW] 홈 화면 리뷰카드 클릭 시 해당 리뷰로 바로 이동 + 하이라이트 ===== */
+  tabPanels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
+}
+tabBtns.forEach(btn => {
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+});
+
+/* [FIX] activateTab() 함수 내부에 끼어 있던 코드를 최상위로 분리.
+   기존에는 탭을 클릭할 때마다 이 코드가 매번 재실행되며 activateTab을 재귀 호출하는
+   구조적 오류가 있었다. 홈 화면에서 특정 리뷰 카드 클릭 → open_review 파라미터로
+   진입했을 때만 한 번 실행되도록 페이지 로드 시점에 독립적으로 둔다. */
 (function () {
   const params = new URLSearchParams(window.location.search);
   const openReviewId = params.get('open_review');
   if (!openReviewId) return;
 
   activateTab('review');
-
   setTimeout(() => {
     const target = document.getElementById('review-' + openReviewId);
     if (!target) return;
@@ -1058,11 +1098,21 @@ function activateTab(tabName) {
   }, 120);
 })();
 
-  tabPanels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabName));
-}
-tabBtns.forEach(btn => {
-  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
-});
+/* [FIX-핵심] 리뷰 작성 완료 후 review-submit.php가 '#review'로 리다이렉트하면
+   여기서 리뷰 탭을 강제로 활성화하고, 서버가 심어둔 성공/실패 플래시 메시지로
+   스크롤 이동 + 펄스 강조를 준다. write_review 파라미터 유무와 무관하게
+   해시(#review)만으로 동작하므로 write_review=1(자동 오픈)과 완전히 독립적이다. */
+(function () {
+  if (window.location.hash !== '#review') return;
+  activateTab('review');
+  setTimeout(() => {
+    const flashEl = document.querySelector('.pd-flash-msg');
+    if (!flashEl) return;
+    flashEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    flashEl.classList.add('pd-flash-pulse');
+    setTimeout(() => flashEl.classList.remove('pd-flash-pulse'), 1200);
+  }, 100);
+})();
 
 /* ===================== 리뷰 작성 모달 ===================== */
 const reviewWriteBtn     = document.getElementById('pdReviewWriteBtn');
@@ -1074,9 +1124,11 @@ function openReviewModal() {
   if (!reviewModalOverlay) return;
   activateTab('review');
   reviewModalOverlay.classList.add('active');
+  document.body.classList.add('tt-modal-lock'); /* [FIX] 배경 스크롤 잠금 */
 }
 function closeReviewModal() {
   reviewModalOverlay?.classList.remove('active');
+  document.body.classList.remove('tt-modal-lock');
 }
 reviewWriteBtn?.addEventListener('click', openReviewModal);
 reviewModalClose?.addEventListener('click', closeReviewModal);
@@ -1103,19 +1155,44 @@ if (rvStoreSelectWrap) {
   rvStoreSelectWrap.style.display = (checkedVisit && checkedVisit.value === 'store') ? '' : 'none';
 }
 
-/* ===================== 리뷰 사진 미리보기 ===================== */
-const rvPhotoInput   = document.getElementById('rvPhotoInput');
-const rvPhotoPreview = document.getElementById('rvPhotoPreview');
+/* [FIX] 리뷰 사진 미리보기 — 서버 검증 규칙(최대 3장, 5MB)을 클라이언트에서도 동일하게 적용하고
+   개수/용량 초과 시 사용자에게 즉시 피드백을 준다. 기존 코드는 3장 초과분을 조용히 잘라냈을 뿐
+   사용자에게 아무런 안내가 없었다. */
+const MAX_REVIEW_PHOTOS = 3;
+const MAX_REVIEW_PHOTO_BYTES = 5 * 1024 * 1024;
+const rvPhotoInput      = document.getElementById('rvPhotoInput');
+const rvPhotoPreview    = document.getElementById('rvPhotoPreview');
+const rvPhotoCountHint  = document.getElementById('rvPhotoCountHint');
+
 rvPhotoInput?.addEventListener('change', () => {
   if (!rvPhotoPreview) return;
   rvPhotoPreview.innerHTML = '';
-  const files = Array.from(rvPhotoInput.files || []).slice(0, 3);
-  files.forEach(file => {
+
+  const allFiles   = Array.from(rvPhotoInput.files || []);
+  const validFiles = allFiles.filter(f => f.size <= MAX_REVIEW_PHOTO_BYTES).slice(0, MAX_REVIEW_PHOTOS);
+
+  if (rvPhotoCountHint) {
+    if (allFiles.length > MAX_REVIEW_PHOTOS) {
+      rvPhotoCountHint.textContent = `최대 ${MAX_REVIEW_PHOTOS}장까지만 첨부됩니다. (선택 ${allFiles.length}장 → 적용 ${validFiles.length}장)`;
+    } else if (allFiles.some(f => f.size > MAX_REVIEW_PHOTO_BYTES)) {
+      rvPhotoCountHint.textContent = '5MB를 초과하는 파일은 제외되었습니다.';
+    } else if (validFiles.length > 0) {
+      rvPhotoCountHint.textContent = `선택된 사진 ${validFiles.length}장`;
+    } else {
+      rvPhotoCountHint.textContent = '';
+    }
+  }
+
+  validFiles.forEach(file => {
     const reader = new FileReader();
     reader.onload = (e) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'rv-photo-thumb';
       const img = document.createElement('img');
       img.src = e.target.result;
-      rvPhotoPreview.appendChild(img);
+      img.alt = file.name;
+      wrap.appendChild(img);
+      rvPhotoPreview.appendChild(wrap);
     };
     reader.readAsDataURL(file);
   });
