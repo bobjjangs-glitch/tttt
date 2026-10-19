@@ -1,0 +1,343 @@
+<?php
+$cartCount = 0;
+if (Auth::isLoggedIn()) {
+    $pdo = Database::connection();
+    $stmt = $pdo->prepare('SELECT COALESCE(SUM(qty),0) AS cnt FROM tt_carts WHERE user_id = :uid');
+    $stmt->execute(['uid' => Auth::currentUserId()]);
+    $cartCount = (int)$stmt->fetchColumn();
+}
+
+/* ===== 팝업 광고 조회: 활성 + 노출 기간 내인 것만, 순서대로 최대 5개 =====
+   [FIX] 비로그인 사용자는 위 if 블록을 타지 않아 $pdo가 없을 수 있으므로
+   여기서 한 번 더 안전하게 커넥션을 확보한다. */
+$pdo = $pdo ?? Database::connection();
+$activePopups = [];
+try {
+    $ppStmt = $pdo->query("
+        SELECT id, title, image_url, link_url, width, height, allow_today_close
+        FROM tt_popups
+        WHERE is_active = 1
+          AND (start_at IS NULL OR start_at <= NOW())
+          AND (end_at IS NULL OR end_at >= NOW())
+        ORDER BY sort_order ASC, id DESC
+        LIMIT 5
+    ");
+    $activePopups = $ppStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    error_log('[popup fetch] ' . $e->getMessage());
+    $activePopups = [];
+}
+?>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title><?= isset($pageTitle) ? h($pageTitle)." - ".SITE_NAME : SITE_NAME ?></title>
+<link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/common.css">
+
+<!-- ===== [PWA] 모바일 앱 패키징 (iOS/Android 홈화면 앱) ===== -->
+<link rel="manifest" href="<?= BASE_URL ?>/manifest.json">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="타이어몰">
+<link rel="apple-touch-icon" href="<?= BASE_URL ?>/img/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="48x48" href="<?= BASE_URL ?>/img/favicon-48.png">
+
+<script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+</head>
+<body>
+
+<!-- 서비스 워커 등록 (PWA) -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('<?= BASE_URL ?>/sw.js').catch(function () {});
+  });
+}
+</script>
+
+<div class="tt-utilbar">
+  <div class="tt-utilbar-inner">
+    <div class="tt-utilbar-left">
+      <span><?= h(defined('SITE_NAME') ? SITE_NAME : '타이어탑') ?></span>
+    </div>
+    <div class="tt-utilbar-right">
+      <a href="<?= BASE_URL ?>/guide.php">이용안내</a>
+      <span class="tt-utilbar-sep">|</span>
+      <a href="<?= BASE_URL ?>/cs-center.php">고객센터</a>
+    </div>
+  </div>
+</div>
+
+<header class="tt-header">
+  <div class="tt-header-inner">
+    <!-- 모바일 햄버거 버튼 -->
+    <button type="button" class="tt-mobile-menu-btn" id="ttMobileMenuBtn" aria-label="메뉴">☰</button>
+
+    <a href="<?= BASE_URL ?>/index.php" class="tt-logo">
+      <img src="<?= BASE_URL ?>/img/logo.png" alt="<?= h(SITE_NAME) ?>" class="tt-logo-img">
+    </a>
+
+    <nav class="tt-nav">
+      <a href="<?= BASE_URL ?>/product-list.php?cat=1">타이어</a>
+      <a href="<?= BASE_URL ?>/product-list.php?cat=2">엔진오일</a>
+      <a href="<?= BASE_URL ?>/product-list.php?cat=3">배터리</a>
+      <a href="<?= BASE_URL ?>/review-list.php">리뷰</a>
+    </nav>
+
+    <!-- 헤더 통합 검색바 -->
+    <div class="tt-header-search" id="ttHeaderSearch">
+      <select id="ttSearchType" class="tt-search-type">
+        <option value="size">사이즈</option>
+        <option value="name">상품명</option>
+      </select>
+      <input
+        type="text"
+        id="ttSearchInput"
+        class="tt-search-input"
+        placeholder="예) 225/45R18"
+        inputmode="text"
+        autocomplete="off">
+      <button type="button" id="ttSearchBtn" class="tt-search-btn" aria-label="검색">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <circle cx="11" cy="11" r="7"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="tt-header-actions">
+      <a href="<?= BASE_URL ?>/cart.php" class="tt-cart-link">
+        장바구니
+        <span class="tt-cart-badge" id="ttCartBadge" style="<?= $cartCount > 0 ? '' : 'display:none' ?>"><?= $cartCount ?></span>
+      </a>
+      <?php if (Auth::isLoggedIn()): ?>
+        <a href="<?= BASE_URL ?>/mypage.php">마이페이지</a>
+        <a href="<?= BASE_URL ?>/logout.php">로그아웃</a>
+      <?php else: ?>
+        <a href="<?= BASE_URL ?>/login.php">로그인</a>
+        <a href="<?= BASE_URL ?>/login.php#signup-personal" class="tt-signup-link">회원가입</a>
+      <?php endif; ?>
+    </div>
+  </div>
+</header>
+
+
+<script>
+window.ttSetCartCount = function(count) {
+  const badge = document.getElementById('ttCartBadge');
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+};
+
+(function(){
+  const typeSelect = document.getElementById('ttSearchType');
+  const input       = document.getElementById('ttSearchInput');
+  const btn          = document.getElementById('ttSearchBtn');
+  if (!typeSelect || !input || !btn) return;
+
+  const placeholders = {
+    size: '예) 225/45R18',
+    name: '상품명을 입력하세요'
+  };
+
+  typeSelect.addEventListener('change', function () {
+    input.placeholder = placeholders[typeSelect.value] || '검색어를 입력하세요';
+  });
+
+  function doSearch() {
+    const keyword = input.value.trim();
+    if (keyword === '') {
+      input.focus();
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set('cat', '1');
+
+    if (typeSelect.value === 'size') {
+      const digitsOnly = keyword.replace(/[^0-9]/g, '');
+      params.set('size_input', digitsOnly);
+    } else {
+      params.set('name', keyword);
+    }
+
+    window.location.href = '<?= BASE_URL ?>/product-list.php?' + params.toString();
+  }
+
+  btn.addEventListener('click', doSearch);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doSearch();
+    }
+  });
+})();
+</script>
+
+<main class="tt-main">
+
+<!-- 헤더 스크롤 효과 -->
+<script>
+(function(){
+  const header = document.querySelector('.tt-header');
+  if (!header) return;
+  window.addEventListener('scroll', function(){
+    if (window.scrollY > 10) header.classList.add('scrolled');
+    else header.classList.remove('scrolled');
+  }, { passive: true });
+})();
+</script>
+
+<!-- 모바일 메뉴 -->
+<div class="tt-mobile-menu-overlay" id="ttMobileMenuOverlay"></div>
+<aside class="tt-mobile-menu" id="ttMobileMenu">
+  <button type="button" class="tt-mobile-close" id="ttMobileClose" aria-label="닫기">&times;</button>
+  <a href="<?= BASE_URL ?>/index.php">홈</a>
+  <a href="<?= BASE_URL ?>/product-list.php?cat=1">타이어</a>
+  <a href="<?= BASE_URL ?>/product-list.php?cat=2">엔진오일</a>
+  <a href="<?= BASE_URL ?>/product-list.php?cat=3">배터리</a>
+  <a href="<?= BASE_URL ?>/review-list.php">리뷰</a>
+  <a href="<?= BASE_URL ?>/guide.php">이용안내</a>
+  <a href="<?= BASE_URL ?>/cs-center.php">고객센터</a>
+  <?php if (Auth::isLoggedIn()): ?>
+    <a href="<?= BASE_URL ?>/mypage.php">마이페이지</a>
+    <a href="<?= BASE_URL ?>/cart.php">장바구니</a>
+    <a href="<?= BASE_URL ?>/logout.php">로그아웃</a>
+  <?php else: ?>
+    <a href="<?= BASE_URL ?>/login.php">로그인</a>
+    <a href="<?= BASE_URL ?>/login.php#signup-personal">일반 회원가입</a>
+    <a href="<?= BASE_URL ?>/login.php#signup-business">사업자 회원가입</a>
+  <?php endif; ?>
+</aside>
+<script>
+(function(){
+  const btn = document.getElementById('ttMobileMenuBtn');
+  const menu = document.getElementById('ttMobileMenu');
+  const overlay = document.getElementById('ttMobileMenuOverlay');
+  const closeBtn = document.getElementById('ttMobileClose');
+  if (!btn || !menu) return;
+  function open() { menu.classList.add('open'); overlay.classList.add('open'); document.body.style.overflow = 'hidden'; }
+  function close() { menu.classList.remove('open'); overlay.classList.remove('open'); document.body.style.overflow = ''; }
+  btn.addEventListener('click', open);
+  closeBtn?.addEventListener('click', close);
+  overlay?.addEventListener('click', close);
+})();
+</script>
+  <?php if (!empty($activePopups)): ?>
+<style>
+/* [FIX-1] 헤더(z-index:9000)보다 위에 그려지도록 z-index를 올려 상단이 가려지는 문제 해결 */
+.tt-popup-overlay-wrap { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
+.tt-popup-box {
+  position: absolute;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: ttPopupIn .25s ease;
+  max-width: 92vw;
+  max-height: 88vh;
+}
+/* [FIX-2] transform을 쓰지 않는 애니메이션으로 변경 — JS에서 위치 지정에 transform을 쓰기 때문에
+   애니메이션의 transform과 값이 서로 덮어써서 위치가 튀는 충돌을 방지 */
+@keyframes ttPopupIn { from { opacity:0; } to { opacity:1; } }
+
+/* [FIX-3] 링크 유무와 무관하게 이미지 영역 높이가 항상 "박스 전체 - 풋터 40px"로 고정 */
+.tt-popup-img-wrap { display:block; width:100%; height:calc(100% - 40px); overflow:hidden; }
+.tt-popup-img-wrap a { display:block; width:100%; height:100%; }
+.tt-popup-img-wrap img { display:block; width:100%; height:100%; object-fit: contain; background:#f8fafc; }
+
+.tt-popup-footer {
+  height: 40px; display:flex; align-items:center; justify-content:space-between;
+  padding: 0 12px; background:#f8fafc; border-top:1px solid #e2e8f0; font-size:12px;
+}
+.tt-popup-today-btn { background:none; border:none; color:#475569; font-size:12px; cursor:pointer; }
+.tt-popup-close-btn { background:none; border:none; color:#94a3b8; font-size:16px; cursor:pointer; font-weight:700; }
+</style>
+
+<div class="tt-popup-overlay-wrap" id="ttPopupOverlayWrap">
+  <?php foreach ($activePopups as $i => $pp): ?>
+  <div class="tt-popup-box"
+       id="ttPopupBox<?= (int)$pp['id'] ?>"
+       data-popup-id="<?= (int)$pp['id'] ?>"
+       style="width:<?= (int)$pp['width'] ?>px; height:<?= (int)($pp['height'] + 40) ?>px;">
+    <div class="tt-popup-img-wrap">
+      <?php if (!empty($pp['link_url'])): ?>
+        <a href="<?= h($pp['link_url']) ?>"><img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>"></a>
+      <?php else: ?>
+        <img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>">
+      <?php endif; ?>
+    </div>
+    <div class="tt-popup-footer">
+      <?php if ((int)$pp['allow_today_close'] === 1): ?>
+        <button type="button" class="tt-popup-today-btn" data-hide-today="<?= (int)$pp['id'] ?>">오늘 하루 보지 않기</button>
+      <?php else: ?>
+        <span></span>
+      <?php endif; ?>
+      <button type="button" class="tt-popup-close-btn" data-close="<?= (int)$pp['id'] ?>" aria-label="닫기">&times;</button>
+    </div>
+  </div>
+  <?php endforeach; ?>
+</div>
+
+<script>
+(function () {
+  function getCookie(name) {
+    const m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function setCookieUntilMidnight(name) {
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+    document.cookie = name + '=1; expires=' + midnight.toUTCString() + '; path=/';
+  }
+
+  const boxes = Array.from(document.querySelectorAll('.tt-popup-box'));
+  const OFFSET = 24;
+
+  function layout() {
+    let shown = 0;
+    boxes.forEach((box) => {
+      const id = box.dataset.popupId;
+      if (getCookie('tt_popup_hide_' + id)) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      /* [FIX-4] 화면 정중앙(50%,50%) 기준에서 오른쪽으로 20px 이동한 지점에 배치.
+         translate(-50%,-50%)로 박스 자신의 크기만큼 되돌려 정확히 그 지점을 중심으로 맞춘다.
+         팝업이 여러 개면 대각선으로 OFFSET(24px)씩 추가로 밀어서 겹치지 않게 쌓는다. */
+      box.style.left = 'calc(50% + 20px)';
+      box.style.top  = '50%';
+      box.style.transform = `translate(calc(-50% + ${shown * OFFSET}px), calc(-50% + ${shown * OFFSET}px))`;
+      shown++;
+    });
+    if (shown === 0) {
+      document.getElementById('ttPopupOverlayWrap')?.remove();
+    }
+  }
+  layout();
+
+  document.querySelectorAll('.tt-popup-close-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('ttPopupBox' + btn.dataset.close)?.remove();
+      layout();
+    });
+  });
+  document.querySelectorAll('[data-hide-today]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setCookieUntilMidnight('tt_popup_hide_' + btn.dataset.hideToday);
+      document.getElementById('ttPopupBox' + btn.dataset.hideToday)?.remove();
+      layout();
+    });
+  });
+})();
+</script>
+
+<?php endif; ?>
+

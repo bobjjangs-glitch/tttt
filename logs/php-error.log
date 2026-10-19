@@ -1,0 +1,123 @@
+[12-Aug-2026 14:52:56 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 14:53:14 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 14:59:06 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 15:02:37 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 15:04:16 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 15:05:42 Asia/Seoul] [UNCAUGHT] syntax error, unexpected end of file, expecting "elseif" or "else" or "endif" in /hosting/bobjjangs1231/html/tire/admin/includes/header.php:64
+#0 {main}
+[12-Aug-2026 17:40:01 Asia/Seoul] PHP Warning:  Undefined variable $pdo in /hosting/bobjjangs1231/html/tire/admin/orders.php on line 226
+[12-Aug-2026 17:40:01 Asia/Seoul] [UNCAUGHT] Call to a member function prepare() on null in /hosting/bobjjangs1231/html/tire/admin/orders.php:226
+#0 {main}
+[12-Aug-2026 17:40:04 Asia/Seoul] PHP Warning:  Undefined variable $pdo in /hosting/bobjjangs1231/html/tire/admin/orders.php on line 226
+[12-Aug-2026 17:40:04 Asia/Seoul] [UNCAUGHT] Call to a member function prepare() on null in /hosting/bobjjangs1231/html/tire/admin/orders.php:226
+#0 {main}
+[12-Aug-2026 17:40:19 Asia/Seoul] PHP Warning:  Undefined variable $pdo in /hosting/bobjjangs1231/html/tire/admin/orders.php on line 226
+[12-Aug-2026 17:40:19 Asia/Seoul] [UNCAUGHT] Call to a member function prepare() on null in /hosting/bobjjangs1231/html/tire/admin/orders.php:226
+#0 {main}
+[24-Aug-2026 14:57:40 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'brand_text' 을 추가했습니다.
+[24-Aug-2026 14:57:41 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'size_text' 을 추가했습니다.
+[24-Aug-2026 14:57:41 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'customer_email' 을 추가했습니다.
+[24-Aug-2026 14:57:41 Asia/Seoul] [ensure_stock_requests_table] 누락된 컬럼 'memo' 을 추가했습니다.
+[24-Aug-2026 14:57:46 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 14:57:50 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 14:58:03 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:02:18 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:02:24 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:30:33 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 15:30:37 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 17:51:44 Asia/Seoul] [admin/stock-requests update_status] SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1
+[24-Aug-2026 18:02:19 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:23 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:23 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:23 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[24-Aug-2026 18:02:24 Asia/Seoul] [UNCAUGHT] Call to undefined method AdminAuth::user() in /hosting/bobjjangs1231/html/tire/admin/stock-requests.php:17
+#0 {main}
+[12-Sep-2026 11:01:33 Asia/Seoul] [UNCAUGHT] in_array(): Argument #2 ($haystack) must be of type array, true given in /hosting/bobjjangs1231/html/tire/admin/inquiries.php:48
+#0 /hosting/bobjjangs1231/html/tire/admin/inquiries.php(48): in_array()
+#1 {main}
+[12-Sep-2026 11:01:54 Asia/Seoul] [UNCAUGHT] in_array(): Argument #2 ($haystack) must be of type array, true given in /hosting/bobjjangs1231/html/tire/admin/inquiries.php:48
+#0 /hosting/bobjjangs1231/html/tire/admin/inquiries.php(48): in_array()
+#1 {main}
+[12-Sep-2026 11:02:25 Asia/Seoul] [SMS 테스트모드] to=01020417435 msg=[타이어탑] 인증번호는 [654742] 입니다. 3분 내로 입력해주세요.
+[12-Sep-2026 11:07:16 Asia/Seoul] [UNCAUGHT] in_array(): Argument #2 ($haystack) must be of type array, true given in /hosting/bobjjangs1231/html/tire/admin/inquiries.php:48
+#0 /hosting/bobjjangs1231/html/tire/admin/inquiries.php(48): in_array()
+#1 {main}
+[12-Sep-2026 11:09:29 Asia/Seoul] [SMS 테스트모드] to=01020417435 msg=[타이어탑] 인증번호는 [675884] 입니다. 3분 내로 입력해주세요.
+[12-Sep-2026 11:13:21 Asia/Seoul] [SMS 테스트모드] to=01020417435 msg=[타이어탑] 인증번호는 [739231] 입니다. 3분 내로 입력해주세요.
+[12-Sep-2026 11:16:52 Asia/Seoul] [SMS 테스트모드] to=01020417435 msg=[타이어탑] 인증번호는 [268045] 입니다. 3분 내로 입력해주세요.
+[12-Sep-2026 11:20:07 Asia/Seoul] [SMS 테스트모드] to=01020417435 msg=[타이어탑] 인증번호는 [155470] 입니다. 3분 내로 입력해주세요.
+[28-Sep-2026 15:10:21 Asia/Seoul] [ensure_reservations_table] tt_reservations 테이블 생성 완료
+[28-Sep-2026 16:00:35 Asia/Seoul] [ensure_chatbot_table] tt_chatbot_entries 테이블 생성 + 시드 6건 등록
+[28-Sep-2026 16:43:45 Asia/Seoul] [ensure_tax_invoice_table] tt_tax_invoices 테이블 생성 완료
+[28-Sep-2026 16:43:46 Asia/Seoul] [ensure_tax_invoice_fax_schema] tt_tax_invoice_faxes 테이블 생성 완료
+[06-Oct-2026 20:31:33 Asia/Seoul] [UNCAUGHT] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.sku' in 'field list' in /hosting/bobjjangs1231/html/tire/admin/stock-movements.php:44
+#0 /hosting/bobjjangs1231/html/tire/admin/stock-movements.php(44): PDO->prepare()
+#1 {main}
+[06-Oct-2026 20:42:14 Asia/Seoul] [UNCAUGHT] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.sku' in 'field list' in /hosting/bobjjangs1231/html/tire/admin/stock-movements.php:44
+#0 /hosting/bobjjangs1231/html/tire/admin/stock-movements.php(44): PDO->prepare()
+#1 {main}
+[06-Oct-2026 21:15:56 Asia/Seoul] [UNCAUGHT] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.sku' in 'field list' in /hosting/bobjjangs1231/html/tire/admin/stock-movements.php:44
+#0 /hosting/bobjjangs1231/html/tire/admin/stock-movements.php(44): PDO->prepare()
+#1 {main}
+[06-Oct-2026 22:09:28 Asia/Seoul] [UNCAUGHT] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.sku' in 'field list' in /hosting/bobjjangs1231/html/tire/admin/stock-movements.php:44
+#0 /hosting/bobjjangs1231/html/tire/admin/stock-movements.php(44): PDO->prepare()
+#1 {main}
+[06-Oct-2026 22:12:43 Asia/Seoul] [ensure_coupon_tables] tt_coupons 누락 컬럼 'is_signup_pack' 추가
+[07-Oct-2026 01:26:27 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 01:26:29 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 01:26:32 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 01:27:12 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 01:27:34 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 09:08:36 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 09:45:19 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 09:47:44 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 09:50:30 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 09:51:06 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 09:54:36 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 13:02:58 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 13:04:11 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 13:05:26 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 14:51:50 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 14:51:52 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 14:54:14 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 14:54:17 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 14:54:18 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 16:49:34 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 16:51:31 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 16:51:44 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 16:51:53 Asia/Seoul] [settle_fetch_orders] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'o.payment_method' in 'field list'
+[07-Oct-2026 22:02:39 Asia/Seoul] [CHECKOUT FAIL] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'payment_method' in 'field list'
+[07-Oct-2026 22:02:58 Asia/Seoul] [CHECKOUT FAIL] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'payment_method' in 'field list'
+[07-Oct-2026 22:48:43 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 22:49:15 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 22:49:31 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 22:55:51 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 22:57:07 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 23:27:11 Asia/Seoul] [UNCAUGHT] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'payment_status' in 'field list' in /hosting/bobjjangs1231/html/tire/tax-invoice.php:28
+#0 /hosting/bobjjangs1231/html/tire/tax-invoice.php(28): PDO->prepare()
+#1 {main}
+[07-Oct-2026 23:28:36 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 23:37:48 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 23:43:05 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 23:57:49 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 23:57:56 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[07-Oct-2026 23:58:53 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[08-Oct-2026 00:11:24 Asia/Seoul] [ensure_reservations_table] payment_method ENUM→VARCHAR 전환 + 기존값 마이그레이션 완료
+[08-Oct-2026 00:11:25 Asia/Seoul] [ensure_order_tracking_columns] tt_orders.payment_status 컬럼 자동 보강 완료
+[08-Oct-2026 00:12:09 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[08-Oct-2026 00:14:30 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[12-Oct-2026 14:43:36 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[12-Oct-2026 14:45:17 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[12-Oct-2026 15:56:59 Asia/Seoul] [ensure_order_tracking_columns] tt_orders.status ENUM 통합 전환 완료(레거시·앱 라벨 공존)
+[12-Oct-2026 17:24:39 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[12-Oct-2026 17:51:39 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
+[19-Oct-2026 10:28:12 Asia/Seoul] [product-list optmeta] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'vehicle_type' in 'field list'
