@@ -1,0 +1,6 @@
+[2026-08-13 22:57:06] INSERT 시도 uid=3 pid=2 oid=4 rating=5
+[2026-08-13 22:57:06] PDOException! sqlstate=42S22 uid=3 pid=2 oid=4 driver_msg=Unknown column 'order_item_id' in 'field list'
+[2026-08-13 22:57:40] INSERT 시도 uid=3 pid=3 oid=2 rating=5
+[2026-08-13 22:57:40] PDOException! sqlstate=42S22 uid=3 pid=3 oid=2 driver_msg=Unknown column 'order_item_id' in 'field list'
+[2026-08-13 22:57:45] INSERT 시도 uid=3 pid=2 oid=4 rating=5
+[2026-08-13 22:57:45] PDOException! sqlstate=42S22 uid=3 pid=2 oid=4 driver_msg=Unknown column 'order_item_id' in 'field list'

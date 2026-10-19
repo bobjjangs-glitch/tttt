@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>타이어 상품 CSV 변환기 (공급사 원본 → 관리자 등록 양식)</title>
+<style>
+  :root {
+    --primary: #1a73e8;
+    --danger: #d93025;
+    --success: #188038;
+    --bg: #f6f8fa;
+    --border: #d0d7de;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    background: var(--bg);
+    margin: 0;
+    padding: 40px 20px;
+    color: #1f2328;
+  }
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px;
+  }
+  h1 { font-size: 22px; margin-top: 0; }
+  p.desc { color: #57606a; line-height: 1.6; }
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    color: #57606a;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    margin: 20px 0;
+  }
+  .drop-zone.dragover {
+    border-color: var(--primary);
+    background: #eaf1fd;
+  }
+  input[type=file] { display: none; }
+  .btn {
+    display: inline-block;
+    padding: 10px 20px;
+    border-radius: 6px;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+  .btn:disabled { background: #a8c7fa; cursor: not-allowed; }
+  .btn.secondary { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+  #status {
+    margin: 16px 0;
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    display: none;
+  }
+  #status.ok { display: block; background: #e6f4ea; color: var(--success); border: 1px solid var(--success); }
+  #status.err { display: block; background: #fce8e6; color: var(--danger); border: 1px solid var(--danger); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+    font-size: 12px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 6px 8px;
+    text-align: left;
+    white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  th { background: #f0f2f5; }
+  .preview-wrap { overflow-x: auto; margin-top: 12px; }
+  .meta { font-size: 13px; color: #57606a; margin-top: 8px; }
+  .warn { color: #b45309; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>타이어 상품 CSV 변환기</h1>
+  <p class="desc">
+    공급사에서 받은 원본 CSV(카테고리·브랜드·사이즈·재고 등, 계절성/비고 포함 21개 컬럼)를 업로드하면
+    관리자 상품등록 양식(상품ID 포함 20개 컬럼)에 맞게 자동으로 변환해서 다운로드할 수 있습니다.
+    <strong>상품명 칸에는 원본의 상품명이 아니라 패턴명 값이 들어갑니다.</strong>
+    변환은 브라우저 내에서만 처리되며 서버로 데이터가 전송되지 않습니다.
+  </p>
+
+  <div class="drop-zone" id="dropZone">
+    <div>여기로 CSV 파일을 드래그하거나 클릭해서 선택하세요</div>
+    <div style="font-size:12px;margin-top:6px;color:#8a949e;">.csv 파일만 지원 (UTF-8 인코딩)</div>
+    <input type="file" id="fileInput" accept=".csv" />
+  </div>
+
+  <div id="status"></div>
+
+  <div id="actions" style="display:none;">
+    <button class="btn" id="downloadBtn">변환된 CSV 다운로드</button>
+    <button class="btn secondary" id="resetBtn">다른 파일 다시 선택</button>
+    <div class="meta" id="metaInfo"></div>
+  </div>
+
+  <div class="preview-wrap">
+    <table id="previewTable"></table>
+  </div>
+</div>
+
+<script>
+(function () {
+  // 관리자 등록 양식(첫 번째 양식)이 요구하는 필드 순서
+  // 상품ID는 신규 발급 항목이므로 원본에 없고 항상 빈 값으로 채운다.
+  const TARGET_FIELDS = [
+    "카테고리", "브랜드", "상품명", "패턴코드", "사이즈", "하중속도규격",
+    "원산지", "단면폭", "편평비", "림직경", "패턴명", "OEM", "Tech",
+    "Runflat", "정상가", "판매가", "공급가", "재고", "상태"
+  ];
+
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const statusBox = document.getElementById('status');
+  const actions = document.getElementById('actions');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const previewTable = document.getElementById('previewTable');
+  const metaInfo = document.getElementById('metaInfo');
+
+  let convertedRows = null;
+  let sourceFileName = 'converted.csv';
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) {
+      handleFile(e.dataTransfer.files[0]);
+    }
+  });
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) handleFile(e.target.files[0]);
+  });
+  resetBtn.addEventListener('click', () => {
+    convertedRows = null;
+    fileInput.value = '';
+    actions.style.display = 'none';
+    previewTable.innerHTML = '';
+    hideStatus();
+  });
+  downloadBtn.addEventListener('click', () => {
+    if (!convertedRows) return;
+    const outName = sourceFileName.replace(/\.csv$/i, '') + '_상품등록양식.csv';
+    downloadCSV(convertedRows, outName);
+  });
+
+  function showStatus(message, type) {
+    statusBox.textContent = message;
+    statusBox.className = type === 'error' ? 'err' : 'ok';
+  }
+  function hideStatus() {
+    statusBox.className = '';
+    statusBox.textContent = '';
+  }
+
+  function handleFile(file) {
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      showStatus('CSV 파일만 업로드할 수 있습니다.', 'error');
+      return;
+    }
+    sourceFileName = file.name;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const rawRows = parseCSV(text);
+        const result = transform(rawRows);
+        convertedRows = result.rows;
+        renderPreview(convertedRows);
+        actions.style.display = 'block';
+
+        let meta = `원본 ${rawRows.length - 1}행 중 유효 데이터 ${result.rows.length - 1}행이 변환되었습니다. (헤더 1행 제외)`;
+        if (result.fallbackCount > 0) {
+          meta += ` / 패턴명이 비어 있어 원래 상품명으로 대체한 행: ${result.fallbackCount}건`;
+        }
+        metaInfo.innerHTML = result.fallbackCount > 0
+          ? `${meta} <span class="warn">⚠ 대체된 행은 다운로드 후 반드시 확인하세요.</span>`
+          : meta;
+
+        showStatus('변환이 완료되었습니다. 상품명 칸에는 패턴명 값이 들어갔습니다. 아래 미리보기를 확인한 후 다운로드하세요.', 'ok');
+      } catch (err) {
+        actions.style.display = 'none';
+        previewTable.innerHTML = '';
+        showStatus('변환 실패: ' + err.message, 'error');
+      }
+    };
+    reader.onerror = () => showStatus('파일을 읽는 중 오류가 발생했습니다.', 'error');
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  // RFC4180 기반 CSV 파서: 인용부호 안의 콤마/줄바꿈/이중인용부호를 정확히 처리한다.
+  function parseCSV(text) {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+    let i = 0;
+    const len = text.length;
+
+    // Excel/Windows에서 저장한 BOM 제거
+    if (text.charCodeAt(0) === 0xFEFF) {
+      text = text.slice(1);
+    }
+
+    while (i < len) {
+      const ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+          inQuotes = false; i++; continue;
+        }
+        field += ch; i++; continue;
+      } else {
+        if (ch === '"') { inQuotes = true; i++; continue; }
+        if (ch === ',') { row.push(field); field = ''; i++; continue; }
+        if (ch === '\r') { i++; continue; }
+        if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+        field += ch; i++; continue;
+      }
+    }
+    if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+    return rows.filter(r => !(r.length === 1 && r[0].trim() === ''));
+  }
+
+  function csvField(value) {
+    const v = (value === null || value === undefined) ? '' : String(value);
+    if (/[",\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+    return v;
+  }
+
+  function transform(rows) {
+    if (rows.length === 0) throw new Error('빈 파일입니다.');
+    const header = rows[0].map(h => h.trim());
+
+    const idxMap = {};
+    TARGET_FIELDS.forEach(f => { idxMap[f] = header.indexOf(f); });
+
+    const missing = TARGET_FIELDS.filter(f => idxMap[f] === -1);
+    if (missing.length > 0) {
+      throw new Error('원본 CSV에 다음 필수 컬럼이 없습니다 → ' + missing.join(', '));
+    }
+
+    const outHeader = ['상품ID', ...TARGET_FIELDS];
+    const outRows = [outHeader];
+    let fallbackCount = 0;
+
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (row.length === 1 && row[0].trim() === '') continue; // 완전 빈 행 skip
+
+      const outRow = [''];
+      TARGET_FIELDS.forEach(f => {
+        let value;
+        if (f === '상품명') {
+          // 상품명 칸에는 원본 상품명 대신 패턴명 값을 넣는다.
+          const patternIdx = idxMap['패턴명'];
+          const patternValue = row[patternIdx] !== undefined ? row[patternIdx].trim() : '';
+          if (patternValue !== '') {
+            value = patternValue;
+          } else {
+            // 패턴명이 비어 있는 예외 상황에서만 원래 상품명으로 대체
+            const nameIdx = idxMap['상품명'];
+            value = row[nameIdx] !== undefined ? row[nameIdx] : '';
+            fallbackCount++;
+          }
+        } else {
+          const idx = idxMap[f];
+          value = row[idx] !== undefined ? row[idx] : '';
+        }
+        outRow.push(value);
+      });
+      outRows.push(outRow);
+    }
+    return { rows: outRows, fallbackCount };
+  }
+
+  function renderPreview(rows) {
+    const maxPreviewRows = 11; // 헤더 + 10행
+    const previewRows = rows.slice(0, maxPreviewRows);
+    let html = '<thead><tr>' + previewRows[0].map(h => `<th>${escapeHtml(h)}</th>`).join('') + '</tr></thead><tbody>';
+    for (let i = 1; i < previewRows.length; i++) {
+      html += '<tr>' + previewRows[i].map(c => `<td>${escapeHtml(c)}</td>`).join('') + '</tr>';
+    }
+    html += '</tbody>';
+    previewTable.innerHTML = html;
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function downloadCSV(rows, filename) {
+    const csvText = rows.map(r => r.map(csvField).join(',')).join('\r\n');
+    // Excel에서 한글이 깨지지 않도록 UTF-8 BOM 삽입
+    const blob = new Blob(['\uFEFF' + csvText], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+})();
+</script>
+</body>
+</html>
