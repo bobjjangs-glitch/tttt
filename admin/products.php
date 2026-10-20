@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../core/bootstrap.php';
 AdminAuth::requirePermission('products');
 ensure_stock_movement_tables();
+ensure_ecount_tables(Database::connection()); // [신규] 이카운트 관련 컬럼/테이블 자동 생성 보장
 
 $pdo = Database::connection();
 
@@ -56,7 +57,6 @@ function admin_delete_all_products(PDO $pdo): int
 /**
  * 전체 페이지 수가 많아도 링크가 잘리지 않도록,
  * 현재 페이지 기준 앞뒤 $window개 + 처음/끝 페이지만 뽑아 "..." 로 축약한 배열을 만든다.
- * 반환값 예: [1, '…', 4, 5, 6, 7, 8, '…', 42]
  */
 function admin_build_page_range(int $current, int $total, int $window = 2): array
 {
@@ -82,8 +82,6 @@ function admin_build_page_range(int $current, int $total, int $window = 2): arra
 
 /**
  * 메인화면에서 접수된 재고 요청 중 '대기(pending)' 상태인 건수를 센다.
- * tt_stock_requests 테이블이 아직 생성되지 않은 초기 상태(관리자가 재고요청 관리 화면을
- * 한 번도 열어보지 않은 경우)에도 상품 목록 화면 전체가 죽지 않도록 예외를 방어적으로 처리한다.
  */
 function admin_count_pending_stock_requests(PDO $pdo): int
 {
@@ -92,6 +90,30 @@ function admin_count_pending_stock_requests(PDO $pdo): int
     } catch (Throwable $e) {
         return 0;
     }
+}
+
+/**
+ * [신규] 이카운트 연동 현황 요약 — 품목코드 미등록 수 / 전송대기 수 / 전송실패 수.
+ * tt_ecount_sync_queue 테이블이 아직 없는 서버(배포 전)에서도 화면이 죽지 않도록 방어한다.
+ */
+function admin_get_ecount_summary(PDO $pdo): array
+{
+    $summary = ['unmapped' => 0, 'pending' => 0, 'failed' => 0, 'table_missing' => false];
+    try {
+        $summary['unmapped'] = (int)$pdo->query(
+            "SELECT COUNT(*) FROM tt_products WHERE status='active' AND (ecount_item_cd IS NULL OR ecount_item_cd = '')"
+        )->fetchColumn();
+    } catch (Throwable $e) {
+        $summary['table_missing'] = true;
+        return $summary; // ecount_item_cd 컬럼 자체가 없으면 큐 조회도 의미 없음
+    }
+    try {
+        $summary['pending'] = (int)$pdo->query("SELECT COUNT(*) FROM tt_ecount_sync_queue WHERE status='pending'")->fetchColumn();
+        $summary['failed']  = (int)$pdo->query("SELECT COUNT(*) FROM tt_ecount_sync_queue WHERE status='failed'")->fetchColumn();
+    } catch (Throwable $e) {
+        $summary['table_missing'] = true;
+    }
+    return $summary;
 }
 
 if (is_post() && ($_POST['form_type'] ?? '') === 'toggle_status') {
@@ -125,8 +147,7 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'delete_products') {
     redirect('/admin/products.php');
 }
 
-/* [신규] 상품 전체 삭제 - 필터 조건 무시하고 DB의 모든 상품을 삭제하는 파괴적 동작.
-   1) CSRF 검증, 2) super 권한 검증, 3) 확인 문구("전체삭제") 서버측 재검증까지 3중 체크 후에만 실행한다. */
+/* [신규] 상품 전체 삭제 - 필터 조건 무시하고 DB의 모든 상품을 삭제하는 파괴적 동작. */
 if (is_post() && ($_POST['form_type'] ?? '') === 'delete_all_products') {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
         flash('admin_error', '잘못된 요청입니다.');
@@ -159,6 +180,7 @@ $brandId    = (int)($_GET['brand_id'] ?? 0);
 $statusFilter = $_GET['status'] ?? '';
 $stockLowFilter = isset($_GET['stock_low']) && $_GET['stock_low'] === '1';
 $stockZeroFilter = isset($_GET['stock_zero']) && $_GET['stock_zero'] === '1';
+$ecountFilter = $_GET['ecount'] ?? ''; // [신규] unmapped / pending / failed
 $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = 20;
 $offset = ($page - 1) * $perPage;
@@ -198,6 +220,10 @@ if ($stockLowFilter) {
 if ($stockZeroFilter) {
     $where .= ' AND p.stock <= 0';
 }
+/* [신규] ERP 연동 상태 필터 — 미매핑 상품만 모아보기 */
+if ($ecountFilter === 'unmapped') {
+    $where .= " AND (p.ecount_item_cd IS NULL OR p.ecount_item_cd = '')";
+}
 
 /* 재고 부족/품절 상품 수 (알림 배너용) */
 try {
@@ -211,26 +237,61 @@ try {
     $zeroCount = 0;
 }
 
+/* [신규] 이카운트 연동 현황 요약 */
+$ecountSummary = admin_get_ecount_summary($pdo);
+
 $countStmt = $pdo->prepare("SELECT COUNT(*) FROM tt_products p WHERE {$where}");
 $countStmt->execute($params);
 $totalCount = (int)$countStmt->fetchColumn();
 
-$listStmt = $pdo->prepare("SELECT p.id, p.name, p.model, p.spec, p.origin, p.dot_code, p.thumbnail_url,
-                                   p.price_original, p.price_sale, p.stock, p.min_stock, p.status, p.sales_count, p.created_at,
-                                   c.name AS category_name, b.name AS brand_name
-                            FROM tt_products p
-                            LEFT JOIN tt_categories c ON c.id = p.category_id
-                            LEFT JOIN tt_brands b ON b.id = p.brand_id
-                            WHERE {$where}
-                            ORDER BY p.id DESC
-                            LIMIT :limit OFFSET :offset");
-foreach ($params as $k => $v) {
-    $listStmt->bindValue($k, $v);
+/* [변경] ecount_item_cd / ecount_wh_cd / ecount_synced_at 과 최근 큐 상태(eq)를 함께 조회.
+   tt_ecount_sync_queue가 없는 서버에서도 목록 자체는 죽지 않도록 try/catch 이중 경로를 둔다. */
+try {
+    $listStmt = $pdo->prepare("SELECT p.id, p.name, p.model, p.spec, p.origin, p.dot_code, p.thumbnail_url,
+                                       p.price_original, p.price_sale, p.stock, p.min_stock, p.status, p.sales_count, p.created_at,
+                                       p.ecount_item_cd, p.ecount_wh_cd, p.ecount_synced_at,
+                                       eq.latest_status AS ecount_latest_status, eq.latest_error AS ecount_latest_error,
+                                       c.name AS category_name, b.name AS brand_name
+                                FROM tt_products p
+                                LEFT JOIN tt_categories c ON c.id = p.category_id
+                                LEFT JOIN tt_brands b ON b.id = p.brand_id
+                                LEFT JOIN (
+                                    SELECT q1.product_id, q1.status AS latest_status, q1.last_error AS latest_error
+                                    FROM tt_ecount_sync_queue q1
+                                    INNER JOIN (
+                                        SELECT product_id, MAX(id) AS max_id FROM tt_ecount_sync_queue GROUP BY product_id
+                                    ) q2 ON q1.product_id = q2.product_id AND q1.id = q2.max_id
+                                ) eq ON eq.product_id = p.id
+                                WHERE {$where}
+                                ORDER BY p.id DESC
+                                LIMIT :limit OFFSET :offset");
+    foreach ($params as $k => $v) {
+        $listStmt->bindValue($k, $v);
+    }
+    $listStmt->bindValue('limit', $perPage, PDO::PARAM_INT);
+    $listStmt->bindValue('offset', $offset, PDO::PARAM_INT);
+    $listStmt->execute();
+    $products = $listStmt->fetchAll();
+} catch (Throwable $e) {
+    /* tt_ecount_sync_queue 미생성 등으로 조인 실패 시, ERP 컬럼 없이라도 목록은 반드시 떠야 한다. */
+    error_log('[admin/products] ecount join fallback: ' . $e->getMessage());
+    $listStmt = $pdo->prepare("SELECT p.id, p.name, p.model, p.spec, p.origin, p.dot_code, p.thumbnail_url,
+                                       p.price_original, p.price_sale, p.stock, p.min_stock, p.status, p.sales_count, p.created_at,
+                                       c.name AS category_name, b.name AS brand_name
+                                FROM tt_products p
+                                LEFT JOIN tt_categories c ON c.id = p.category_id
+                                LEFT JOIN tt_brands b ON b.id = p.brand_id
+                                WHERE {$where}
+                                ORDER BY p.id DESC
+                                LIMIT :limit OFFSET :offset");
+    foreach ($params as $k => $v) {
+        $listStmt->bindValue($k, $v);
+    }
+    $listStmt->bindValue('limit', $perPage, PDO::PARAM_INT);
+    $listStmt->bindValue('offset', $offset, PDO::PARAM_INT);
+    $listStmt->execute();
+    $products = $listStmt->fetchAll();
 }
-$listStmt->bindValue('limit', $perPage, PDO::PARAM_INT);
-$listStmt->bindValue('offset', $offset, PDO::PARAM_INT);
-$listStmt->execute();
-$products = $listStmt->fetchAll();
 
 $totalPages = max(1, (int)ceil($totalCount / $perPage));
 $pageRange  = admin_build_page_range($page, $totalPages, 2);
@@ -240,6 +301,31 @@ $brands     = $pdo->query("SELECT id, name FROM tt_brands ORDER BY name")->fetch
 $pendingStockRequestCount = admin_count_pending_stock_requests($pdo);
 
 $backQuery = http_build_query(['kw' => $keyword, 'category_id' => $categoryId, 'brand_id' => $brandId, 'status' => $statusFilter, 'page' => $page]);
+
+/**
+ * [신규] 상품 1건의 ERP 연동 상태 배지 HTML을 만든다.
+ * 우선순위: 품목코드 미등록 > 직전 전송 실패 > 전송 대기중 > 한번도 동기화 안됨 > 정상 연동됨.
+ */
+function admin_render_ecount_badge(array $p): string
+{
+    $itemCd = trim((string)($p['ecount_item_cd'] ?? ''));
+    if ($itemCd === '') {
+        return '<span class="admin-mini-badge" style="background:#f1f5f9;color:#64748b;" title="상품 수정 화면에서 이카운트 품목코드를 등록하세요.">⚪ 미연동</span>';
+    }
+    $latestStatus = $p['ecount_latest_status'] ?? null;
+    if ($latestStatus === 'failed') {
+        $err = h(mb_substr((string)($p['ecount_latest_error'] ?? ''), 0, 80));
+        return '<span class="admin-mini-badge" style="background:#fee2e2;color:#b91c1c;" title="' . $err . '">🔴 전송 실패</span>';
+    }
+    if ($latestStatus === 'pending') {
+        return '<span class="admin-mini-badge" style="background:#fef9c3;color:#854d0e;">🟡 전송 대기중</span>';
+    }
+    $syncedAt = $p['ecount_synced_at'] ?? null;
+    if (!$syncedAt) {
+        return '<span class="admin-mini-badge" style="background:#fef9c3;color:#854d0e;">🟡 품목코드 등록됨(동기화 이력 없음)</span>';
+    }
+    return '<span class="admin-mini-badge" style="background:#dcfce7;color:#166534;" title="마지막 동기화: ' . h($syncedAt) . '">🟢 연동됨</span>';
+}
 
 $pageTitle = '상품 관리';
 require __DIR__ . '/includes/header.php';
@@ -300,6 +386,36 @@ require __DIR__ . '/includes/header.php';
   </div>
 </div>
 
+<?php /* [신규] 이카운트(ERP) 연동 현황 요약 카드 — 화면 최상단에서 바로 보이도록 배치 */ ?>
+<div class="admin-card" style="margin-top:14px;border:1px solid #c7d2fe;background:#eef2ff;">
+  <h2 style="color:#3730a3;">🔗 이카운트(ERP) 연동 현황</h2>
+  <?php if ($ecountSummary['table_missing']): ?>
+    <p style="color:#7f1d1d;font-size:13px;line-height:1.6;">
+      ⚠ 이카운트 연동 테이블/컬럼이 아직 생성되지 않았습니다. <code>core/EcountClient.php</code>가 서버에 배포되고
+      관리자 페이지를 한 번이라도 거쳐야 <code>ensure_ecount_tables()</code>가 자동으로 컬럼을 만듭니다.
+      이 메시지가 계속 보이면 배포 자체가 안 된 것이니 서버 파일을 다시 확인해 주세요.
+    </p>
+  <?php else: ?>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a href="<?= BASE_URL ?>/admin/products.php?ecount=unmapped" class="btn-admin-excel" style="background:#fff;color:#4338ca;font-weight:700;border:1px solid #c7d2fe;">
+        ⚪ 품목코드 미등록 <?= number_format($ecountSummary['unmapped']) ?>건
+      </a>
+      <span class="btn-admin-excel" style="background:#fff;color:#854d0e;font-weight:700;border:1px solid #fde68a;">
+        🟡 전송 대기중 <?= number_format($ecountSummary['pending']) ?>건
+      </span>
+      <?php if ($ecountSummary['failed'] > 0): ?>
+      <span class="btn-admin-excel" style="background:#fff;color:#b91c1c;font-weight:700;border:1px solid #fecaca;">
+        🔴 전송 실패 <?= number_format($ecountSummary['failed']) ?>건 — cron/ecount_push_worker.php 로그 확인 필요
+      </span>
+      <?php endif; ?>
+    </div>
+    <p style="color:#4338ca;font-size:12px;margin-top:8px;">
+      ※ 이 숫자는 큐(tt_ecount_sync_queue)에 적재된 기록 기준입니다. 서버에 cron이 등록되어 있지 않으면
+      "대기중" 건수가 계속 쌓이기만 하고 실제 이카운트에는 영원히 반영되지 않습니다. 반드시 cron 등록 여부를 확인하세요.
+    </p>
+  <?php endif; ?>
+</div>
+
 <?php if (AdminAuth::isSuper()): ?>
 <div class="admin-card" style="margin-top:14px;border:1px solid #f87171;background:#fff5f5;">
   <h2 style="color:#b91c1c;">⚠ 위험 구역: 상품 전체 삭제</h2>
@@ -332,12 +448,13 @@ require __DIR__ . '/includes/header.php';
         <th>대표판매가</th>
         <th>재고</th>
         <th>상태</th>
+        <th>ERP연동</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
     <?php if (empty($products)): ?>
-      <tr><td colspan="12" class="admin-empty-row">📦 등록된 상품이 없습니다.</td></tr>
+      <tr><td colspan="13" class="admin-empty-row">📦 등록된 상품이 없습니다.</td></tr>
     <?php else: foreach ($products as $p): ?>
       <tr>
         <td><input type="checkbox" name="product_ids[]" value="<?= (int)$p['id'] ?>" class="chkRow" form="bulkDeleteForm"></td>
@@ -374,6 +491,7 @@ require __DIR__ . '/includes/header.php';
             </button>
           </form>
         </td>
+        <td><?= admin_render_ecount_badge($p) ?></td>
         <td><a href="<?= BASE_URL ?>/admin/product_form.php?id=<?= (int)$p['id'] ?>" class="admin-link-btn">수정</a></td>
       </tr>
     <?php endforeach; endif; ?>

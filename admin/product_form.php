@@ -173,6 +173,7 @@ ensure_product_main_images_table($pdo);
 ensure_product_detail_images_table($pdo);
 ensure_product_spec_columns($pdo);
 ensure_stock_movement_tables();
+ensure_ecount_tables($pdo); /* [ERP연동 추가] ecount_item_cd / ecount_wh_cd / ecount_synced_at 컬럼 자동 보장 (core/EcountClient.php 정의) */
 
 /* ---------- 각종 다중 이미지 업로드 처리/검증 ---------- */
 function admin_handle_multi_images_upload(array $files, int $maxSizeMb, string $subDir = 'products'): array {
@@ -237,6 +238,8 @@ $product = [
     'rim_diameter'=>'', 'pattern_name'=>'', 'oem'=>'', 'tech'=>'', 'runflat'=>'N',
     /* [신규] 노출 배지 기본값 */
     'car_type'=>'', 'grade'=>'', 'feature_tags'=>'',
+    /* [ERP연동 추가] 이카운트 품목코드/창고코드 기본값 */
+    'ecount_item_cd'=>'', 'ecount_wh_cd'=>'',
 ];
 $options      = [];
 $mainImages   = []; // [['id'=>, 'image_url'=>, 'sort_order'=>], ...]
@@ -289,6 +292,9 @@ if (is_post()) {
     $spec          = trim($_POST['spec'] ?? '');
     $origin        = trim($_POST['origin'] ?? '');
     $dotCode       = trim($_POST['dot_code'] ?? '');
+    /* [ERP연동 추가] 이카운트 품목코드/창고코드 입력값 파싱 */
+    $ecountItemCd  = trim($_POST['ecount_item_cd'] ?? '');
+    $ecountWhCd    = trim($_POST['ecount_wh_cd'] ?? '');
     $priceOriginal = (int)($_POST['price_original'] ?? 0);
     $priceSale     = (int)($_POST['price_sale'] ?? 0);
     $supplyPrice   = (int)($_POST['supply_price'] ?? 0);
@@ -342,6 +348,16 @@ if (is_post()) {
     if ($priceSale>0 && $priceOriginal>0 && $priceSale>$priceOriginal) $errors[]='대표판매가가 정상가보다 클 수 없습니다.';
     if ($supplyPrice<0) $errors[]='공급가는 0 이상이어야 합니다.';
     if ($stock<0) $errors[]='재고는 0 이상이어야 합니다.';
+
+    /* [ERP연동 추가] 품목코드 중복 사전 검증 — DB UNIQUE 인덱스에 걸리기 전에 친절한 한국어 오류로 먼저 막는다. */
+    if ($ecountItemCd !== '') {
+        $dupStmt = $pdo->prepare('SELECT id, name FROM tt_products WHERE ecount_item_cd = :cd AND id != :id LIMIT 1');
+        $dupStmt->execute(['cd' => $ecountItemCd, 'id' => $isEdit ? $productId : 0]);
+        $dup = $dupStmt->fetch();
+        if ($dup) {
+            $errors[] = "이카운트 품목코드 '{$ecountItemCd}'는 이미 다른 상품(#{$dup['id']} {$dup['name']})에 등록되어 있습니다. 한 품목코드는 상품 1개에만 연결할 수 있습니다.";
+        }
+    }
 
     $optDotCode    = $_POST['opt_dot_code']    ?? [];
     $optPriceSale  = $_POST['opt_price_sale']  ?? [];
@@ -441,6 +457,9 @@ if (is_post()) {
                 'category_id'=>$categoryId,'brand_id'=>$brandId,'name'=>$name,
                 'model'=>$model!==''?$model:null,'spec'=>$spec!==''?$spec:null,
                 'origin'=>$origin!==''?$origin:null,'dot_code'=>$dotCode!==''?$dotCode:null,
+                /* [ERP연동 추가] */
+                'ecount_item_cd'=>$ecountItemCd!==''?$ecountItemCd:null,
+                'ecount_wh_cd'=>$ecountWhCd!==''?$ecountWhCd:null,
                 'price_original'=>$priceOriginal,
                 'price_sale'=>$priceSale,'supply_price'=>$supplyPrice,'business_price'=>$businessPrice,
                 'biz_price_original'=>$bizPriceOriginal,'biz_supply_price'=>$bizSupplyPrice,
@@ -465,6 +484,7 @@ if (is_post()) {
                 $params['id'] = $productId;
                 $pdo->prepare('UPDATE tt_products SET category_id=:category_id, brand_id=:brand_id, name=:name,
                     model=:model, spec=:spec, origin=:origin, dot_code=:dot_code,
+                    ecount_item_cd=:ecount_item_cd, ecount_wh_cd=:ecount_wh_cd,
                     price_original=:price_original, price_sale=:price_sale, supply_price=:supply_price,
                     business_price=:business_price, biz_price_original=:biz_price_original, biz_supply_price=:biz_supply_price,
                     stock=:stock, min_stock=:min_stock, status=:status, description=:description,
@@ -475,11 +495,13 @@ if (is_post()) {
                     WHERE id=:id')->execute($params);
             } else {
                 $pdo->prepare('INSERT INTO tt_products (category_id,brand_id,name,model,spec,origin,dot_code,
+                    ecount_item_cd, ecount_wh_cd,
                     price_original,price_sale,supply_price,business_price,biz_price_original,biz_supply_price,stock,min_stock,status,description,
                     pattern_code, load_speed_rating, width_mm, aspect_ratio, rim_diameter,
                     pattern_name, oem, tech, runflat,
                     car_type, grade, feature_tags, created_at)
                     VALUES (:category_id,:brand_id,:name,:model,:spec,:origin,:dot_code,
+                    :ecount_item_cd, :ecount_wh_cd,
                     :price_original,:price_sale,:supply_price,:business_price,:biz_price_original,:biz_supply_price,:stock,:min_stock,:status,:description,
                     :pattern_code, :load_speed_rating, :width_mm, :aspect_ratio, :rim_diameter,
                     :pattern_name, :oem, :tech, :runflat,
@@ -577,8 +599,14 @@ if (is_post()) {
 
             /* 재고 변경 이력 기록 (수정에서 재고가 바뀐 경우만) */
             if ($isEdit && (int)($product['stock'] ?? 0) !== $stock) {
-                record_stock_movement($productId, null, 'adjust', $stock - (int)$product['stock'], $stock,
+                $deltaQty = $stock - (int)$product['stock'];
+                record_stock_movement($productId, null, 'adjust', $deltaQty, $stock,
                     '상품 정보 수정 — 재고 변경', (string)AdminAuth::currentAdminName());
+                /* [ERP연동 추가] 관리자가 상품 수정 화면에서 재고를 직접 바꾼 경우도 이카운트 큐에 적재한다.
+                   품목코드가 비어있거나 큐 테이블이 아직 없으면 ecount_queue_stock_change() 내부에서 조용히 스킵된다. */
+                if (function_exists('ecount_queue_stock_change')) {
+                    ecount_queue_stock_change($productId, $deltaQty, '관리자 상품 수정 — 재고 직접 변경');
+                }
             }
 
             flash('admin_success', $isEdit ? '상품이 수정되었습니다.' : '상품이 등록되었습니다.');
@@ -593,7 +621,9 @@ if (is_post()) {
 
     $product = [
         'category_id'=>$categoryId,'brand_id'=>$brandId,'name'=>$name,'model'=>$model,'spec'=>$spec,
-        'origin'=>$origin,'dot_code'=>$dotCode,'price_original'=>$priceOriginal,'price_sale'=>$priceSale,
+        'origin'=>$origin,'dot_code'=>$dotCode,
+        'ecount_item_cd'=>$ecountItemCd,'ecount_wh_cd'=>$ecountWhCd, /* [ERP연동 추가] 저장 실패 시 입력값 유지 */
+        'price_original'=>$priceOriginal,'price_sale'=>$priceSale,
         'supply_price'=>$supplyPrice,'business_price'=>$businessPrice,
         'biz_price_original'=>$bizPriceOriginal,'biz_supply_price'=>$bizSupplyPrice,
         'stock'=>$stock,'status'=>$status,'description'=>$description,
@@ -685,6 +715,8 @@ $checkedTags = array_filter(array_map('trim', explode(',', (string)($product['fe
 .admin-rte-editor{min-height:220px;max-height:520px;overflow-y:auto;padding:14px;font-size:15px;line-height:1.6;color:#1e293b;outline:none;}
 .admin-rte-editor:empty::before{content:"상품 상세 설명을 입력해 주세요.";color:#94a3b8;}
 .admin-rte-editor a{color:#4338ca;text-decoration:underline;}
+/* [ERP연동 추가] */
+.admin-ecount-row{border:1px solid #c7d2fe;background:#eef2ff;border-radius:10px;padding:12px;margin-bottom:14px;}
 </style>
 <div class="admin-card">
   <h2 class="admin-page-title"><?= $pageTitle ?></h2>
@@ -744,6 +776,26 @@ $checkedTags = array_filter(array_map('trim', explode(',', (string)($product['fe
         <option value="active" <?= $product['status']==='active'?'selected':'' ?>>판매중</option>
         <option value="hidden" <?= $product['status']==='hidden'?'selected':'' ?>>숨김</option>
       </select>
+    </div>
+
+    <!-- [ERP연동 추가] 이카운트 품목코드/창고코드 입력 영역 -->
+    <h3 class="admin-form-section-title">🔗 이카운트(ERP) 연동</h3>
+    <div class="admin-ecount-row">
+      <div class="admin-form-row">
+        <label>이카운트 품목코드</label>
+        <input type="text" name="ecount_item_cd" value="<?= h($product['ecount_item_cd'] ?? '') ?>" placeholder="이카운트에 등록된 품목코드와 철자 하나까지 정확히 일치해야 합니다">
+        <p class="admin-form-hint">비워두면 이 상품은 이카운트와 연동되지 않고, 상품관리 목록에 '⚪ 미연동'으로 표시됩니다. 같은 품목코드를 다른 상품에 중복 입력할 수 없습니다.</p>
+      </div>
+      <div class="admin-form-row">
+        <label>이카운트 창고코드 (선택)</label>
+        <input type="text" name="ecount_wh_cd" value="<?= h($product['ecount_wh_cd'] ?? '') ?>" placeholder="비우면 기본 창고(100) 사용">
+        <p class="admin-form-hint">이카운트에서 이 상품의 재고를 관리하는 창고가 기본 창고와 다를 때만 입력하세요.</p>
+      </div>
+      <?php if ($isEdit && !empty($product['ecount_synced_at'])): ?>
+        <p class="admin-form-hint" style="color:#166534;">🟢 마지막 동기화: <?= h((string)$product['ecount_synced_at']) ?></p>
+      <?php elseif ($isEdit && !empty($product['ecount_item_cd'])): ?>
+        <p class="admin-form-hint" style="color:#854d0e;">🟡 품목코드는 등록되어 있으나 아직 동기화 이력이 없습니다. cron 워커(ecount_push_worker.php)가 서버에 등록되어 있는지 확인하세요.</p>
+      <?php endif; ?>
     </div>
 
     <h3 class="admin-form-section-title">타이어 스펙</h3>
