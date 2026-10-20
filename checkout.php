@@ -202,13 +202,6 @@ if (is_post()) {
                 /* 재고 입출고 이력 기록 (출고) */
                 record_stock_movement((int)$it['product_id'], (int)$it['option_id'], 'out', -1 * (int)$it['qty'],
                     (int)$row['stock_qty'] - (int)$it['qty'], "주문 출고 — {$it['name']}", '주문자동');
-                /* [이카운트 연동] 출고분만큼 이카운트 재고도 감소하도록 큐에 적재.
-                   함수가 아직 배포되지 않은 서버라도 결제 자체가 막히지 않도록
-                   function_exists()로 방어한다. 매핑/테이블 미존재 시 함수 내부에서
-                   조용히 스킵되므로 주문 처리에는 영향을 주지 않는다. */
-                if (function_exists('ecount_queue_stock_change')) {
-                    ecount_queue_stock_change((int)$it['product_id'], -1 * (int)$it['qty'], "주문 출고 — {$it['name']}");
-                }
             } else {
                 $lock = $pdo->prepare('SELECT stock FROM tt_products WHERE id = :id FOR UPDATE');
                 $lock->execute(['id' => $it['product_id']]);
@@ -227,10 +220,6 @@ if (is_post()) {
                 /* 재고 입출고 이력 기록 (출고) */
                 record_stock_movement((int)$it['product_id'], null, 'out', -1 * (int)$it['qty'],
                     (int)$row['stock'] - (int)$it['qty'], "주문 출고 — {$it['name']}", '주문자동');
-                /* [이카운트 연동] 출고분만큼 이카운트 재고도 감소하도록 큐에 적재 */
-                if (function_exists('ecount_queue_stock_change')) {
-                    ecount_queue_stock_change((int)$it['product_id'], -1 * (int)$it['qty'], "주문 출고 — {$it['name']}");
-                }
             }
 
             // [FIX] 옵션 자체 가격(price_sale)을 실제 단가로 사용 (247,000원 오표시 버그 수정)
@@ -341,6 +330,21 @@ if (is_post()) {
                 'oid' => $orderId, 'pid' => $d['product_id'], 'optid' => $d['option_id'],
                 'name' => $d['name_snap'], 'price' => $d['price_snap'], 'qty' => $d['qty'],
             ]);
+        }
+
+        /* [신규] 이카운트 동기화 큐 적재 — 주문번호가 확정된 '이 시점'에서만 가능하다.
+           (재고 차감 루프 안에서는 아직 $orderId가 없어 주문과 연결할 수 없었다.)
+           품목코드 미매핑 상품은 함수 내부에서 조용히 스킵되고, 함수 자체가
+           없는 서버에서도 결제가 막히지 않도록 function_exists()로 방어한다. */
+        if (function_exists('ecount_queue_stock_change')) {
+            foreach ($orderItemsData as $d) {
+                ecount_queue_stock_change(
+                    (int)$d['product_id'],
+                    -1 * (int)$d['qty'],
+                    "주문 출고 — {$d['name_snap']} (주문번호 {$orderNo})",
+                    $orderId
+                );
+            }
         }
 
         /* [v46→v48] 상태로그에 결제수단 + 결제상태 + 현금영수증 요청까지 기록.

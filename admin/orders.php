@@ -5,6 +5,9 @@ AdminAuth::requirePermission('orders');
 ensure_order_tracking_columns();
 ensure_stock_movement_tables();
 $pdo = Database::connection();
+if (function_exists('ensure_ecount_queue_order_column')) {
+    ensure_ecount_queue_order_column($pdo);
+}
 
 $statusLabels = [
     'pending'   => '주문접수',
@@ -37,6 +40,64 @@ function admin_delete_orders(PDO $pdo, array $ids): int
         error_log('[admin/orders delete] ' . $e->getMessage());
         return -1;
     }
+}
+
+/**
+ * [신규] 주문목록에 쓸 "이카운트 연동 현황" 배지 데이터를 일괄 조회한다.
+ * tt_ecount_sync_queue 테이블/order_id 컬럼이 없는 서버에서도 안전하게 빈 배열을 반환한다.
+ */
+function admin_ecount_order_badges(PDO $pdo, array $orderIds): array
+{
+    $orderIds = array_values(array_unique(array_filter(array_map('intval', $orderIds), fn($v) => $v > 0)));
+    if (empty($orderIds)) return [];
+
+    try {
+        $exists = $pdo->query("SHOW TABLES LIKE 'tt_ecount_sync_queue'")->fetchColumn();
+        if (!$exists) return [];
+        $cols = $pdo->query("SHOW COLUMNS FROM tt_ecount_sync_queue")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('order_id', $cols, true)) return []; // order_id 컬럼이 아직 없는 구버전
+
+        $placeholders = implode(',', array_fill(0, count($orderIds), '?'));
+        $stmt = $pdo->prepare("
+            SELECT order_id,
+                   SUM(status = 'pending') AS pending_cnt,
+                   SUM(status = 'sent')    AS sent_cnt,
+                   SUM(status = 'failed')  AS failed_cnt,
+                   COUNT(*) AS total_cnt
+            FROM tt_ecount_sync_queue
+            WHERE order_id IN ({$placeholders})
+            GROUP BY order_id
+        ");
+        $stmt->execute($orderIds);
+        $result = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $result[(int)$row['order_id']] = [
+                'pending' => (int)$row['pending_cnt'],
+                'sent'    => (int)$row['sent_cnt'],
+                'failed'  => (int)$row['failed_cnt'],
+                'total'   => (int)$row['total_cnt'],
+            ];
+        }
+        return $result;
+    } catch (Throwable $e) {
+        error_log('[admin_ecount_order_badges] ' . $e->getMessage());
+        return [];
+    }
+}
+
+/** [신규] ERP 연동 배지 HTML */
+function admin_ecount_badge_html(?array $summary): string
+{
+    if (!$summary || $summary['total'] === 0) {
+        return '<span style="color:#94a3b8;font-size:11px;font-weight:700;" title="이카운트 품목코드가 매핑된 상품이 없거나 연동 대상이 아닙니다">⚪ 미연동</span>';
+    }
+    if ($summary['failed'] > 0) {
+        return '<span style="color:#dc2626;font-size:11px;font-weight:800;" title="이카운트 전송 실패 ' . $summary['failed'] . '건">🔴 실패(' . $summary['failed'] . ')</span>';
+    }
+    if ($summary['pending'] > 0) {
+        return '<span style="color:#d97706;font-size:11px;font-weight:800;" title="이카운트 전송 대기 ' . $summary['pending'] . '건 — 1분 내 자동 전송됩니다">🟡 대기(' . $summary['pending'] . ')</span>';
+    }
+    return '<span style="color:#16a34a;font-size:11px;font-weight:800;" title="이카운트 전송 완료">🟢 연동완료</span>';
 }
 
 if (is_post() && ($_POST['form_type'] ?? '') === 'change_status') {
@@ -117,9 +178,9 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'change_status') {
                     record_stock_movement((int)$oi['product_id'], null, 'in', $qty, $after,
                         "주문취소 재고복구 — {$oi['product_name']}", (string)AdminAuth::currentAdminName());
                 }
-                /* [이카운트 연동] 복구분만큼 이카운트 재고도 증가하도록 큐 적재 */
+                /* [이카운트 연동] 복구분만큼 이카운트 재고도 증가하도록 큐 적재 — order_id도 함께 기록 */
                 if (function_exists('ecount_queue_stock_change')) {
-                    ecount_queue_stock_change((int)$oi['product_id'], $qty, "주문취소 재고복구 #{$orderId}");
+                    ecount_queue_stock_change((int)$oi['product_id'], $qty, "주문취소 재고복구 #{$orderId}", $orderId);
                 }
             }
             $restocked = true;
@@ -288,6 +349,37 @@ if ($detailId > 0) {
     $logStmt->execute(['id' => $detailId]);
     $logs = $logStmt->fetchAll();
 
+    /* [신규] ERP(이카운트) 연동 현황 조회 — 테이블/컬럼이 없어도 절대 죽지 않도록 전부 try/catch */
+    $ecountRows = [];
+    $ecountUnmapped = [];
+    try {
+        $hasEcountTable = $pdo->query("SHOW TABLES LIKE 'tt_ecount_sync_queue'")->fetchColumn();
+        if ($hasEcountTable) {
+            $eqCols = $pdo->query("SHOW COLUMNS FROM tt_ecount_sync_queue")->fetchAll(PDO::FETCH_COLUMN);
+            if (in_array('order_id', $eqCols, true)) {
+                $eqStmt = $pdo->prepare("
+                    SELECT q.*, p.name AS product_name
+                    FROM tt_ecount_sync_queue q
+                    LEFT JOIN tt_products p ON p.id = q.product_id
+                    WHERE q.order_id = :oid
+                    ORDER BY q.id DESC
+                ");
+                $eqStmt->execute(['oid' => $detailId]);
+                $ecountRows = $eqStmt->fetchAll();
+            }
+        }
+        $umStmt = $pdo->prepare("
+            SELECT oi.product_name, p.ecount_item_cd
+            FROM tt_order_items oi
+            JOIN tt_products p ON p.id = oi.product_id
+            WHERE oi.order_id = :oid AND (p.ecount_item_cd IS NULL OR p.ecount_item_cd = '')
+        ");
+        $umStmt->execute(['oid' => $detailId]);
+        $ecountUnmapped = $umStmt->fetchAll();
+    } catch (Throwable $e) {
+        error_log('[admin/orders ecount detail] ' . $e->getMessage());
+    }
+
     $pageTitle = '주문 상세 - ' . $order['order_no'];
     require __DIR__ . '/includes/header.php';
     ?>
@@ -367,6 +459,49 @@ if ($detailId > 0) {
         </tr>
         <?php endif; ?>
       </table>
+    </div>
+
+    <?php /* ===== [신규] ERP(이카운트) 연동 현황 카드 ===== */ ?>
+    <div class="admin-card">
+      <h2>📦 ERP(이카운트) 연동 현황</h2>
+      <?php if (!empty($ecountUnmapped)): ?>
+        <p style="color:#b45309;font-weight:700;font-size:13px;margin-bottom:10px;">
+          ⚠ 아래 상품은 이카운트 품목코드가 매핑되어 있지 않아 재고가 자동 동기화되지 않습니다 —
+          <a href="<?= BASE_URL ?>/admin/ecount-mapping.php">품목코드 매핑하러 가기</a>
+        </p>
+        <ul style="margin:0 0 14px;padding-left:18px;font-size:13px;color:#92400e;">
+          <?php foreach ($ecountUnmapped as $um): ?>
+            <li><?= h($um['product_name']) ?></li>
+          <?php endforeach; ?>
+        </ul>
+      <?php endif; ?>
+
+      <?php if (empty($ecountRows)): ?>
+        <p class="admin-text-sub">이 주문과 연결된 이카운트 동기화 이력이 없습니다. (이카운트 미연동 상품이거나, 연동 기능이 아직 설치되지 않은 서버일 수 있습니다)</p>
+      <?php else: ?>
+        <table class="admin-table">
+          <thead><tr><th>상품</th><th>품목코드</th><th>증감</th><th>상태</th><th>사유</th><th>시도횟수</th><th>등록일시</th><th>오류</th></tr></thead>
+          <tbody>
+          <?php foreach ($ecountRows as $eq): ?>
+            <?php
+              $st = $eq['status'] ?? 'pending';
+              $stLabel = ['pending' => '🟡 대기', 'sent' => '🟢 전송완료', 'failed' => '🔴 실패'][$st] ?? h((string)$st);
+              $deltaVal = (int)($eq['delta_qty'] ?? 0);
+            ?>
+            <tr>
+              <td><?= h($eq['product_name'] ?? ('#' . ($eq['product_id'] ?? ''))) ?></td>
+              <td class="mono"><?= h($eq['ecount_item_cd'] ?? '') ?></td>
+              <td class="mono" style="color:<?= $deltaVal < 0 ? '#dc2626' : '#16a34a' ?>"><?= $deltaVal > 0 ? '+' : '' ?><?= $deltaVal ?></td>
+              <td><?= $stLabel ?></td>
+              <td><?= h($eq['reason'] ?? '') ?></td>
+              <td><?= (int)($eq['attempt_count'] ?? 0) ?></td>
+              <td class="admin-text-sub"><?= h(!empty($eq['created_at']) ? date('Y-m-d H:i', strtotime($eq['created_at'])) : '-') ?></td>
+              <td style="color:#dc2626;font-size:12px;"><?= h($eq['last_error'] ?? '') ?></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
     </div>
 
     <div class="admin-card">
@@ -473,6 +608,9 @@ $listStmt->bindValue('offset', $offset, PDO::PARAM_INT);
 $listStmt->execute();
 $orders = $listStmt->fetchAll();
 
+/* [신규] 목록에 보여줄 ERP 연동 배지를 한 번에 조회 (주문 건마다 쿼리 날리지 않도록 일괄 처리) */
+$ecountBadges = admin_ecount_order_badges($pdo, array_column($orders, 'id'));
+
 $totalPages = max(1, (int)ceil($totalCount / $perPage));
 
 $pageTitle = '주문 관리';
@@ -502,12 +640,12 @@ require __DIR__ . '/includes/header.php';
     <thead>
       <tr>
         <th style="width:36px"><input type="checkbox" id="chkAll"></th>
-        <th>주문번호</th><th>수령인</th><th>연락처</th><th>금액</th><th>상태</th><th>주문일시</th><th></th>
+        <th>주문번호</th><th>수령인</th><th>연락처</th><th>금액</th><th>상태</th><th>ERP연동</th><th>주문일시</th><th></th>
       </tr>
     </thead>
     <tbody>
     <?php if (empty($orders)): ?>
-      <tr><td colspan="8" class="admin-empty-row">📭 주문이 없습니다.</td></tr>
+      <tr><td colspan="9" class="admin-empty-row">📭 주문이 없습니다.</td></tr>
     <?php else: foreach ($orders as $o): ?>
       <tr>
         <td><input type="checkbox" name="order_ids[]" value="<?= (int)$o['id'] ?>" class="chkRow"></td>
@@ -521,6 +659,7 @@ require __DIR__ . '/includes/header.php';
           <?= !empty($o['cash_receipt_issued']) ? '<span title="현금영수증 발행" style="font-size:11px;color:#0e7490;font-weight:800;"> 🧾</span>' : '' ?>
           <?= !empty($o['tax_invoice_issued']) ? '<span title="세금계산서 발행 완료" style="font-size:11px;color:#b91c1c;font-weight:800;"> 📄</span>' : '' ?>
         </td>
+        <td><?= admin_ecount_badge_html($ecountBadges[(int)$o['id']] ?? null) ?></td>
         <td class="admin-text-sub"><?= h(date('Y-m-d H:i', strtotime($o['created_at']))) ?></td>
         <td><a href="<?= BASE_URL ?>/admin/orders.php?id=<?= (int)$o['id'] ?>" class="admin-link-btn">상세보기</a></td>
       </tr>
