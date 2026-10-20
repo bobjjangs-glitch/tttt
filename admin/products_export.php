@@ -20,6 +20,9 @@ function ensure_product_spec_columns(PDO $pdo): void
         'runflat'           => "VARCHAR(5) NULL COMMENT 'Runflat Y/N'",
         'dot_code'          => "VARCHAR(30) NULL COMMENT '제조연주차(DOT)'",
         'external_sku'      => "VARCHAR(60) NULL COMMENT '공급사 원본 상품코드'",
+        'business_price'     => "INT NOT NULL DEFAULT 0 COMMENT '사업자 판매가'",
+        'biz_price_original' => "INT NOT NULL DEFAULT 0 COMMENT '사업자 정상가(공장도가)'",
+        'biz_supply_price'   => "INT NOT NULL DEFAULT 0 COMMENT '사업자 공급가'",
     ];
     $existing = [];
     foreach ($pdo->query("SHOW COLUMNS FROM tt_products")->fetchAll() as $row) {
@@ -36,13 +39,12 @@ ensure_product_spec_columns($pdo);
 
 $isTemplate = ($_GET['template'] ?? '') === '1';
 
-/* [수정] '공급사코드' 컬럼 추가 — 공급사 원본 상품코드를 내보내 재업로드 시에도
-   external_sku 매칭이 끊기지 않도록 한다. '상품ID'는 내부 DB 번호(수정용)로 유지. */
+/* [수정] 사업자가, 사업자공장도가, 사업자공급가 3개 컬럼 추가 */
 $headers = [
     '상품ID', '공급사코드', '카테고리', '브랜드', '상품명', '패턴코드', '사이즈',
     '하중속도규격', 'DOT', '원산지', '단면폭', '편평비', '림직경',
     '패턴명', 'OEM', 'Tech', 'Runflat',
-    '정상가', '판매가', '공급가', '재고', '상태',
+    '정상가', '판매가', '공급가', '사업자가', '사업자공장도가', '사업자공급가', '재고', '상태',
 ];
 
 $filename = $isTemplate
@@ -63,7 +65,7 @@ if ($isTemplate) {
         'K127', '235/45R18', '94V', '2423', '한국',
         '235', '45', '18',
         'Ventus S1 evo3', '벤츠 승인', 'Silent, EV등급', 'N',
-        '150000', '120000', '90000', '20', '노출',
+        '150000', '120000', '90000', '110000', '140000', '85000', '20', '노출',
     ]);
     fclose($out);
     exit;
@@ -90,7 +92,9 @@ if ($statusFilter === 'active' || $statusFilter === 'hidden') { $where .= ' AND 
 $stmt = $pdo->prepare("SELECT p.id, p.name, p.spec, p.dot_code, p.origin, p.external_sku,
                                p.pattern_code, p.load_speed_rating, p.width_mm, p.aspect_ratio, p.rim_diameter,
                                p.pattern_name, p.oem, p.tech, p.runflat,
-                               p.price_original, p.price_sale, p.supply_price, p.stock, p.status,
+                               p.price_original, p.price_sale, p.supply_price,
+                               p.business_price, p.biz_price_original, p.biz_supply_price,
+                               p.stock, p.status,
                                c.name AS category_name, b.name AS brand_name
                         FROM tt_products p
                         LEFT JOIN tt_categories c ON c.id = p.category_id
@@ -121,6 +125,9 @@ while ($row = $stmt->fetch()) {
         (int)$row['price_original'],
         (int)$row['price_sale'],
         (int)$row['supply_price'],
+        (int)$row['business_price'],
+        (int)$row['biz_price_original'],
+        (int)$row['biz_supply_price'],
         (int)$row['stock'],
         $row['status'] === 'hidden' ? '숨김' : '노출',
     ]);

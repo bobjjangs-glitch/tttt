@@ -19,9 +19,12 @@ function ensure_product_spec_columns(PDO $pdo): void
         'tech'              => "VARCHAR(150) NULL COMMENT 'Tech.'",
         'runflat'           => "VARCHAR(5) NULL COMMENT 'Runflat Y/N'",
         'dot_code'          => "VARCHAR(30) NULL COMMENT '제조연주차(DOT)'",
-        /* [수정] 공급사 원본 상품코드(예: 0HK1004313) 저장용. 재업로드 시 이 값으로
-           기존 상품을 찾아 중복 등록을 막는다. 내부 DB id와는 별개의 값이다. */
         'external_sku'      => "VARCHAR(60) NULL COMMENT '공급사 원본 상품코드'",
+        /* [수정] 사업자 전용 가격 3종. product_form.php(개별 등록 화면)에는 이미 존재하지만
+           이 일괄 업로드 화면에는 빠져있었다. 구버전 DB에도 없을 수 있어 여기서도 보강한다. */
+        'business_price'     => "INT NOT NULL DEFAULT 0 COMMENT '사업자 판매가'",
+        'biz_price_original' => "INT NOT NULL DEFAULT 0 COMMENT '사업자 정상가(공장도가)'",
+        'biz_supply_price'   => "INT NOT NULL DEFAULT 0 COMMENT '사업자 공급가'",
     ];
     $existing = [];
     foreach ($pdo->query("SHOW COLUMNS FROM tt_products")->fetchAll() as $row) {
@@ -33,7 +36,6 @@ function ensure_product_spec_columns(PDO $pdo): void
         }
     }
 
-    /* [수정] external_sku 조회 성능을 위한 인덱스. 이미 있으면 조용히 건너뛴다(에러를 성공 실패로 취급하지 않음). */
     try {
         $idx = $pdo->query("SHOW INDEX FROM tt_products WHERE Key_name = 'idx_external_sku'")->fetchAll();
         if (empty($idx)) {
@@ -47,13 +49,13 @@ function ensure_product_spec_columns(PDO $pdo): void
 }
 ensure_product_spec_columns($pdo);
 
-/* [수정] '공급사코드' 컬럼을 선택 항목으로 추가. 공급사 원본 CSV처럼 '상품ID' 자체가
-   영문+숫자 코드인 경우는 이 컬럼이 없어도 '상품ID' 값을 그대로 공급사 코드로 인식한다. */
+/* [수정] 사업자가(business_price), 사업자공장도가(biz_price_original), 사업자공급가(biz_supply_price)
+   3개 컬럼을 선택 입력 항목으로 추가. 모두 비워두면 0원으로 저장되며 필수 컬럼은 아니다. */
 const PRODUCT_IMPORT_EXPECTED_COLUMNS = [
     '상품ID', '공급사코드', '카테고리', '브랜드', '상품명', '패턴코드', '사이즈',
     '하중속도규격', 'DOT', '원산지', '단면폭', '편평비', '림직경',
     '패턴명', 'OEM', 'Tech', 'Runflat',
-    '정상가', '판매가', '공급가', '재고', '상태',
+    '정상가', '판매가', '공급가', '사업자가', '사업자공장도가', '사업자공급가', '재고', '상태',
 ];
 const PRODUCT_IMPORT_REQUIRED_COLUMNS = ['카테고리', '브랜드', '상품명', '정상가'];
 
@@ -86,8 +88,6 @@ function admin_parse_csv_flexible(string $tmpPath): array
         $lineNo++;
         if (count(array_filter($line, fn($v) => trim((string)$v) !== '')) === 0) continue;
 
-        /* [수정] 필드 개수가 헤더와 다른(중간에 잘린) 행은 조용히 무시하지 않고
-           별도 목록에 담아 업로드 결과 화면에서 명확히 알려준다. */
         if (count($line) !== $colCount) {
             $broken[] = [
                 'line' => $lineNo,
@@ -243,7 +243,6 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
         $brandMap[admin_import_normalize_brand_key($b['name'])] = (int)$b['id'];
     }
 
-    /* [수정] 공급사코드(external_sku)로 기존 상품을 찾기 위한 맵. 재업로드 시 중복 등록 방지의 핵심. */
     $extStmt = $pdo->query("SELECT id, external_sku FROM tt_products WHERE external_sku IS NOT NULL AND external_sku <> ''");
     $extMap = [];
     foreach ($extStmt->fetchAll() as $e) {
@@ -265,15 +264,6 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
             continue;
         }
 
-        /* ------------------------------------------------------------------
-           [수정] 상품ID 판별 로직 — 기존에는 무조건 (int) 캐스팅해서
-           '0HK1004313' 같은 공급사 코드가 전부 0이 되어 매번 신규 INSERT로
-           처리되던 버그를 고쳤다.
-           - 숫자로만 된 값 → 관리자가 엑셀 다운로드 후 수정해서 재업로드하는
-             "내부 DB id" 용도로 간주 (기존 동작 그대로 유지)
-           - 숫자+영문 혼합 값(예: 0HK1004313) → 공급사 원본 상품코드로 간주,
-             '공급사코드' 컬럼이 따로 없어도 '상품ID' 값 자체를 그 코드로 사용
-           ------------------------------------------------------------------ */
         $rawIdField  = trim($r['상품ID'] ?? '');
         $supplierCol = trim($r['공급사코드'] ?? '');
         $isNumericId = ($rawIdField !== '' && ctype_digit($rawIdField));
@@ -281,14 +271,14 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
         $internalId   = $isNumericId ? (int)$rawIdField : 0;
         $externalSku  = null;
         if (!$isNumericId && $rawIdField !== '') {
-            $externalSku = $rawIdField;            // '상품ID' 칸 자체가 공급사 코드인 경우
+            $externalSku = $rawIdField;
         } elseif ($supplierCol !== '') {
-            $externalSku = $supplierCol;            // 별도 '공급사코드' 컬럼이 있는 경우
+            $externalSku = $supplierCol;
         }
 
         $isUpdate = false;
         if ($internalId === 0 && $externalSku !== null && isset($extMap[$externalSku])) {
-            $internalId = $extMap[$externalSku];   // 같은 공급사 코드의 기존 상품을 찾음 → 업데이트 대상
+            $internalId = $extMap[$externalSku];
             $isUpdate = true;
         } elseif ($internalId > 0) {
             $isUpdate = true;
@@ -339,12 +329,16 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
         $runflatRaw    = trim($r['Runflat'] ?? '');
         $runflat       = admin_normalize_runflat($runflatRaw);
 
-        $priceOriginal = admin_parse_int_money($r['정상가'] ?? '0');
-        $priceSale     = admin_parse_int_money($r['판매가'] ?? '0');
-        $supplyPrice   = admin_parse_int_money($r['공급가'] ?? '0');
-        $stock         = admin_parse_int_money($r['재고'] ?? '0');
-        $statusRaw     = trim($r['상태'] ?? '노출');
-        $status        = ($statusRaw === '숨김' || $statusRaw === 'hidden') ? 'hidden' : 'active';
+        $priceOriginal    = admin_parse_int_money($r['정상가'] ?? '0');
+        $priceSale        = admin_parse_int_money($r['판매가'] ?? '0');
+        $supplyPrice      = admin_parse_int_money($r['공급가'] ?? '0');
+        /* [수정] 사업자 전용 가격 3종 — 비어있으면 0원으로 저장(기존 product_form.php 저장 방식과 동일) */
+        $businessPrice    = admin_parse_int_money($r['사업자가'] ?? '0');
+        $bizPriceOriginal = admin_parse_int_money($r['사업자공장도가'] ?? '0');
+        $bizSupplyPrice   = admin_parse_int_money($r['사업자공급가'] ?? '0');
+        $stock            = admin_parse_int_money($r['재고'] ?? '0');
+        $statusRaw        = trim($r['상태'] ?? '노출');
+        $status           = ($statusRaw === '숨김' || $statusRaw === 'hidden') ? 'hidden' : 'active';
 
         if ($priceOriginal <= 0) {
             $errors[] = "{$rowNo}행 [{$name}]: 정상가는 0보다 커야 합니다. (원본값: '" . ($r['정상가'] ?? '') . "')";
@@ -352,6 +346,11 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
         }
         if ($priceSale > 0 && $priceSale > $priceOriginal) {
             $errors[] = "{$rowNo}행 [{$name}]: 판매가({$priceSale})가 정상가({$priceOriginal})보다 클 수 없습니다.";
+            continue;
+        }
+        /* [수정] 사업자가는 사업자공장도가 범위 안에서만 유효. 둘 다 입력됐을 때만 검증(선택 컬럼이므로). */
+        if ($businessPrice > 0 && $bizPriceOriginal > 0 && $businessPrice > $bizPriceOriginal) {
+            $errors[] = "{$rowNo}행 [{$name}]: 사업자가({$businessPrice})가 사업자공장도가({$bizPriceOriginal})보다 클 수 없습니다.";
             continue;
         }
         if ($runflat === null) {
@@ -372,8 +371,9 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
             'oem' => $oem !== '' ? $oem : null, 'tech' => $tech !== '' ? $tech : null,
             'runflat' => $runflat,
             'price_original' => $priceOriginal, 'price_sale' => $priceSale, 'supply_price' => $supplyPrice,
+            'business_price' => $businessPrice, 'biz_price_original' => $bizPriceOriginal, 'biz_supply_price' => $bizSupplyPrice,
             'stock' => $stock, 'status' => $status,
-            'external_sku' => $externalSku,   // [수정] 공급사 코드 저장/갱신
+            'external_sku' => $externalSku,
         ];
 
         try {
@@ -390,19 +390,22 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
                     width_mm=:width_mm, aspect_ratio=:aspect_ratio, rim_diameter=:rim_diameter,
                     pattern_name=:pattern_name, oem=:oem, tech=:tech, runflat=:runflat,
                     price_original=:price_original, price_sale=:price_sale, supply_price=:supply_price,
+                    business_price=:business_price, biz_price_original=:biz_price_original, biz_supply_price=:biz_supply_price,
                     stock=:stock, status=:status, external_sku=:external_sku WHERE id=:id')->execute($params);
                 $updateCount++;
             } else {
                 $pdo->prepare('INSERT INTO tt_products (category_id, brand_id, name, spec, dot_code, origin,
                     pattern_code, load_speed_rating, width_mm, aspect_ratio, rim_diameter,
                     pattern_name, oem, tech, runflat,
-                    price_original, price_sale, supply_price, stock, status, external_sku, created_at)
+                    price_original, price_sale, supply_price, business_price, biz_price_original, biz_supply_price,
+                    stock, status, external_sku, created_at)
                     VALUES (:category_id, :brand_id, :name, :spec, :dot_code, :origin,
                     :pattern_code, :load_speed_rating, :width_mm, :aspect_ratio, :rim_diameter,
                     :pattern_name, :oem, :tech, :runflat,
-                    :price_original, :price_sale, :supply_price, :stock, :status, :external_sku, NOW())')->execute($params);
+                    :price_original, :price_sale, :supply_price, :business_price, :biz_price_original, :biz_supply_price,
+                    :stock, :status, :external_sku, NOW())')->execute($params);
                 $newId = (int)$pdo->lastInsertId();
-                if ($externalSku !== null) $extMap[$externalSku] = $newId; // 같은 파일 내 중복 행 대비
+                if ($externalSku !== null) $extMap[$externalSku] = $newId;
                 $insertCount++;
             }
             $successCount++;
@@ -478,8 +481,9 @@ require __DIR__ . '/includes/header.php';
   <h2 class="admin-page-title">📁 상품 엑셀(CSV) 일괄 업로드</h2>
   <p class="admin-form-hint" style="line-height:1.7;">
     이번 양식에는 <b>패턴코드, 사이즈, 하중&속도규격, DOT, 원산지, 단면폭/편평비/림직경, 패턴명, OEM, Tech, Runflat</b>까지
-    타이어 스펙 전체가 포함되어 있습니다. 엑셀에서 컬럼 순서를 바꿔서 올려도 <b>헤더 이름으로 자동 매칭</b>되니
-    순서는 신경 쓰지 않으셔도 됩니다. (다만 헤더 문구 자체는 양식과 동일해야 매칭됩니다.)<br>
+    타이어 스펙 전체가 포함되어 있습니다. <b>정상가/판매가/공급가</b>(일반 회원용)와 <b>사업자가/사업자공장도가/사업자공급가</b>
+    (사업자 회원용)를 각각 따로 입력할 수 있으며, 사업자 가격 3종은 비워두면 0원으로 저장됩니다. 엑셀에서 컬럼 순서를
+    바꿔서 올려도 <b>헤더 이름으로 자동 매칭</b>되니 순서는 신경 쓰지 않으셔도 됩니다. (다만 헤더 문구 자체는 양식과 동일해야 매칭됩니다.)<br>
     카테고리는 시스템에 없는 이름이어도 <b>자동으로 새 카테고리가 생성</b>됩니다.<br>
     <b>'상품ID'</b>에 공급사 원본 코드(예: 0HK1004313)를 그대로 넣어 올리셔도, 같은 파일을 다시 올리면
     <b>중복 등록 없이 기존 상품이 갱신</b>됩니다.
