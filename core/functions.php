@@ -3582,3 +3582,108 @@ function worker_pin_lock_state(array $worker): array
     if ($left <= 0) return ['locked' => false, 'minutes' => 0, 'seconds' => 0];
     return ['locked' => true, 'minutes' => (int)ceil($left / 60), 'seconds' => $left];
 }
+/* =====================================================================
+   [ECOUNT 연동] 재고 변경 → 이카운트 전송 큐 적재
+   - 기존 record_stock_movement()는 전혀 수정하지 않음
+   - 호출부(예: admin/stock_update.php)에서 재고 변경 직후 한 줄만 추가 호출
+   ===================================================================== */
+function ensure_ecount_tables(): void
+{
+    static $checked = false;
+    if (sg_skip('ensure_ecount_tables', $checked)) return;
+    try {
+        $pdo = Database::connection();
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_ecount_sync_queue (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                product_id INT NOT NULL,
+                ecount_item_cd VARCHAR(30) NOT NULL,
+                delta_qty INT NOT NULL,
+                reason VARCHAR(255) NULL,
+                status ENUM('pending','sent','failed') NOT NULL DEFAULT 'pending',
+                attempt_count INT NOT NULL DEFAULT 0,
+                last_error TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sent_at DATETIME NULL,
+                INDEX idx_status (status),
+                INDEX idx_product (product_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_ecount_session_cache (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                zone VARCHAR(10) NOT NULL,
+                session_id VARCHAR(100) NOT NULL,
+                issued_at DATETIME NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tt_ecount_sync_log (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                direction ENUM('push','pull') NOT NULL,
+                summary TEXT NULL,
+                success_count INT NOT NULL DEFAULT 0,
+                fail_count INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $cols = $pdo->query("SHOW COLUMNS FROM tt_products")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('ecount_item_cd', $cols, true)) {
+            $pdo->exec("ALTER TABLE tt_products ADD COLUMN ecount_item_cd VARCHAR(30) NULL COMMENT '이카운트 품목코드'");
+            try { $pdo->exec("ALTER TABLE tt_products ADD UNIQUE INDEX idx_ecount_item_cd (ecount_item_cd)"); } catch (Throwable $e) {}
+        }
+        if (!in_array('ecount_wh_cd', $cols, true)) {
+            $pdo->exec("ALTER TABLE tt_products ADD COLUMN ecount_wh_cd VARCHAR(20) NULL DEFAULT '100' COMMENT '이카운트 창고코드'");
+        }
+        if (!in_array('ecount_synced_at', $cols, true)) {
+            $pdo->exec("ALTER TABLE tt_products ADD COLUMN ecount_synced_at DATETIME NULL COMMENT '마지막 이카운트 동기화 시각'");
+        }
+    } catch (Throwable $e) {
+        sg_error_log('[ensure_ecount_tables] ' . $e->getMessage());
+    }
+    if (!SchemaGuard::hadErrors()) SchemaGuard::mark('ensure_ecount_tables');
+}
+
+/**
+ * 재고 변경 "직후" 한 줄만 호출하면 됩니다.
+ * - $productId : tt_products.id
+ * - $deltaQty  : 변화량 (입고 +, 출고 -). 0이면 조용히 무시.
+ * - $reason    : 사유 메모
+ *
+ * 절대 예외를 던지지 않습니다 — 이카운트 장애가 쇼핑몰 재고 갱신을
+ * 막는 사고를 원천 차단하기 위함입니다. record_stock_movement()와는
+ * 완전히 독립적으로 동작하며, 기존 함수는 전혀 건드리지 않습니다.
+ */
+function ecount_queue_stock_change(int $productId, int $deltaQty, string $reason = ''): void
+{
+    if ($deltaQty === 0) return;
+
+    try {
+        $pdo = Database::connection();
+
+        $exists = $pdo->query("SHOW TABLES LIKE 'tt_ecount_sync_queue'")->fetchColumn();
+        if (!$exists) return; // 이카운트 테이블 미설치 상태 — 조용히 종료
+
+        $stmt = $pdo->prepare("SELECT ecount_item_cd FROM tt_products WHERE id = :id LIMIT 1");
+        $stmt->execute(['id' => $productId]);
+        $itemCd = $stmt->fetchColumn();
+
+        if (!$itemCd) return; // 품목코드 매핑 안 된 상품은 연동 대상 아님
+
+        $pdo->prepare("
+            INSERT INTO tt_ecount_sync_queue (product_id, ecount_item_cd, delta_qty, reason, status)
+            VALUES (:pid, :cd, :delta, :reason, 'pending')
+        ")->execute([
+            'pid'    => $productId,
+            'cd'     => $itemCd,
+            'delta'  => $deltaQty,
+            'reason' => mb_substr($reason, 0, 255),
+        ]);
+    } catch (Throwable $e) {
+        error_log('[ecount_queue_stock_change] ' . $e->getMessage());
+    }
+}
