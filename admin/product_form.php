@@ -595,29 +595,32 @@ if (is_post()) {
                 $nextDetailOrder++;
             }
 
-            $pdo->commit();
+           $pdo->commit();
 
-            /* 재고 변경 이력 기록 (수정에서 재고가 바뀐 경우만) */
-            if ($isEdit && (int)($product['stock'] ?? 0) !== $stock) {
-                $deltaQty = $stock - (int)$product['stock'];
-                record_stock_movement($productId, null, 'adjust', $deltaQty, $stock,
-                    '상품 정보 수정 — 재고 변경', (string)AdminAuth::currentAdminName());
-                /* [ERP연동 추가] 관리자가 상품 수정 화면에서 재고를 직접 바꾼 경우도 이카운트 큐에 적재한다.
-                   품목코드가 비어있거나 큐 테이블이 아직 없으면 ecount_queue_stock_change() 내부에서 조용히 스킵된다. */
-                if (function_exists('ecount_queue_stock_change')) {
-                    ecount_queue_stock_change($productId, $deltaQty, '관리자 상품 수정 — 재고 직접 변경');
-                }
-            }
-
-            flash('admin_success', $isEdit ? '상품이 수정되었습니다.' : '상품이 등록되었습니다.');
-            redirect('/admin/products.php');
-
-        } catch (Throwable $e) {
-            $pdo->rollBack();
-            error_log('[admin/product_form] '.$e->getMessage());
-            $errors[] = '저장 중 오류가 발생했습니다. ('.$e->getMessage().')';
-        }
+/* 재고 변경 이력 기록 (수정에서 재고가 바뀐 경우만) */
+if ($isEdit && (int)($product['stock'] ?? 0) !== $stock) {
+    $deltaQty = $stock - (int)$product['stock'];
+    record_stock_movement($productId, null, 'adjust', $deltaQty, $stock,
+        '상품 정보 수정 — 재고 변경', (string)AdminAuth::currentAdminName());
+    if (function_exists('ecount_queue_stock_change')) {
+        ecount_queue_stock_change($productId, $deltaQty, '관리자 상품 수정 — 재고 직접 변경');
     }
+}
+
+/* [ERP연동 - 품목등록] 재고 변경 여부와 무관하게, 저장할 때마다 이카운트 품목 마스터를 동기화한다.
+   실패해도 이미 commit()된 로컬 저장은 되돌리지 않는다 — 트랜잭션 밖이라 롤백 대상도 아니다.
+   대신 화면에 경고만 띄워서 "저장은 됐는데 ERP 반영은 안 됐다"를 관리자가 알게 한다. */
+if ($ecountItemCd !== '') {
+    try {
+        $client = new EcountClient($pdo);
+        $client->saveBasicProduct($ecountItemCd, $name, $spec);
+        $pdo->prepare('UPDATE tt_products SET ecount_item_synced_at = NOW() WHERE id = :id')
+            ->execute(['id' => $productId]);
+    } catch (Throwable $e) {
+        error_log('[admin/product_form] 이카운트 품목등록 실패: ' . $e->getMessage());
+        flash('admin_warning', '상품은 저장됐지만 이카운트 품목 등록에는 실패했습니다. (' . $e->getMessage() . ')');
+    }
+}
 
     $product = [
         'category_id'=>$categoryId,'brand_id'=>$brandId,'name'=>$name,'model'=>$model,'spec'=>$spec,
