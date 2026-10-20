@@ -18,6 +18,10 @@ function ensure_product_spec_columns(PDO $pdo): void
         'oem'               => "VARCHAR(100) NULL COMMENT 'OEM 인증'",
         'tech'              => "VARCHAR(150) NULL COMMENT 'Tech.'",
         'runflat'           => "VARCHAR(5) NULL COMMENT 'Runflat Y/N'",
+        'dot_code'          => "VARCHAR(30) NULL COMMENT '제조연주차(DOT)'",
+        /* [수정] 공급사 원본 상품코드(예: 0HK1004313) 저장용. 재업로드 시 이 값으로
+           기존 상품을 찾아 중복 등록을 막는다. 내부 DB id와는 별개의 값이다. */
+        'external_sku'      => "VARCHAR(60) NULL COMMENT '공급사 원본 상품코드'",
     ];
     $existing = [];
     foreach ($pdo->query("SHOW COLUMNS FROM tt_products")->fetchAll() as $row) {
@@ -28,14 +32,26 @@ function ensure_product_spec_columns(PDO $pdo): void
             $pdo->exec("ALTER TABLE tt_products ADD COLUMN {$col} {$def}");
         }
     }
+
+    /* [수정] external_sku 조회 성능을 위한 인덱스. 이미 있으면 조용히 건너뛴다(에러를 성공 실패로 취급하지 않음). */
+    try {
+        $idx = $pdo->query("SHOW INDEX FROM tt_products WHERE Key_name = 'idx_external_sku'")->fetchAll();
+        if (empty($idx)) {
+            $pdo->exec("ALTER TABLE tt_products ADD INDEX idx_external_sku (external_sku)");
+        }
+    } catch (Throwable $e) {
+        error_log('[admin/products_import] external_sku index skip: ' . $e->getMessage());
+    }
+
     if (!SchemaGuard::hadErrors()) SchemaGuard::mark('admin:product_spec_columns');
 }
 ensure_product_spec_columns($pdo);
 
-/* 엑셀 헤더 "이름" 기준으로 매칭할 전체 항목 목록 (순서 무관, 컬럼 위치가 바뀌어도 정확히 매칭됨) */
+/* [수정] '공급사코드' 컬럼을 선택 항목으로 추가. 공급사 원본 CSV처럼 '상품ID' 자체가
+   영문+숫자 코드인 경우는 이 컬럼이 없어도 '상품ID' 값을 그대로 공급사 코드로 인식한다. */
 const PRODUCT_IMPORT_EXPECTED_COLUMNS = [
-    '상품ID', '카테고리', '브랜드', '상품명', '패턴코드', '사이즈',
-    '하중속도규격', '원산지', '단면폭', '편평비', '림직경',
+    '상품ID', '공급사코드', '카테고리', '브랜드', '상품명', '패턴코드', '사이즈',
+    '하중속도규격', 'DOT', '원산지', '단면폭', '편평비', '림직경',
     '패턴명', 'OEM', 'Tech', 'Runflat',
     '정상가', '판매가', '공급가', '재고', '상태',
 ];
@@ -44,7 +60,7 @@ const PRODUCT_IMPORT_REQUIRED_COLUMNS = ['카테고리', '브랜드', '상품명
 function admin_parse_csv_flexible(string $tmpPath): array
 {
     $raw = file_get_contents($tmpPath);
-    if ($raw === false || $raw === '') return ['header' => [], 'rows' => []];
+    if ($raw === false || $raw === '') return ['header' => [], 'rows' => [], 'broken' => []];
 
     if (substr($raw, 0, 3) === "\xEF\xBB\xBF") $raw = substr($raw, 3);
 
@@ -59,12 +75,29 @@ function admin_parse_csv_flexible(string $tmpPath): array
     rewind($stream);
 
     $header = fgetcsv($stream);
-    if ($header === false) { fclose($stream); return ['header' => [], 'rows' => []]; }
+    if ($header === false) { fclose($stream); return ['header' => [], 'rows' => [], 'broken' => []]; }
     $header = array_map(fn($h) => trim((string)$h), $header);
+    $colCount = count($header);
 
     $rows = [];
+    $broken = [];
+    $lineNo = 1;
     while (($line = fgetcsv($stream)) !== false) {
+        $lineNo++;
         if (count(array_filter($line, fn($v) => trim((string)$v) !== '')) === 0) continue;
+
+        /* [수정] 필드 개수가 헤더와 다른(중간에 잘린) 행은 조용히 무시하지 않고
+           별도 목록에 담아 업로드 결과 화면에서 명확히 알려준다. */
+        if (count($line) !== $colCount) {
+            $broken[] = [
+                'line' => $lineNo,
+                'id'   => $line[0] ?? '(알수없음)',
+                'got'  => count($line),
+                'need' => $colCount,
+            ];
+            continue;
+        }
+
         $assoc = [];
         foreach ($header as $i => $col) {
             $assoc[$col] = trim((string)($line[$i] ?? ''));
@@ -72,7 +105,7 @@ function admin_parse_csv_flexible(string $tmpPath): array
         $rows[] = $assoc;
     }
     fclose($stream);
-    return ['header' => $header, 'rows' => $rows];
+    return ['header' => $header, 'rows' => $rows, 'broken' => $broken];
 }
 
 function admin_parse_int_money(string $v): int
@@ -89,11 +122,6 @@ function admin_parse_int_or_null(string $v): ?int
     return $v === '' ? null : (int)$v;
 }
 
-/**
- * Runflat 원본 표기(ZP, EMT, SELFSEAL, RFT, MOE, SSR 등)를 시스템이 저장하는 Y/N으로 정규화한다.
- * 정확히 일치하지 않아도 값 안에 런플랫 관련 토큰이 포함돼 있으면 'Y'로 인식한다.
- * 어떤 규칙에도 안 걸리면 null을 반환해 상위에서 오류로 처리하게 한다.
- */
 function admin_normalize_runflat(string $raw): ?string
 {
     $v = mb_strtoupper(trim($raw));
@@ -117,21 +145,12 @@ function admin_normalize_runflat(string $raw): ?string
     return null;
 }
 
-/**
- * 브랜드명 키 정규화: 공백 전부 제거 + 대문자 통일.
- * "MICHELIN", "michelin", "  michelin  " 를 모두 동일 키로 만든다.
- */
 function admin_import_normalize_brand_key(string $s): string
 {
     $s = mb_strtoupper(trim($s));
     return preg_replace('/\s+/u', '', $s) ?? $s;
 }
 
-/**
- * 같은 브랜드를 가리키는 영문/한글/표기 변형을 하나의 그룹으로 묶어둔다.
- * DB(tt_brands.name)에 어느 표기로 등록돼 있어도(영문이든 한글이든) 매칭되게 하기 위함이다.
- * 그룹에 없는 완전히 새로운 브랜드는 여기 한 줄만 추가하면 된다.
- */
 function admin_import_brand_alias_groups(): array
 {
     static $groups = [
@@ -152,12 +171,6 @@ function admin_import_brand_alias_groups(): array
     return $groups;
 }
 
-/**
- * CSV 원본 브랜드 표기를 받아 실제 tt_brands에 등록된 브랜드 id를 찾는다.
- * 1) DB 이름과 정규화 후 정확히 일치하면 바로 매칭
- * 2) 별칭 그룹에 속해 있으면, 같은 그룹 안에서 실제 DB에 등록된 표기를 찾아 매칭
- * 3) 둘 다 실패하면 null (완전히 새로운 브랜드이거나 DB에 아직 등록 안 된 경우)
- */
 function admin_import_resolve_brand_id(string $rawBrand, array $brandMap): ?int
 {
     $normalized = admin_import_normalize_brand_key($rawBrand);
@@ -181,10 +194,34 @@ function admin_import_resolve_brand_id(string $rawBrand, array $brandMap): ?int
     return null;
 }
 
-/**
- * 업로드한 CSV의 헤더와 시스템이 기대하는 컬럼을 비교해 매칭 리포트를 만든다.
- * "대칭 잡아서" 매칭되는지를 사람이 눈으로 확인할 수 있게 보여주는 용도.
- */
+function admin_import_normalize_category_key(string $s): string
+{
+    $s = trim($s);
+    $s = str_replace('／', '/', $s);
+    $s = preg_replace('/\s*\/\s*/', '/', $s);
+    $s = preg_replace('/\s+/u', ' ', $s);
+    return mb_strtolower($s);
+}
+
+function admin_generate_category_slug(PDO $pdo, string $name): string
+{
+    $base = mb_strtolower(trim($name));
+    $base = preg_replace('/[^a-z0-9]+/', '-', $base);
+    $base = trim($base, '-');
+    if ($base === '') {
+        $base = 'category-' . bin2hex(random_bytes(3));
+    }
+    $slug = $base;
+    $i = 1;
+    while (true) {
+        $stmt = $pdo->prepare('SELECT id FROM tt_categories WHERE slug = :slug LIMIT 1');
+        $stmt->execute(['slug' => $slug]);
+        if (!$stmt->fetch()) break;
+        $slug = $base . '-' . (++$i);
+    }
+    return $slug;
+}
+
 function admin_build_column_match_report(array $csvHeader): array
 {
     $matched = array_values(array_intersect(PRODUCT_IMPORT_EXPECTED_COLUMNS, $csvHeader));
@@ -198,7 +235,7 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
 {
     $catStmt = $pdo->query('SELECT id, name FROM tt_categories');
     $catMap = [];
-    foreach ($catStmt->fetchAll() as $c) $catMap[mb_strtolower(trim($c['name']))] = (int)$c['id'];
+    foreach ($catStmt->fetchAll() as $c) $catMap[admin_import_normalize_category_key($c['name'])] = (int)$c['id'];
 
     $brandStmt = $pdo->query('SELECT id, name FROM tt_brands');
     $brandMap = [];
@@ -206,9 +243,17 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
         $brandMap[admin_import_normalize_brand_key($b['name'])] = (int)$b['id'];
     }
 
+    /* [수정] 공급사코드(external_sku)로 기존 상품을 찾기 위한 맵. 재업로드 시 중복 등록 방지의 핵심. */
+    $extStmt = $pdo->query("SELECT id, external_sku FROM tt_products WHERE external_sku IS NOT NULL AND external_sku <> ''");
+    $extMap = [];
+    foreach ($extStmt->fetchAll() as $e) {
+        $extMap[$e['external_sku']] = (int)$e['id'];
+    }
+
     $successCount = 0;
     $updateCount  = 0;
     $insertCount  = 0;
+    $categoryCreatedCount = 0;
     $errors = [];
 
     foreach ($rows as $i => $r) {
@@ -220,13 +265,57 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
             continue;
         }
 
-        $productId = (int)($r['상품ID'] ?? 0);
-        $catName   = mb_strtolower(trim($r['카테고리'] ?? ''));
-        $brandRaw  = trim($r['브랜드'] ?? '');
+        /* ------------------------------------------------------------------
+           [수정] 상품ID 판별 로직 — 기존에는 무조건 (int) 캐스팅해서
+           '0HK1004313' 같은 공급사 코드가 전부 0이 되어 매번 신규 INSERT로
+           처리되던 버그를 고쳤다.
+           - 숫자로만 된 값 → 관리자가 엑셀 다운로드 후 수정해서 재업로드하는
+             "내부 DB id" 용도로 간주 (기존 동작 그대로 유지)
+           - 숫자+영문 혼합 값(예: 0HK1004313) → 공급사 원본 상품코드로 간주,
+             '공급사코드' 컬럼이 따로 없어도 '상품ID' 값 자체를 그 코드로 사용
+           ------------------------------------------------------------------ */
+        $rawIdField  = trim($r['상품ID'] ?? '');
+        $supplierCol = trim($r['공급사코드'] ?? '');
+        $isNumericId = ($rawIdField !== '' && ctype_digit($rawIdField));
 
-        if ($catName === '' || !isset($catMap[$catName])) {
-            $errors[] = "{$rowNo}행 [{$name}]: 카테고리 '" . ($r['카테고리'] ?? '') . "'를 찾을 수 없습니다.";
+        $internalId   = $isNumericId ? (int)$rawIdField : 0;
+        $externalSku  = null;
+        if (!$isNumericId && $rawIdField !== '') {
+            $externalSku = $rawIdField;            // '상품ID' 칸 자체가 공급사 코드인 경우
+        } elseif ($supplierCol !== '') {
+            $externalSku = $supplierCol;            // 별도 '공급사코드' 컬럼이 있는 경우
+        }
+
+        $isUpdate = false;
+        if ($internalId === 0 && $externalSku !== null && isset($extMap[$externalSku])) {
+            $internalId = $extMap[$externalSku];   // 같은 공급사 코드의 기존 상품을 찾음 → 업데이트 대상
+            $isUpdate = true;
+        } elseif ($internalId > 0) {
+            $isUpdate = true;
+        }
+
+        $catRaw      = trim($r['카테고리'] ?? '');
+        $catKey      = admin_import_normalize_category_key($catRaw);
+        $brandRaw    = trim($r['브랜드'] ?? '');
+
+        if ($catKey === '') {
+            $errors[] = "{$rowNo}행 [{$name}]: 카테고리가 비어있습니다.";
             continue;
+        }
+
+        if (!isset($catMap[$catKey])) {
+            try {
+                $newSlug = admin_generate_category_slug($pdo, $catRaw);
+                $insCat = $pdo->prepare('INSERT INTO tt_categories (name, slug) VALUES (:name, :slug)');
+                $insCat->execute(['name' => $catRaw, 'slug' => $newSlug]);
+                $newCatId = (int)$pdo->lastInsertId();
+                $catMap[$catKey] = $newCatId;
+                $categoryCreatedCount++;
+            } catch (Throwable $e) {
+                error_log('[admin/products_import] category auto-create failed: ' . $e->getMessage());
+                $errors[] = "{$rowNo}행 [{$name}]: 카테고리 '{$catRaw}' 자동 등록에 실패했습니다. (" . $e->getMessage() . ")";
+                continue;
+            }
         }
 
         $brandId = admin_import_resolve_brand_id($brandRaw, $brandMap);
@@ -235,8 +324,9 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
             continue;
         }
 
-        $categoryId    = $catMap[$catName];
+        $categoryId    = $catMap[$catKey];
         $spec          = trim($r['사이즈'] ?? '');
+        $dotCode       = trim($r['DOT'] ?? '');
         $origin        = trim($r['원산지'] ?? '');
         $patternCode   = trim($r['패턴코드'] ?? '');
         $loadSpeed     = trim($r['하중속도규격'] ?? '');
@@ -271,7 +361,9 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
 
         $params = [
             'category_id' => $categoryId, 'brand_id' => $brandId, 'name' => $name,
-            'spec' => $spec !== '' ? $spec : null, 'origin' => $origin !== '' ? $origin : null,
+            'spec' => $spec !== '' ? $spec : null,
+            'dot_code' => $dotCode !== '' ? $dotCode : null,
+            'origin' => $origin !== '' ? $origin : null,
             'pattern_code' => $patternCode !== '' ? $patternCode : null,
             'load_speed_rating' => $loadSpeed !== '' ? $loadSpeed : null,
             'width_mm' => $widthMm, 'aspect_ratio' => $aspectRatio,
@@ -281,47 +373,54 @@ function admin_bulk_import_products(PDO $pdo, array $rows): array
             'runflat' => $runflat,
             'price_original' => $priceOriginal, 'price_sale' => $priceSale, 'supply_price' => $supplyPrice,
             'stock' => $stock, 'status' => $status,
+            'external_sku' => $externalSku,   // [수정] 공급사 코드 저장/갱신
         ];
 
         try {
-            if ($productId > 0) {
+            if ($isUpdate && $internalId > 0) {
                 $chk = $pdo->prepare('SELECT id FROM tt_products WHERE id = :id');
-                $chk->execute(['id' => $productId]);
+                $chk->execute(['id' => $internalId]);
                 if (!$chk->fetch()) {
-                    $errors[] = "{$rowNo}행 [{$name}]: 상품ID {$productId}에 해당하는 상품이 존재하지 않습니다.";
+                    $errors[] = "{$rowNo}행 [{$name}]: 상품ID {$internalId}에 해당하는 상품이 존재하지 않습니다.";
                     continue;
                 }
-                $params['id'] = $productId;
+                $params['id'] = $internalId;
                 $pdo->prepare('UPDATE tt_products SET category_id=:category_id, brand_id=:brand_id, name=:name,
-                    spec=:spec, origin=:origin, pattern_code=:pattern_code, load_speed_rating=:load_speed_rating,
+                    spec=:spec, dot_code=:dot_code, origin=:origin, pattern_code=:pattern_code, load_speed_rating=:load_speed_rating,
                     width_mm=:width_mm, aspect_ratio=:aspect_ratio, rim_diameter=:rim_diameter,
                     pattern_name=:pattern_name, oem=:oem, tech=:tech, runflat=:runflat,
                     price_original=:price_original, price_sale=:price_sale, supply_price=:supply_price,
-                    stock=:stock, status=:status WHERE id=:id')->execute($params);
+                    stock=:stock, status=:status, external_sku=:external_sku WHERE id=:id')->execute($params);
                 $updateCount++;
             } else {
-                $pdo->prepare('INSERT INTO tt_products (category_id, brand_id, name, spec, origin,
+                $pdo->prepare('INSERT INTO tt_products (category_id, brand_id, name, spec, dot_code, origin,
                     pattern_code, load_speed_rating, width_mm, aspect_ratio, rim_diameter,
                     pattern_name, oem, tech, runflat,
-                    price_original, price_sale, supply_price, stock, status, created_at)
-                    VALUES (:category_id, :brand_id, :name, :spec, :origin,
+                    price_original, price_sale, supply_price, stock, status, external_sku, created_at)
+                    VALUES (:category_id, :brand_id, :name, :spec, :dot_code, :origin,
                     :pattern_code, :load_speed_rating, :width_mm, :aspect_ratio, :rim_diameter,
                     :pattern_name, :oem, :tech, :runflat,
-                    :price_original, :price_sale, :supply_price, :stock, :status, NOW())')->execute($params);
+                    :price_original, :price_sale, :supply_price, :stock, :status, :external_sku, NOW())')->execute($params);
+                $newId = (int)$pdo->lastInsertId();
+                if ($externalSku !== null) $extMap[$externalSku] = $newId; // 같은 파일 내 중복 행 대비
                 $insertCount++;
             }
             $successCount++;
         } catch (Throwable $e) {
             error_log('[admin/products_import] ' . $e->getMessage());
-            $errors[] = "{$rowNo}행 [{$name}]: 저장 중 오류가 발생했습니다.";
+            $errors[] = "{$rowNo}행 [{$name}]: 저장 중 오류가 발생했습니다. (" . $e->getMessage() . ")";
         }
     }
 
-    return ['success' => $successCount, 'insert' => $insertCount, 'update' => $updateCount, 'errors' => $errors];
+    return [
+        'success' => $successCount, 'insert' => $insertCount, 'update' => $updateCount,
+        'category_created' => $categoryCreatedCount, 'errors' => $errors,
+    ];
 }
 
 $result = null;
 $matchReport = null;
+$brokenRows = [];
 
 if (is_post()) {
     if (!Csrf::verify($_POST['csrf_token'] ?? '')) {
@@ -350,6 +449,7 @@ if (is_post()) {
     }
 
     $matchReport = admin_build_column_match_report($parsed['header']);
+    $brokenRows  = $parsed['broken'];
 
     if (!empty($matchReport['missingRequired'])) {
         flash('admin_error', '필수 컬럼이 없습니다: ' . implode(', ', $matchReport['missingRequired']));
@@ -357,7 +457,7 @@ if (is_post()) {
     }
 
     if (empty($parsed['rows'])) {
-        flash('admin_error', '업로드한 파일에 데이터 행이 없습니다.');
+        flash('admin_error', '업로드한 파일에 유효한 데이터 행이 없습니다.' . (!empty($brokenRows) ? ' (구조가 깨진 행 ' . count($brokenRows) . '건 발견)' : ''));
         redirect('/admin/products_import.php');
     }
 
@@ -366,7 +466,7 @@ if (is_post()) {
     AdminAuth::log(
         (int)AdminAuth::currentAdminId(),
         'product_bulk_import',
-        "엑셀 일괄 업로드: 신규 {$result['insert']}건, 수정 {$result['update']}건, 실패 " . count($result['errors']) . '건'
+        "엑셀 일괄 업로드: 신규 {$result['insert']}건, 수정 {$result['update']}건, 카테고리 자동생성 {$result['category_created']}건, 구조깨짐 " . count($brokenRows) . "건, 실패 " . count($result['errors']) . '건'
     );
 }
 
@@ -377,9 +477,12 @@ require __DIR__ . '/includes/header.php';
 <div class="admin-card" style="background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #e0e7ff;">
   <h2 class="admin-page-title">📁 상품 엑셀(CSV) 일괄 업로드</h2>
   <p class="admin-form-hint" style="line-height:1.7;">
-    이번 양식에는 <b>패턴코드, 사이즈, 하중&속도규격, 원산지, 단면폭/편평비/림직경, 패턴명, OEM, Tech, Runflat</b>까지
+    이번 양식에는 <b>패턴코드, 사이즈, 하중&속도규격, DOT, 원산지, 단면폭/편평비/림직경, 패턴명, OEM, Tech, Runflat</b>까지
     타이어 스펙 전체가 포함되어 있습니다. 엑셀에서 컬럼 순서를 바꿔서 올려도 <b>헤더 이름으로 자동 매칭</b>되니
-    순서는 신경 쓰지 않으셔도 됩니다. (다만 헤더 문구 자체는 양식과 동일해야 매칭됩니다.)
+    순서는 신경 쓰지 않으셔도 됩니다. (다만 헤더 문구 자체는 양식과 동일해야 매칭됩니다.)<br>
+    카테고리는 시스템에 없는 이름이어도 <b>자동으로 새 카테고리가 생성</b>됩니다.<br>
+    <b>'상품ID'</b>에 공급사 원본 코드(예: 0HK1004313)를 그대로 넣어 올리셔도, 같은 파일을 다시 올리면
+    <b>중복 등록 없이 기존 상품이 갱신</b>됩니다.
   </p>
   <div style="display:flex;gap:10px;flex-wrap:wrap;">
     <a href="<?= BASE_URL ?>/admin/products_export.php?template=1" class="btn-admin-excel">📄 빈 양식 다운로드 (신규 등록용)</a>
@@ -433,11 +536,26 @@ require __DIR__ . '/includes/header.php';
 </div>
 <?php endif; ?>
 
+<?php if (!empty($brokenRows)): ?>
+<div class="admin-card">
+  <h3 class="admin-form-section-title">⚠️ 구조가 깨진 행 (업로드에서 제외됨)</h3>
+  <p class="admin-form-hint">아래 행은 CSV 필드 개수가 맞지 않아(중간에 값이 잘려서) 자동으로 건너뛰었습니다. 원본 파일에서 직접 확인 후 복구해 주세요.</p>
+  <div class="admin-alert admin-alert-error">
+    <ul>
+      <?php foreach ($brokenRows as $b): ?>
+        <li><?= (int)$b['line'] ?>번째 줄 (상품ID: <?= h((string)$b['id']) ?>) — 필드 <?= (int)$b['got'] ?>개 감지됨 (정상은 <?= (int)$b['need'] ?>개)</li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+</div>
+<?php endif; ?>
+
 <?php if ($result !== null): ?>
 <div class="admin-card">
   <h3 class="admin-form-section-title">처리 결과</h3>
   <p>
     ✅ 성공 <b><?= (int)$result['success'] ?></b>건 (신규 <?= (int)$result['insert'] ?>건 / 수정 <?= (int)$result['update'] ?>건)
+    &nbsp;·&nbsp; 🆕 카테고리 자동생성 <b><?= (int)$result['category_created'] ?></b>건
     &nbsp;·&nbsp; ❌ 실패 <b><?= count($result['errors']) ?></b>건
   </p>
   <?php if (!empty($result['errors'])): ?>

@@ -18,6 +18,8 @@ function ensure_product_spec_columns(PDO $pdo): void
         'oem'               => "VARCHAR(100) NULL COMMENT 'OEM 인증'",
         'tech'              => "VARCHAR(150) NULL COMMENT 'Tech.'",
         'runflat'           => "VARCHAR(5) NULL COMMENT 'Runflat Y/N'",
+        'dot_code'          => "VARCHAR(30) NULL COMMENT '제조연주차(DOT)'",
+        'external_sku'      => "VARCHAR(60) NULL COMMENT '공급사 원본 상품코드'",
     ];
     $existing = [];
     foreach ($pdo->query("SHOW COLUMNS FROM tt_products")->fetchAll() as $row) {
@@ -34,9 +36,11 @@ ensure_product_spec_columns($pdo);
 
 $isTemplate = ($_GET['template'] ?? '') === '1';
 
+/* [수정] '공급사코드' 컬럼 추가 — 공급사 원본 상품코드를 내보내 재업로드 시에도
+   external_sku 매칭이 끊기지 않도록 한다. '상품ID'는 내부 DB 번호(수정용)로 유지. */
 $headers = [
-    '상품ID', '카테고리', '브랜드', '상품명', '패턴코드', '사이즈',
-    '하중속도규격', '원산지', '단면폭', '편평비', '림직경',
+    '상품ID', '공급사코드', '카테고리', '브랜드', '상품명', '패턴코드', '사이즈',
+    '하중속도규격', 'DOT', '원산지', '단면폭', '편평비', '림직경',
     '패턴명', 'OEM', 'Tech', 'Runflat',
     '정상가', '판매가', '공급가', '재고', '상태',
 ];
@@ -55,8 +59,8 @@ fputcsv($out, $headers);
 
 if ($isTemplate) {
     fputcsv($out, [
-        '', '카테고리관리에 등록된 이름', '브랜드관리에 등록된 이름', '(예시행) 상품명을 입력하세요',
-        'K127', '235/45R18', '94V', '한국',
+        '', '', '카테고리관리에 등록된 이름 (없으면 자동 생성됨)', '브랜드관리에 등록된 이름', '(예시행) 상품명을 입력하세요',
+        'K127', '235/45R18', '94V', '2423', '한국',
         '235', '45', '18',
         'Ventus S1 evo3', '벤츠 승인', 'Silent, EV등급', 'N',
         '150000', '120000', '90000', '20', '노출',
@@ -73,16 +77,17 @@ $statusFilter = $_GET['status'] ?? '';
 $where = '1=1';
 $params = [];
 if ($keyword !== '') {
-    $where .= ' AND (p.name LIKE :kw1 OR p.model LIKE :kw2 OR p.dot_code LIKE :kw3)';
+    $where .= ' AND (p.name LIKE :kw1 OR p.model LIKE :kw2 OR p.dot_code LIKE :kw3 OR p.external_sku LIKE :kw4)';
     $params['kw1'] = '%' . $keyword . '%';
     $params['kw2'] = '%' . $keyword . '%';
     $params['kw3'] = '%' . $keyword . '%';
+    $params['kw4'] = '%' . $keyword . '%';
 }
 if ($categoryId > 0) { $where .= ' AND p.category_id = :cat'; $params['cat'] = $categoryId; }
 if ($brandId > 0)    { $where .= ' AND p.brand_id = :brand'; $params['brand'] = $brandId; }
 if ($statusFilter === 'active' || $statusFilter === 'hidden') { $where .= ' AND p.status = :status'; $params['status'] = $statusFilter; }
 
-$stmt = $pdo->prepare("SELECT p.id, p.name, p.spec, p.origin,
+$stmt = $pdo->prepare("SELECT p.id, p.name, p.spec, p.dot_code, p.origin, p.external_sku,
                                p.pattern_code, p.load_speed_rating, p.width_mm, p.aspect_ratio, p.rim_diameter,
                                p.pattern_name, p.oem, p.tech, p.runflat,
                                p.price_original, p.price_sale, p.supply_price, p.stock, p.status,
@@ -97,12 +102,14 @@ $stmt->execute($params);
 while ($row = $stmt->fetch()) {
     fputcsv($out, [
         $row['id'],
+        $row['external_sku'] ?? '',
         $row['category_name'] ?? '',
         $row['brand_name'] ?? '',
         $row['name'],
         $row['pattern_code'] ?? '',
         $row['spec'] ?? '',
         $row['load_speed_rating'] ?? '',
+        $row['dot_code'] ?? '',
         $row['origin'] ?? '',
         $row['width_mm'] ?? '',
         $row['aspect_ratio'] ?? '',
