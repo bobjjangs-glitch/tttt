@@ -202,6 +202,13 @@ if (is_post()) {
                 /* 재고 입출고 이력 기록 (출고) */
                 record_stock_movement((int)$it['product_id'], (int)$it['option_id'], 'out', -1 * (int)$it['qty'],
                     (int)$row['stock_qty'] - (int)$it['qty'], "주문 출고 — {$it['name']}", '주문자동');
+                /* [이카운트 연동] 출고분만큼 이카운트 재고도 감소하도록 큐에 적재.
+                   함수가 아직 배포되지 않은 서버라도 결제 자체가 막히지 않도록
+                   function_exists()로 방어한다. 매핑/테이블 미존재 시 함수 내부에서
+                   조용히 스킵되므로 주문 처리에는 영향을 주지 않는다. */
+                if (function_exists('ecount_queue_stock_change')) {
+                    ecount_queue_stock_change((int)$it['product_id'], -1 * (int)$it['qty'], "주문 출고 — {$it['name']}");
+                }
             } else {
                 $lock = $pdo->prepare('SELECT stock FROM tt_products WHERE id = :id FOR UPDATE');
                 $lock->execute(['id' => $it['product_id']]);
@@ -220,6 +227,10 @@ if (is_post()) {
                 /* 재고 입출고 이력 기록 (출고) */
                 record_stock_movement((int)$it['product_id'], null, 'out', -1 * (int)$it['qty'],
                     (int)$row['stock'] - (int)$it['qty'], "주문 출고 — {$it['name']}", '주문자동');
+                /* [이카운트 연동] 출고분만큼 이카운트 재고도 감소하도록 큐에 적재 */
+                if (function_exists('ecount_queue_stock_change')) {
+                    ecount_queue_stock_change((int)$it['product_id'], -1 * (int)$it['qty'], "주문 출고 — {$it['name']}");
+                }
             }
 
             // [FIX] 옵션 자체 가격(price_sale)을 실제 단가로 사용 (247,000원 오표시 버그 수정)

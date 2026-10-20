@@ -93,8 +93,8 @@ require __DIR__ . '/includes/header.php';
       <div class="cs-quick-card">
         <div class="cs-quick-icon">💬</div>
         <h3>카카오톡</h3>
-        <p class="cs-quick-value">@타이어탑</p>
-        <p class="cs-quick-sub">평일 09:00 ~ 17:00</p>
+        <p class="cs-quick-value">@넘버원타이어</p>
+        <p class="cs-quick-sub">평일 08:30 ~ 18:00</p>
       </div>
       <div class="cs-quick-card">
         <div class="cs-quick-icon">📍</div>

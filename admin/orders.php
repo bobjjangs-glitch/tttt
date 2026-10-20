@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../core/bootstrap.php';
 AdminAuth::requirePermission('orders');
 ensure_order_tracking_columns();
+ensure_stock_movement_tables();
 $pdo = Database::connection();
 
 $statusLabels = [
@@ -56,38 +57,29 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'change_status') {
     /*
      * [FIX] 500 에러 근본 원인 수정
      * ------------------------------------------------------------------
-     * 기존 코드는 beginTransaction() ~ commit() 사이에서 AdminAuth::log()를
-     * 호출했다. AdminAuth::log() 내부는 ensure_admin_logs_table()을 통해
-     * "CREATE TABLE IF NOT EXISTS tt_admin_logs (...)" 라는 DDL을 실행하는데,
-     * MySQL/MariaDB의 InnoDB는 DDL이 실행되는 순간 (테이블 존재 여부와 무관하게)
-     * 현재 진행 중인 트랜잭션을 강제로 암시적 커밋(implicit commit) 시켜버린다.
+     * DDL(AdminAuth::log 내부 CREATE TABLE)이 트랜잭션 안에서 실행되면
+     * InnoDB가 암묵적 커밋을 일으켜 이후 commit()/rollBack()이 깨진다.
+     * 해결책: 핵심 주문 데이터 변경만 트랜잭션으로 묶고, commit() 이후
+     * 트랜잭션 바깥에서 AdminAuth::log()를 호출한다.
      *
-     * 그 결과:
-     *   1) beginTransaction() 이후 UPDATE/INSERT까지는 정상 실행됨
-     *   2) AdminAuth::log() 안에서 CREATE TABLE 실행 → 트랜잭션이 여기서 이미 커밋됨
-     *   3) 뒤이어 나오는 $pdo->commit() 호출 시 "there is no active transaction"
-     *      PDOException 발생
-     *   4) catch(Throwable $e) 블록에서 다시 $pdo->rollBack()을 호출하지만,
-     *      이미 트랜잭션이 없는 상태이므로 rollBack()도 예외를 던지며 그대로
-     *      전역 예외 핸들러 밖으로 튀어나가 500 에러(서버 관리자 root@localhost
-     *      안내 문구가 뜨는 Apache 기본 에러 페이지)로 이어졌다.
-     *
-     * 해결책: 핵심 주문 데이터 변경(UPDATE + 상태 로그 INSERT)만 트랜잭션으로
-     * 묶고, commit()을 완전히 마친 뒤 트랜잭션 바깥에서 AdminAuth::log()를
-     * 호출한다. catch 블록에서도 rollBack() 호출 전 inTransaction()으로
-     * 실제 열려 있는 트랜잭션이 있는지 확인해 이중 예외를 방지한다.
+     * [신규] 재고 복구 로직 추가
+     * ------------------------------------------------------------------
+     * 기존 코드는 주문취소(cancelled)로 상태를 바꿔도 tt_products.stock /
+     * tt_product_options.stock_qty를 되돌리는 코드가 전혀 없었다.
+     * "취소/환불로 처음 전환되는 경우"에만 주문 아이템만큼 재고를 복구하고,
+     * 재고 이력(tt_stock_movements)에도 'in'으로 기록하며,
+     * 이카운트 연동 큐(ecount_queue_stock_change)에도 증가분을 적재한다.
+     * 이미 취소된 주문을 다시 취소 눌러도 중복 복구되지 않도록 이전 상태를
+     * 반드시 먼저 확인한다.
      */
     try {
         $pdo->beginTransaction();
 
-        /* [v48] 변경 전 결제상태를 먼저 읽어 동기화 여부를 결정한다.
-           어드민이 "결제완료"(또는 그 이후 상태)로 변경하면 payment_status도 'paid'로,
-           "환불"로 변경하면 paid였던 건을 'refunded'로 함께 동기화 —
-           v47까지 status만 바꾸고 payment_status는 그대로라 마이페이지 세금계산서의
-           "결제완료 주문" 목록이 비어 있던 것이 이 건의 직접 원인. */
-        $curStmt = $pdo->prepare('SELECT payment_status FROM tt_orders WHERE id = :id LIMIT 1');
+        $curStmt = $pdo->prepare('SELECT status, payment_status FROM tt_orders WHERE id = :id LIMIT 1');
         $curStmt->execute(['id' => $orderId]);
-        $prevPayStatus = (string)($curStmt->fetchColumn() ?: 'unpaid');
+        $curRow = $curStmt->fetch();
+        $prevStatus    = (string)($curRow['status'] ?? '');
+        $prevPayStatus = (string)($curRow['payment_status'] ?? 'unpaid');
 
         $paidLike = in_array($newStatus, order_paid_statuses(), true);
         $syncTo = null;
@@ -102,10 +94,42 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'change_status') {
         if ($syncTo) $updParams['ps'] = $syncTo;
         $upd->execute($updParams);
 
+        /* [신규] 주문취소/환불로 "처음" 전환되는 경우에만 재고를 복구한다. */
+        $cancelLikeStatuses = ['cancelled', 'refunded'];
+        $restocked = false;
+        if (in_array($newStatus, $cancelLikeStatuses, true) && !in_array($prevStatus, $cancelLikeStatuses, true)) {
+            $oiStmt = $pdo->prepare('SELECT product_id, option_id, qty, product_name FROM tt_order_items WHERE order_id = :oid');
+            $oiStmt->execute(['oid' => $orderId]);
+            foreach ($oiStmt->fetchAll() as $oi) {
+                $qty = (int)$oi['qty'];
+                if ($qty <= 0) continue;
+
+                if ($oi['option_id']) {
+                    $pdo->prepare('UPDATE tt_product_options SET stock_qty = stock_qty + :q WHERE id = :id')
+                        ->execute(['q' => $qty, 'id' => $oi['option_id']]);
+                    $after = (int)$pdo->query('SELECT stock_qty FROM tt_product_options WHERE id = ' . (int)$oi['option_id'])->fetchColumn();
+                    record_stock_movement((int)$oi['product_id'], (int)$oi['option_id'], 'in', $qty, $after,
+                        "주문취소 재고복구 — {$oi['product_name']}", (string)AdminAuth::currentAdminName());
+                } else {
+                    $pdo->prepare('UPDATE tt_products SET stock = stock + :q WHERE id = :id')
+                        ->execute(['q' => $qty, 'id' => $oi['product_id']]);
+                    $after = (int)$pdo->query('SELECT stock FROM tt_products WHERE id = ' . (int)$oi['product_id'])->fetchColumn();
+                    record_stock_movement((int)$oi['product_id'], null, 'in', $qty, $after,
+                        "주문취소 재고복구 — {$oi['product_name']}", (string)AdminAuth::currentAdminName());
+                }
+                /* [이카운트 연동] 복구분만큼 이카운트 재고도 증가하도록 큐 적재 */
+                if (function_exists('ecount_queue_stock_change')) {
+                    ecount_queue_stock_change((int)$oi['product_id'], $qty, "주문취소 재고복구 #{$orderId}");
+                }
+            }
+            $restocked = true;
+        }
+
         $log = $pdo->prepare('INSERT INTO tt_order_status_logs (order_id, status, memo) VALUES (:oid, :s, :memo)');
         $baseMemo = $memo !== '' ? $memo : ($statusLabels[$newStatus] . '로 변경');
         if ($syncTo === 'paid') $baseMemo .= ' · 결제상태 동기화(미결제→결제완료)';
         if ($syncTo === 'refunded') $baseMemo .= ' · 결제상태 동기화(결제완료→환불)';
+        if ($restocked) $baseMemo .= ' · 재고 복구 처리됨';
         $log->execute(['oid' => $orderId, 's' => $newStatus, 'memo' => $baseMemo]);
 
         $pdo->commit();
@@ -113,11 +137,11 @@ if (is_post() && ($_POST['form_type'] ?? '') === 'change_status') {
         // [FIX] 관리자 활동 로그는 핵심 트랜잭션 commit 이후, 완전히 분리된 시점에 기록한다.
         AdminAuth::log((int)AdminAuth::currentAdminId(), 'order_status_change', "주문#{$orderId} 상태를 {$statusLabels[$newStatus]}로 변경");
 
-        /* [v48] 결제확정 시점에 소득공제 현금영수증 자동 발행 —
-           주문 시 소득공제(휴대폰 번호)를 요청한 건은 관리자 수동 토글 없이 발행 처리된다. */
+        /* [v48] 결제확정 시점에 소득공제 현금영수증 자동 발행 */
         $receiptAutoIssued = auto_issue_income_cash_receipt($pdo, $orderId);
 
         flash('admin_success', '주문 상태가 변경되었습니다.'
+            . ($restocked ? ' 📦 재고가 복구되었습니다.' : '')
             . ($receiptAutoIssued ? ' 🧾 현금영수증(소득공제) 자동 발행 처리되었습니다 — 정산마감에 반영됩니다.' : ''));
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
@@ -282,7 +306,6 @@ if ($detailId > 0) {
       <table class="admin-table admin-table-kv">
         <tr><th style="width:160px">주문번호</th><td><?= h($order['order_no']) ?></td></tr>
         <tr><th>주문상태</th><td><span class="status-badge status-<?= h($order['status']) ?>"><?= h($statusLabels[$order['status']] ?? $order['status']) ?></span></td></tr>
-        <?php /* [v46] 결제수단 표시 (무통장/가상계좌/카드/네이버페이/카카오페이) */ ?>
         <tr><th>결제수단</th><td><?= h(payment_method_labels()[$order['payment_method'] ?? 'bank_transfer'] ?? ($order['payment_method'] ?? 'bank_transfer')) ?></td></tr>
 
         <tr><th>수령인</th><td><?= h($order['recipient_name']) ?></td></tr>
@@ -295,7 +318,6 @@ if ($detailId > 0) {
       <tr>
         <th>현금영수증</th>
         <td>
-          <?php /* [v46→v48] 주문 시 현금영수증 요청(소득공제/지출증빙) 정보 + 자동 발행 안내 표시 */ ?>
           <?php $crType = (string)($order['cash_receipt_type'] ?? 'none'); ?>
           <?php if (!in_array($crType, ['', 'none'], true)): ?>
             <div style="margin-bottom:6px;font-size:13px;color:#0f766e;font-weight:800;">
@@ -384,6 +406,9 @@ if ($detailId > 0) {
 
     <div class="admin-card">
       <h2>상태 변경</h2>
+      <?php if (!in_array($order['status'], ['cancelled','refunded'], true)): ?>
+      <p class="admin-list-sub" style="margin-bottom:10px;color:#b45309;">⚠ '주문취소'로 변경하면 주문 상품의 재고가 자동으로 복구됩니다.</p>
+      <?php endif; ?>
       <form method="post" class="admin-status-form">
         <?= Csrf::field() ?>
         <input type="hidden" name="form_type" value="change_status">

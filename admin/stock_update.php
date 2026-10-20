@@ -221,8 +221,9 @@ function admin_stock_bulk_update(PDO $pdo, array $rows): array
         try {
             $updateStmt->execute(['stock' => $stockVal, 'lsr' => $loadSpeedRaw, 'id' => $target['id']]);
 
-            record_stock_movement((int)$target['id'], null, 'adjust', $stockVal - (int)$target['stock'], $stockVal,
-                '재고 일괄 업데이트 (브랜드+사이즈 매칭)', (string)AdminAuth::currentAdminName());
+          record_stock_movement((int)$target['id'], null, 'adjust', $stockVal - (int)$target['stock'], $stockVal, '재고 일괄 업데이트 (브랜드+사이즈 매칭)', (string)AdminAuth::currentAdminName());
+ecount_queue_stock_change((int)$target['id'], $stockVal - (int)$target['stock'], '재고 일괄 업데이트');
+
 
             $successCount++;
 
