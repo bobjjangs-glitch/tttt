@@ -92,7 +92,7 @@ require __DIR__ . '/includes/header.php';
   <div class="tablet-sum-item"><div class="k">총 작업 (<?= (int)$calc['work_count'] ?>건<?= $calc['working_count'] ? ' · 진행중 ' . (int)$calc['working_count'] : '' ?>)</div><div class="v"><?= $fmt($calc['site_sales']) ?><span style="font-size:13px;color:#6b7280;font-weight:700;">원</span></div></div>
   <div class="tablet-sum-item"><div class="k">💳 카드결제</div><div class="v"><?= $fmt((int)$calc['card_sales']) ?>원</div></div>
   <div class="tablet-sum-item"><div class="k">💵 현금결제<?= (int)$calc['transfer_sales'] > 0 ? '·계좌' : '' ?></div><div class="v green"><?= $fmt((int)$calc['cash_sales'] + (int)$calc['transfer_sales']) ?>원</div></div>
-  <div class="tablet-sum-item"><div class="k">⏳ 외상<?= (int)$calc['unpaid_count'] > 0 ? ' (' . (int)$calc['unpaid_count'] . '건)' : '' ?></div><div class="v" style="color:#c2410c;"><?= $fmt((int)$calc['unpaid_sales']) ?>원</div></div>
+  <div class="tablet-sum-item"><div class="k">⏳ 미수결제<?= (int)$calc['unpaid_count'] > 0 ? ' (' . (int)$calc['unpaid_count'] . '건)' : '' ?></div><div class="v" style="color:#c2410c;"><?= $fmt((int)$calc['unpaid_sales']) ?>원</div></div>
   <div class="tablet-sum-item"><div class="k">예약 / 일반</div><div class="v" style="font-size:19px;"><?= (int)$calc['reservation_count'] ?>건 · <?= (int)$calc['walkin_count'] ?>건</div></div>
   <div class="tablet-sum-item"><div class="k">온라인 주문(참고)</div><div class="v" style="font-size:19px;"><?= $fmt($calc['online_sales']) ?>원<?= (int)$calc['online_biz_sales'] > 0 ? ' (도매 ' . $fmt((int)$calc['online_biz_sales']) . ')' : '' ?></div></div>
 </div>
@@ -207,7 +207,7 @@ require __DIR__ . '/includes/header.php';
       <input type="radio" name="pay_method" id="pm-transfer" value="transfer">
       <label for="pm-transfer">🏦 계좌이체</label>
       <input type="radio" name="pay_method" id="pm-none" value="none">
-      <label for="pm-none">⏳ 외상으로 되돌림</label>
+      <label for="pm-none">⏳ 미수금으로 되돌림</label>
     </div>
     <input type="number" name="pay_amount" id="payModalAmount" min="0" step="1000" placeholder="결제금액 (비워두면 작업금액 그대로)">
     <?php /* [v42] 현금결제 시 현금영수증 발행 체크 */ ?>
@@ -259,7 +259,7 @@ require __DIR__ . '/includes/header.php';
       syncReceiptRow();
       if (info) {
         info.textContent = method
-          ? '이미 등록된 결제가 있습니다 — 수단/금액을 고쳐 저장하면 갱신되고, "외상으로 되돌림"을 고르면 취소됩니다.'
+          ? '이미 등록된 결제가 있습니다 — 수단/금액을 고쳐 저장하면 갱신되고, "미수금으로 되돌림"을 고르면 취소됩니다.'
           : (btn.getAttribute('data-resv') === '1'
               ? '예약 작업입니다 — 카드/현금/계좌이체 중 결제받은 수단을 선택해 주세요.'
               : '작업 완료 후 결제받은 금액과 결제수단을 등록하세요 — 정산마감에 카드/현금으로 반영됩니다.');
