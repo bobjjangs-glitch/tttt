@@ -82,7 +82,6 @@ if ($q !== '') {
     $params['q'] = '%' . $q . '%';
 }
 
-$total = (int)$pdo->prepare("SELECT COUNT(*) FROM tt_products p WHERE {$where}")->execute($params) ?: 0;
 $stmtCount = $pdo->prepare("SELECT COUNT(*) FROM tt_products p WHERE {$where}");
 $stmtCount->execute($params);
 $total = (int)$stmtCount->fetchColumn();

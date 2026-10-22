@@ -20,7 +20,9 @@ $integrations = [
             ['ecount_com_code', '회사코드 (COM_CODE)'],
             ['ecount_user_id', '사용자 ID'],
             ['ecount_api_key', 'API 인증키', 'password'],
-            ['ecount_domain', '도메인 (예: logis.ecounterp.com)'],
+            /* [FIX] Open API 전용 도메인 — 반드시 sboapi 또는 oapi 둘 중 하나.
+               쇼핑몰 자사 도메인이나 ERP 웹 로그인 주소(xxx.ecounterp.com)가 아님. */
+            ['ecount_domain', '도메인 — Open API용 (테스트계정: sboapi / 실운영계정: oapi)'],
         ],
     ],
     'kakaotalk' => [
