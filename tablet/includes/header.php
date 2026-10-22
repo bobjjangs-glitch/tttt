@@ -27,6 +27,7 @@ $isAdminPreview = ((int)($worker['id'] ?? 0)) === 0;
   <nav class="tablet-header-nav">
     <a href="<?= BASE_URL ?>/tablet/index.php" class="<?= ($pageKey ?? '') === 'today' ? 'on' : '' ?>">📋 오늘의 작업</a>
     <a href="<?= BASE_URL ?>/tablet/reservation-board.php" class="<?= ($pageKey ?? '') === 'reserve' ? 'on' : '' ?>">🗓️ 예약판</a>
+    <a href="<?= BASE_URL ?>/tablet/walkin.php" class="<?= ($pageKey ?? '') === 'walkin' ? 'on' : '' ?>">🚗 현장 입고</a>
     <a href="<?= BASE_URL ?>/tablet/log-add.php" class="<?= ($pageKey ?? '') === 'add' ? 'on' : '' ?>">➕ 작업 등록</a>
   </nav>
   <div class="tablet-header-right">

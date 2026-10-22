@@ -2,6 +2,12 @@
 declare(strict_types=1);
 require_once __DIR__ . '/includes/bootstrap.php';
 
+/* [현황판] 입고 연동 — 파일이 없거나 오류가 나도 기존 태블릿 기능은 영향받지 않게 격리 */
+$boardLibPath = __DIR__ . '/includes/board-lib.php';
+if (is_file($boardLibPath)) {
+    try { require_once $boardLibPath; } catch (Throwable $e) { error_log('[board-lib] ' . $e->getMessage()); }
+}
+
 /* 태블릿 액션 라우터 — 모든 POST 처리 (로그인 상태 필요) */
 $worker = tablet_current_worker();
 if (!$worker && !AdminAuth::isLoggedIn()) {
@@ -259,6 +265,15 @@ switch ($action) {
                     'by'=>($worker['name'] ?? AdminAuth::currentAdminName()),
                 ]);
             $savedId = (int)$pdo->lastInsertId();
+
+            /* [현황판] 현장 입고 차량에서 시작한 작업이면 입고 기록과 작업일지를 연결.
+               실패해도 작업일지 저장은 이미 끝났으므로 기존 동작에 영향 없음. */
+            $walkinId = (int)($_POST['walkin_id'] ?? 0);
+            if ($walkinId > 0 && $savedId > 0 && function_exists('board_link_walkin')) {
+                try { board_link_walkin($walkinId, $savedId); }
+                catch (Throwable $e) { error_log('[board-link] ' . $e->getMessage()); }
+            }
+
             $doneMsg = '작업일지를 등록했습니다.';
         }
 

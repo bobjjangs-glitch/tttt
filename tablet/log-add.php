@@ -64,6 +64,31 @@ if ($fromReservation > 0) {
     }
 }
 
+/* [현황판] 현장 입고 차량에서 작업 시작 — 차량번호 자동 채움, 상태는 작업중
+   (예약 연동 중이 아닐 때만. tt_board_walkins 테이블이 아직 없어도 화면이 죽지 않게 격리) */
+$walkinId = 0;
+$walkinPlate = '';
+$walkinInvalid = false;
+$walkinReq = (int)($_GET['walkin_id'] ?? 0);
+if (!$resv && $walkinReq > 0) {
+    try {
+        $stmt = $pdo->prepare('SELECT id, plate_no FROM tt_board_walkins WHERE id = :id AND work_log_id IS NULL LIMIT 1');
+        $stmt->execute(['id' => $walkinReq]);
+        if ($entry = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $walkinId = (int)$entry['id'];
+            $walkinPlate = (string)$entry['plate_no'];
+            $defaults['car_info'] = $walkinPlate;
+            $defaults['status']   = 'working';
+        } else {
+            $walkinInvalid = true;
+        }
+    } catch (Throwable $e) {
+        error_log('[log-add:walkin] ' . $e->getMessage());
+        if (function_exists('sg_maybe_invalidate')) sg_maybe_invalidate($e);
+        $walkinInvalid = true;
+    }
+}
+
 /* 마감 여부 — 마감된 날짜엔 등록 불가 */
 $settleCheck = get_settlement($defaults['work_date']);
 $dateClosed = $settleCheck && $settleCheck['reopened_at'] === null;
@@ -82,12 +107,16 @@ require __DIR__ . '/includes/header.php';
 <?php if ($dateClosed): ?>
 <div class="notice notice-warn">🔒 <?= h($defaults['work_date']) ?> 은(는) 이미 일정산 마감이 완료되어 작업일지를 등록할 수 없습니다.</div>
 <?php endif; ?>
+<?php if ($walkinInvalid): ?>
+<div class="notice notice-warn">⚠ 이미 작업이 시작됐거나 취소된 입고 건입니다. 이 화면에서 저장하면 입고 기록과 연결되지 않은 일반 작업일지로 등록됩니다. <a href="<?= BASE_URL ?>/tablet/walkin.php">현장 입고 목록으로</a></div>
+<?php endif; ?>
 
 <form method="post" action="<?= BASE_URL ?>/tablet/action.php" class="tablet-card" enctype="multipart/form-data">
   <input type="hidden" name="csrf_token" value="<?= Csrf::token() ?>">
   <input type="hidden" name="action" value="log_save">
   <input type="hidden" name="id" value="0">
   <input type="hidden" name="source" value="<?= h($defaults['source']) ?>">
+  <input type="hidden" name="walkin_id" value="<?= (int)$walkinId ?>">
   <?php if ($resv): ?>
   <input type="hidden" name="reservation_id" value="<?= (int)$resv['id'] ?>">
   <input type="hidden" name="customer_name" value="<?= h($defaults['customer_name']) ?>">
@@ -95,7 +124,7 @@ require __DIR__ . '/includes/header.php';
 
   <div class="tablet-card-title">
     ➕ 작업일지 등록
-    <span class="count-chip"><?= $resv ? '🗓️ 예약 연동 — ' . h($resv['res_no']) : '🚶 일반 로드' ?></span>
+    <span class="count-chip"><?= $resv ? '🗓️ 예약 연동 — ' . h($resv['res_no']) : ($walkinId > 0 ? '🚗 현장 입고 — ' . h($walkinPlate) : '🚶 일반 로드') ?></span>
   </div>
 
   <div class="tablet-form">

@@ -114,6 +114,20 @@ require __DIR__ . '/includes/header.php';
             <a class="tablet-btn tablet-btn-green" href="<?= BASE_URL ?>/tablet/index.php?date=<?= h($date) ?>" style="flex:1;">✅ 작업일지에서 보기 — 연동 완료</a>
           </div>
           <?php else: ?>
+<?php $checkedIn = !empty($r['checked_in_at']); ?>
+<form method="post" action="<?= BASE_URL ?>/tablet/checkin.php" class="resv-actions">
+  <input type="hidden" name="csrf_token" value="<?= Csrf::token() ?>">
+  <input type="hidden" name="reservation_id" value="<?= (int)$r['id'] ?>">
+  <input type="hidden" name="undo" value="<?= $checkedIn ? '1' : '0' ?>">
+  <input type="hidden" name="return_to" value="/tablet/reservation-board.php?date=<?= h($date) ?>">
+  <button type="submit" class="tablet-btn <?= $checkedIn ? 'tablet-btn-ghost' : '' ?>" style="flex:1;">
+    <?= $checkedIn ? '↩ 입고 취소' : '🚗 입고 처리' ?>
+  </button>
+</form>
+<form method="post" action="<?= BASE_URL ?>/tablet/action.php" class="resv-actions">
+  <!-- 이하 기존 start_reservation 폼 그대로 -->
+
+            
           <form method="post" action="<?= BASE_URL ?>/tablet/action.php" class="resv-actions">
             <input type="hidden" name="csrf_token" value="<?= Csrf::token() ?>">
             <input type="hidden" name="action" value="start_reservation">
