@@ -14,15 +14,13 @@ $pdo = Database::connection();
 $integrations = [
     'ecount' => [
         'title' => '📊 이카운트 (ECOUNT)',
-        'desc' => '이카운트 ERP와 연동하여 주문·세금계산서 데이터를 자동으로 전송합니다.',
+        'desc' => '이카운트 ERP와 연동합니다 — 품목·거래처·발주서 관리와 창고별 재고 실시간 동기화는 [이카운트 ERP 메뉴](admin/ecount.php)에서 사용합니다. (테스트키 모드는 연동 대시보드에서 전환)',
         'doc' => 'https://www.ecount.kr',
         'fields' => [
-            ['ecount_com_code', '회사코드 (COM_CODE)'],
-            ['ecount_user_id', '사용자 ID'],
-            ['ecount_api_key', 'API 인증키', 'password'],
-            /* [FIX] Open API 전용 도메인 — 반드시 sboapi 또는 oapi 둘 중 하나.
-               쇼핑몰 자사 도메인이나 ERP 웹 로그인 주소(xxx.ecounterp.com)가 아님. */
-            ['ecount_domain', '도메인 — Open API용 (테스트계정: sboapi / 실운영계정: oapi)'],
+            ['ecount_com_code', '회사코드 (COM_CODE)', 'text', '', '이카운트 ERP 로그인 시 쓰는 회사코드 (예: 73013)'],
+            ['ecount_user_id', '사용자 ID', 'text', '', 'API 인증키를 발급받은 이카운트 ID'],
+            ['ecount_api_key', 'API 인증키', 'password', '', 'ERP 메뉴 Self-Customizing(환경설정) → 정보관리 → API인증키발급에서 발급 (만료 시 같은 화면에서 갱신)'],
+            ['ecount_domain', '연결 도메인 (선택·보통 비워둠)', 'text', '', '비워두면 Zone 자동조회로 https://oapi{ZONE}.ecount.com 로 연결됩니다. "oapi" 같은 값은 넣지 마세요 — 사내 프록시 주소(http://…)가 있을 때만 입력'],
         ],
     ],
     'kakaotalk' => [
@@ -82,14 +80,33 @@ if (is_post()) {
     }
     try {
         $saved = 0;
+        $domainNotice = '';
         foreach ($integrations[$svc]['fields'] as $field) {
             $key = $field[0];
             $val = trim($_POST[$key] ?? '');
+            if ($key === 'ecount_domain') {
+                // [v52] 도메인 필드: 빈 칸이면 저장값 삭제(Zone 자동조회 복귀),
+                // "oapi"·"sboapi" 같은 불완전한 값도 자동 정리한다.
+                $norm = strtolower(preg_replace('#^https?://#i', '', $val));
+                $norm = rtrim(trim($norm, " \t./"), '.');
+                $junk = in_array($norm, ['', 'oapi', 'sboapi', 'ecount', 'ecount.com', 'www.ecount.com', 'erp', 'null', 'none'], true)
+                    || preg_match('/^[a-z0-9]{1,6}$/', $norm) === 1;
+                if ($junk) {
+                    if ((string)get_setting('ecount_domain', '') !== '') {
+                        set_setting('ecount_domain', '');
+                    }
+                    $domainNotice = '연결 도메인은 비워두었습니다 — Zone 자동조회(https://oapi{ZONE}.ecount.com)로 연결합니다.';
+                } else {
+                    set_setting('ecount_domain', $val);
+                    $saved++;
+                }
+                continue;
+            }
             if ($val !== '') { set_setting($key, $val); $saved++; }
             else { /* 빈 값 저장 안 함 — 기존 값 유지 */ }
         }
         AdminAuth::log((int)AdminAuth::currentAdminId(), 'api_settings_save', "외부 연동 설정 저장: {$svc} ({$saved}건)");
-        flash('admin_success', $integrations[$svc]['title'] . ' 설정이 저장되었습니다. (' . $saved . '개 항목)');
+        flash('admin_success', $integrations[$svc]['title'] . ' 설정이 저장되었습니다.' . ($saved > 0 ? " ({$saved}개 항목)" : '') . ($domainNotice !== '' ? ' ' . $domainNotice : ''));
     } catch (Throwable $e) {
         error_log('[admin/api-settings save] ' . $e->getMessage());
         flash('admin_error', '저장 중 오류가 발생했습니다.');
@@ -153,6 +170,7 @@ require __DIR__ . '/includes/header.php';
         <?php foreach ($cfg['fields'] as $field):
             [$key, $label] = $field;
             $isPw = ($field[2] ?? '') === 'password';
+            $help = (string)($field[4] ?? '');
             $current = (string)get_setting($key, '');
             // 저장된 값 마스킹 표시 (입력값은 새로 넣을 때만 저장)
             $masked = $current !== '' ? mb_substr($current, 0, 3) . str_repeat('•', 8) : '';
@@ -160,12 +178,15 @@ require __DIR__ . '/includes/header.php';
         <div class="api-field">
           <label><?= h($label) ?></label>
           <?php if ($isPw): ?>
-          <input type="password" name="<?= h($key) ?>" value="" placeholder="<?= $masked !== '' ? '저장됨 (' . $masked . ') — 변경 시 입력' : '미설정' ?>" autocomplete="new-password">
+          <input type="password" name="<?= h($key) ?>" value="" placeholder="<?= $masked !== '' ? '저장됨 (' . $masked . ') — 변경 시 입력' : ($help !== '' ? '' : '미설정') ?>" autocomplete="new-password">
           <?php else: ?>
-          <input type="text" name="<?= h($key) ?>" value="<?= h($current) ?>" placeholder="미설정" autocomplete="off">
+          <input type="text" name="<?= h($key) ?>" value="<?= h($current) ?>" placeholder="<?= $help !== '' ? '' : '미설정' ?>" autocomplete="off">
           <?php endif; ?>
           <?php if ($isPw && $current !== ''): ?>
           <p class="api-field-hint">⚠️ 보안을 위해 저장된 값은 마스킹 표시됩니다. 변경할 때만 새 값을 입력하세요. (빈 칸이면 기존 값 유지)</p>
+          <?php endif; ?>
+          <?php if ($help !== ''): ?>
+          <p class="api-field-hint"><?= h($help) ?></p>
           <?php endif; ?>
         </div>
         <?php endforeach; ?>

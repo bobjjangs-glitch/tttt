@@ -32,6 +32,7 @@ final class AdminAuth
         'business-approvals'=> '사업자 승인',
         'inquiries'         => '1:1 문의 관리',
         'chatbot'           => 'AI 챗봇 관리',
+        'ecount'            => '이카운트 ERP 연동',
     ];
 
     /** 역할별 기본 접근 모듈. super는 항상 통과(별도 처리).

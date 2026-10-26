@@ -1,315 +1,343 @@
 <?php
-declare(strict_types=1);
-require_once __DIR__ . '/../../core/bootstrap.php';
-AdminAuth::requireLogin();
+$cartCount = 0;
+if (Auth::isLoggedIn()) {
+    $pdo = Database::connection();
+    $stmt = $pdo->prepare('SELECT COALESCE(SUM(qty),0) AS cnt FROM tt_carts WHERE user_id = :uid');
+    $stmt->execute(['uid' => Auth::currentUserId()]);
+    $cartCount = (int)$stmt->fetchColumn();
+}
 
-$currentScript = basename($_SERVER['SCRIPT_NAME']);
-$adminName     = method_exists('AdminAuth', 'currentAdminName') ? AdminAuth::currentAdminName() : '관리자';
-$adminRole     = method_exists('AdminAuth', 'currentRole') ? AdminAuth::currentRole() : 'cs';
-$isSuperAdmin  = method_exists('AdminAuth', 'isSuper') ? AdminAuth::isSuper() : false;
-
-$adminRoleLabels = [
-    'super'   => '최고관리자',
-    'product' => '상품/배너 담당',
-    'order'   => '주문/재고 담당',
-    'cs'      => '고객응대 담당',
-];
-$adminRoleLabel = $adminRoleLabels[$adminRole] ?? $adminRole;
-
-// 현재 페이지가 어느 그룹에 속하는지 확인 (드롭다운 자동 펼침용)
-$orderGroup = ['orders.php', 'business-orders.php', 'reservations.php', 'reservation-reminders.php'];
-$taxGroup = ['tax-invoices.php', 'tax-invoice-faxes.php', 'tax-invoice-print.php', 'tax-invoice-export.php'];
-$productGroup = ['products.php', 'brands.php', 'coupons.php', 'benefits-settings.php', 'reviews.php', 'popups.php', 'banners.php', 'bulk-upload.php', 'stock-movements.php', 'ecount-items.php'];
-$memberGroup = ['users.php', 'business-approvals.php', 'inquiries.php', 'chatbot.php', 'vehicles.php'];
-$settleGroup = ['daily-settlement.php', 'daily-settlement-print.php', 'monthly-settlement.php', 'monthly-settlement-print.php', 'card-fees.php', 'wholesale-sales.php', 'wholesale-sale-print.php'];
-$tabletGroup = ['work-logs.php', 'workers.php'];
-
-$activeGroup = '';
-if (in_array($currentScript, $orderGroup, true)) $activeGroup = 'orders';
-elseif (in_array($currentScript, $taxGroup, true)) $activeGroup = 'tax';
-elseif (in_array($currentScript, $settleGroup, true)) $activeGroup = 'settle';
-elseif (in_array($currentScript, $tabletGroup, true)) $activeGroup = 'tablet';
-elseif (in_array($currentScript, $productGroup, true)) $activeGroup = 'products';
-elseif (in_array($currentScript, $memberGroup, true)) $activeGroup = 'members';
-
-function admin_nav_active(string $script, string $target): string {
-    return $script === $target ? 'active' : '';
+/* ===== 팝업 광고 조회: 활성 + 노출 기간 내인 것만, 순서대로 최대 5개 =====
+   [FIX] 비로그인 사용자는 위 if 블록을 타지 않아 $pdo가 없을 수 있으므로
+   여기서 한 번 더 안전하게 커넥션을 확보한다. */
+$pdo = $pdo ?? Database::connection();
+$activePopups = [];
+try {
+    $ppStmt = $pdo->query("
+        SELECT id, title, image_url, link_url, width, height, allow_today_close
+        FROM tt_popups
+        WHERE is_active = 1
+          AND (start_at IS NULL OR start_at <= NOW())
+          AND (end_at IS NULL OR end_at >= NOW())
+        ORDER BY sort_order ASC, id DESC
+        LIMIT 5
+    ");
+    $activePopups = $ppStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    error_log('[popup fetch] ' . $e->getMessage());
+    $activePopups = [];
 }
 ?>
 <!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title><?= isset($pageTitle) ? h($pageTitle) . ' - 관리자' : '관리자' ?></title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title><?= isset($pageTitle) ? h($pageTitle)." - ".SITE_NAME : SITE_NAME ?></title>
 <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/common.css">
-<link rel="stylesheet" href="<?= BASE_URL ?>/admin/assets/css/admin.css">
+
+<!-- ===== [PWA] 모바일 앱 패키징 (iOS/Android 홈화면 앱) ===== -->
+<link rel="manifest" href="<?= BASE_URL ?>/manifest.json">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="타이어몰">
+<link rel="apple-touch-icon" href="<?= BASE_URL ?>/img/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="48x48" href="<?= BASE_URL ?>/img/favicon-48.png">
+
+<script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 </head>
-<body class="admin-body">
-<div class="admin-layout">
-  <aside class="admin-sidebar" id="adminSidebar">
-    <div class="admin-logo">
-      <span class="admin-logo-text"><?= h(defined('SITE_NAME') ? SITE_NAME : '타이어탑') ?></span>
-      <span class="admin-logo-sub">관리자</span>
+<body>
+
+<!-- 서비스 워커 등록 (PWA) -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('<?= BASE_URL ?>/sw.js').catch(function () {});
+  });
+}
+</script>
+
+<div class="tt-utilbar">
+  <div class="tt-utilbar-inner">
+    <div class="tt-utilbar-left">
+      <span><?= h(defined('SITE_NAME') ? SITE_NAME : '타이어탑') ?></span>
     </div>
-    <nav class="admin-nav">
+    <div class="tt-utilbar-right">
+      <a href="<?= BASE_URL ?>/guide.php">이용안내</a>
+      <span class="tt-utilbar-sep">|</span>
+      <a href="<?= BASE_URL ?>/cs-center.php">고객센터</a>
+    </div>
+  </div>
+</div>
 
-      <!-- 대시보드 -->
-      <a href="<?= BASE_URL ?>/admin/index.php" class="admin-nav-item <?= admin_nav_active($currentScript, 'index.php') ?>">
-        <span class="admin-nav-icon">📊</span>
-        <span>대시보드</span>
-      </a>
+<header class="tt-header">
+  <div class="tt-header-inner">
+    <!-- 모바일 햄버거 버튼 -->
+    <button type="button" class="tt-mobile-menu-btn" id="ttMobileMenuBtn" aria-label="메뉴">☰</button>
 
-      <!-- 주문 관리 (드롭다운) -->
-      <?php if (AdminAuth::can('orders') || AdminAuth::can('business-orders') || AdminAuth::can('reservations') || AdminAuth::can('tax-invoices')): ?>
-      <div class="admin-nav-group <?= $activeGroup === 'orders' ? 'open' : '' ?>" data-group="orders">
-        <button type="button" class="admin-nav-toggle">
-          <span class="admin-nav-icon">📦</span>
-          <span>주문 관리</span>
-          <span class="admin-nav-arrow">▾</span>
-        </button>
-        <div class="admin-nav-sub">
-          <?php if (AdminAuth::can('orders')): ?>
-          <a href="<?= BASE_URL ?>/admin/orders.php" class="<?= admin_nav_active($currentScript, 'orders.php') ?>">주문 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('business-orders')): ?>
-          <a href="<?= BASE_URL ?>/admin/business-orders.php" class="<?= admin_nav_active($currentScript, 'business-orders.php') ?>">사업자 주문 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('reservations')): ?>
-          <a href="<?= BASE_URL ?>/admin/reservations.php" class="<?= admin_nav_active($currentScript, 'reservations.php') ?>">🗓️ 예약 관리</a>
-          <a href="<?= BASE_URL ?>/admin/reservation-reminders.php" class="<?= admin_nav_active($currentScript, 'reservation-reminders.php') ?>">📩 예약 리마인더</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('tax-invoices')): ?>
-          <a href="<?= BASE_URL ?>/admin/tax-invoices.php" class="<?= admin_nav_active($currentScript, 'tax-invoices.php') ?>">🧾 세금계산서</a>
-          <?php endif; ?>
-        </div>
-      </div>
-      <?php endif; ?>
+    <a href="<?= BASE_URL ?>/index.php" class="tt-logo">
+      <img src="<?= BASE_URL ?>/img/logo.png" alt="<?= h(SITE_NAME) ?>" class="tt-logo-img">
+    </a>
 
-      <!-- 세금계산서 관리 (전용 섹션) -->
-      <?php if (AdminAuth::can('tax-invoices')): ?>
-      <div class="admin-nav-group <?= $activeGroup === 'tax' ? 'open' : '' ?>" data-group="tax">
-        <button type="button" class="admin-nav-toggle">
-          <span class="admin-nav-icon">🧾</span>
-          <span>세금계산서 관리</span>
-          <span class="admin-nav-arrow">▾</span>
-        </button>
-        <div class="admin-nav-sub">
-          <a href="<?= BASE_URL ?>/admin/tax-invoices.php" class="<?= admin_nav_active($currentScript, 'tax-invoices.php') ?>">발행 관리 (인쇄·엑셀)</a>
-          <a href="<?= BASE_URL ?>/admin/tax-invoice-faxes.php" class="<?= admin_nav_active($currentScript, 'tax-invoice-faxes.php') ?>">📠 팩스 발송 관리</a>
-        </div>
-      </div>
-      <?php endif; ?>
-
-      <!-- 정산 · 인센티브 (전용 섹션) [v42 → v43: 도매매출 관리 추가] -->
-      <?php if (AdminAuth::can('daily-settlement') || AdminAuth::can('monthly-settlement') || AdminAuth::can('card-fees') || AdminAuth::can('wholesale-sales')): ?>
-      <div class="admin-nav-group <?= $activeGroup === 'settle' ? 'open' : '' ?>" data-group="settle">
-        <button type="button" class="admin-nav-toggle">
-          <span class="admin-nav-icon">💼</span>
-          <span>정산 · 인센티브</span>
-          <span class="admin-nav-arrow">▾</span>
-        </button>
-        <div class="admin-nav-sub">
-          <?php if (AdminAuth::can('daily-settlement')): ?>
-          <a href="<?= BASE_URL ?>/admin/daily-settlement.php" class="<?= admin_nav_active($currentScript, 'daily-settlement.php') . ($currentScript === 'daily-settlement-print.php' ? ' active' : '') ?>">💰 일정산 마감</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('monthly-settlement')): ?>
-          <a href="<?= BASE_URL ?>/admin/monthly-settlement.php" class="<?= admin_nav_active($currentScript, 'monthly-settlement.php') . ($currentScript === 'monthly-settlement-print.php' ? ' active' : '') ?>">📅 월간 정산 · 인센티브</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('wholesale-sales')): ?>
-          <a href="<?= BASE_URL ?>/admin/wholesale-sales.php" class="<?= admin_nav_active($currentScript, 'wholesale-sales.php') . ($currentScript === 'wholesale-sale-print.php' ? ' active' : '') ?>">📦 도매매출 관리 (일반 도매)</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('card-fees')): ?>
-          <a href="<?= BASE_URL ?>/admin/card-fees.php" class="<?= admin_nav_active($currentScript, 'card-fees.php') ?>">💳 카드 수수료 설정</a>
-          <?php endif; ?>
-        </div>
-      </div>
-      <?php endif; ?>
-
-      <!-- 태블릿 · 작업일지 (전용 섹션) [v42 — 작업자/작업일지/사이트만] -->
-      <?php if (AdminAuth::can('workers') || AdminAuth::can('work-logs')): ?>
-      <div class="admin-nav-group <?= $activeGroup === 'tablet' ? 'open' : '' ?>" data-group="tablet">
-        <button type="button" class="admin-nav-toggle">
-          <span class="admin-nav-icon">🔧</span>
-          <span>태블릿 · 작업일지</span>
-          <span class="admin-nav-arrow">▾</span>
-        </button>
-        <div class="admin-nav-sub">
-          <?php if (AdminAuth::can('workers')): ?>
-          <a href="<?= BASE_URL ?>/admin/workers.php" class="<?= admin_nav_active($currentScript, 'workers.php') ?>">👷 작업자 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('work-logs')): ?>
-          <a href="<?= BASE_URL ?>/admin/work-logs.php" class="<?= admin_nav_active($currentScript, 'work-logs.php') ?>">📋 작업일지 관리</a>
-          <?php endif; ?>
-          <a href="<?= BASE_URL ?>/tablet/index.php" target="_blank">📱 태블릿 사이트 열기</a>
-        </div>
-      </div>
-      <?php endif; ?>
-
-      <!-- 상품 관리 (드롭다운) -->
-      <?php if (AdminAuth::can('products') || AdminAuth::can('brands') || AdminAuth::can('coupons') || AdminAuth::can('reviews') || AdminAuth::can('banners') || AdminAuth::can('stock-movements') || AdminAuth::can('stock-requests')): ?>
-      <div class="admin-nav-group <?= $activeGroup === 'products' ? 'open' : '' ?>" data-group="products">
-        <button type="button" class="admin-nav-toggle">
-          <span class="admin-nav-icon">🏷️</span>
-          <span>상품 관리</span>
-          <span class="admin-nav-arrow">▾</span>
-        </button>
-        <div class="admin-nav-sub">
-          <?php if (AdminAuth::can('products')): ?>
-          <a href="<?= BASE_URL ?>/admin/products.php" class="<?= admin_nav_active($currentScript, 'products.php') ?>">상품 관리</a>
-          <a href="<?= BASE_URL ?>/admin/bulk-upload.php" class="<?= admin_nav_active($currentScript, 'bulk-upload.php') ?>">📤 일괄 업로드</a>
-          <a href="<?= BASE_URL ?>/admin/ecount-items.php" class="<?= admin_nav_active($currentScript, 'ecount-items.php') ?>">📦 이카운트 품목 등록</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('stock-movements')): ?>
-          <a href="<?= BASE_URL ?>/admin/stock-movements.php" class="<?= admin_nav_active($currentScript, 'stock-movements.php') ?>">📋 재고 입출고 이력</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('stock-requests')): ?>
-          <a href="<?= BASE_URL ?>/admin/stock-requests.php" class="<?= admin_nav_active($currentScript, 'stock-requests.php') ?>">📥 재고 요청 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('brands')): ?>
-          <a href="<?= BASE_URL ?>/admin/brands.php" class="<?= admin_nav_active($currentScript, 'brands.php') ?>">브랜드 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('coupons')): ?>
-          <a href="<?= BASE_URL ?>/admin/coupons.php" class="<?= admin_nav_active($currentScript, 'coupons.php') ?>">쿠폰 관리</a>
-          <a href="<?= BASE_URL ?>/admin/benefits-settings.php" class="<?= admin_nav_active($currentScript, 'benefits-settings.php') ?>">🎟️ 혜택 설정</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('reviews')): ?>
-          <a href="<?= BASE_URL ?>/admin/reviews.php" class="<?= admin_nav_active($currentScript, 'reviews.php') ?>">리뷰 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('banners')): ?>
-          <a href="<?= BASE_URL ?>/admin/banners.php" class="<?= admin_nav_active($currentScript, 'banners.php') ?>">홈 화면 관리</a>
-          <a href="<?= BASE_URL ?>/admin/popups.php" class="<?= admin_nav_active($currentScript, 'popups.php') ?>">팝업 광고 관리</a>
-          <?php endif; ?>
-        </div>
-      </div>
-      <?php endif; ?>
-
-      <!-- 배송비 설정 -->
-      <?php if (AdminAuth::can('shipping')): ?>
-      <a href="<?= BASE_URL ?>/admin/shipping.php" class="admin-nav-item <?= admin_nav_active($currentScript, 'shipping.php') ?>">
-        <span class="admin-nav-icon">🚚</span>
-        <span>배송비 설정</span>
-      </a>
-      <?php endif; ?>
-
-      <!-- 사업자가 설정 -->
-      <?php if (AdminAuth::can('biz-pricing')): ?>
-      <a href="<?= BASE_URL ?>/admin/biz-pricing.php" class="admin-nav-item <?= admin_nav_active($currentScript, 'biz-pricing.php') ?>">
-        <span class="admin-nav-icon">🏢</span>
-        <span>사업자가 설정</span>
-      </a>
-      <?php endif; ?>
-
-      <!-- 회원 관리 (드롭다운) -->
-      <?php if (AdminAuth::can('users') || AdminAuth::can('vehicles') || AdminAuth::can('business-approvals') || AdminAuth::can('inquiries') || AdminAuth::can('chatbot')): ?>
-      <div class="admin-nav-group <?= $activeGroup === 'members' ? 'open' : '' ?>" data-group="members">
-        <button type="button" class="admin-nav-toggle">
-          <span class="admin-nav-icon">👥</span>
-          <span>회원 관리</span>
-          <span class="admin-nav-arrow">▾</span>
-        </button>
-        <div class="admin-nav-sub">
-          <?php if (AdminAuth::can('users')): ?>
-          <a href="<?= BASE_URL ?>/admin/users.php" class="<?= admin_nav_active($currentScript, 'users.php') ?>">회원 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('vehicles')): ?>
-          <a href="<?= BASE_URL ?>/admin/vehicles.php" class="<?= admin_nav_active($currentScript, 'vehicles.php') ?>">🚗 차량 교체주기 관리</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('business-approvals')): ?>
-          <a href="<?= BASE_URL ?>/admin/business-approvals.php" class="<?= admin_nav_active($currentScript, 'business-approvals.php') ?>">사업자 승인</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('inquiries')): ?>
-          <a href="<?= BASE_URL ?>/admin/inquiries.php" class="<?= admin_nav_active($currentScript, 'inquiries.php') ?>">1:1 문의</a>
-          <?php endif; ?>
-          <?php if (AdminAuth::can('chatbot')): ?>
-          <a href="<?= BASE_URL ?>/admin/chatbot.php" class="<?= admin_nav_active($currentScript, 'chatbot.php') ?>">💬 AI 챗봇 관리</a>
-          <?php endif; ?>
-         </div>
-       </div>
-       <?php endif; ?>
-
-       <!-- 연동 · API 관리 (드롭다운) -->
-       <?php if ($isSuperAdmin): ?>
-       <div class="admin-nav-group <?= in_array($currentScript, ['api-settings.php', 'sns-settings.php'], true) ? 'open' : '' ?>">
-         <button type="button" class="admin-nav-toggle">
-           <span class="admin-nav-icon">🔌</span>
-           <span>연동 · API 관리</span>
-           <span class="admin-nav-arrow">▾</span>
-         </button>
-         <div class="admin-nav-sub">
-           <a href="<?= BASE_URL ?>/admin/api-settings.php" class="<?= admin_nav_active($currentScript, 'api-settings.php') ?>">🔗 외부 연동 관리</a>
-           <a href="<?= BASE_URL ?>/admin/sns-settings.php" class="<?= admin_nav_active($currentScript, 'sns-settings.php') ?>">💬 SNS 관리</a>
-         </div>
-       </div>
-       <?php endif; ?>
-
-       <!-- 관리자 계정 -->
-       <?php if ($isSuperAdmin): ?>
-       <a href="<?= BASE_URL ?>/admin/admins.php" class="admin-nav-item <?= admin_nav_active($currentScript, 'admins.php') ?>">
-         <span class="admin-nav-icon">⚙️</span>
-         <span>관리자 계정</span>
-       </a>
-       <?php endif; ?>
-
+    <nav class="tt-nav">
+      <a href="<?= BASE_URL ?>/product-list.php?cat=1">타이어</a>
+      <a href="<?= BASE_URL ?>/product-list.php?cat=2">엔진오일</a>
+      <a href="<?= BASE_URL ?>/product-list.php?cat=3">배터리</a>
+      <a href="<?= BASE_URL ?>/review-list.php">리뷰</a>
     </nav>
 
-    <div class="admin-sidebar-footer">
-      <div class="admin-user-info">
-        <div class="admin-user-avatar"><?= h(mb_substr($adminName, 0, 1)) ?></div>
-        <div class="admin-user-detail">
-          <span class="admin-user-name"><?= h($adminName) ?></span>
-          <span class="admin-role-badge admin-role-<?= h($adminRole) ?>"><?= h($adminRoleLabel) ?></span>
-        </div>
-      </div>
-      <a href="<?= BASE_URL ?>/admin/logout.php" class="admin-logout-link">로그아웃</a>
-    </div>
-  </aside>
-
-  <!-- 사이드바 토글 오버레이 (모바일) -->
-  <div class="admin-sidebar-overlay" id="adminSidebarOverlay"></div>
-
-  <div class="admin-content">
-    <header class="admin-topbar">
-      <button type="button" class="admin-sidebar-toggle" id="adminSidebarToggle" aria-label="메뉴">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    <!-- 헤더 통합 검색바 -->
+    <div class="tt-header-search" id="ttHeaderSearch">
+      <select id="ttSearchType" class="tt-search-type">
+        <option value="size">사이즈</option>
+        <option value="name">상품명</option>
+      </select>
+      <input
+        type="text"
+        id="ttSearchInput"
+        class="tt-search-input"
+        placeholder="예) 225/45R18"
+        inputmode="text"
+        autocomplete="off">
+      <button type="button" id="ttSearchBtn" class="tt-search-btn" aria-label="검색">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <circle cx="11" cy="11" r="7"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
       </button>
-      <h1 class="admin-page-title"><?= isset($pageTitle) ? h($pageTitle) : '' ?></h1>
-    </header>
-    <main class="admin-main">
-      <?php $flashError = flash('admin_error'); ?>
-      <?php if ($flashError): ?>
-        <div class="admin-alert admin-alert-error"><?= h($flashError) ?></div>
+    </div>
+
+    <div class="tt-header-actions">
+      <a href="<?= BASE_URL ?>/cart.php" class="tt-cart-link">
+        장바구니
+        <span class="tt-cart-badge" id="ttCartBadge" style="<?= $cartCount > 0 ? '' : 'display:none' ?>"><?= $cartCount ?></span>
+      </a>
+      <?php if (Auth::isLoggedIn()): ?>
+        <a href="<?= BASE_URL ?>/mypage.php">마이페이지</a>
+        <a href="<?= BASE_URL ?>/logout.php">로그아웃</a>
+      <?php else: ?>
+        <a href="<?= BASE_URL ?>/login.php">로그인</a>
+        <a href="<?= BASE_URL ?>/login.php#signup-personal" class="tt-signup-link">회원가입</a>
       <?php endif; ?>
-      <?php $flashSuccess = flash('admin_success'); ?>
-      <?php if ($flashSuccess): ?>
-        <div class="admin-alert admin-alert-success"><?= h($flashSuccess) ?></div>
-      <?php endif; ?>
+    </div>
+  </div>
+</header>
+
 
 <script>
-/* 드롭다운 토글 */
+window.ttSetCartCount = function(count) {
+  const badge = document.getElementById('ttCartBadge');
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+};
+
 (function(){
-  document.querySelectorAll('.admin-nav-toggle').forEach(function(toggle){
-    toggle.addEventListener('click', function(){
-      var group = this.closest('.admin-nav-group');
-      group.classList.toggle('open');
-    });
+  const typeSelect = document.getElementById('ttSearchType');
+  const input       = document.getElementById('ttSearchInput');
+  const btn          = document.getElementById('ttSearchBtn');
+  if (!typeSelect || !input || !btn) return;
+
+  const placeholders = {
+    size: '예) 225/45R18',
+    name: '상품명을 입력하세요'
+  };
+
+  typeSelect.addEventListener('change', function () {
+    input.placeholder = placeholders[typeSelect.value] || '검색어를 입력하세요';
   });
 
-  /* 모바일 사이드바 토글 */
-  var sidebarToggle = document.getElementById('adminSidebarToggle');
-  var sidebar = document.getElementById('adminSidebar');
-  var overlay = document.getElementById('adminSidebarOverlay');
-  if (sidebarToggle && sidebar) {
-    sidebarToggle.addEventListener('click', function(){
-      sidebar.classList.toggle('mobile-open');
-      if (overlay) overlay.classList.toggle('show');
-    });
+  function doSearch() {
+    const keyword = input.value.trim();
+    if (keyword === '') {
+      input.focus();
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set('cat', '1');
+
+    if (typeSelect.value === 'size') {
+      const digitsOnly = keyword.replace(/[^0-9]/g, '');
+      params.set('size_input', digitsOnly);
+    } else {
+      params.set('name', keyword);
+    }
+
+    window.location.href = '<?= BASE_URL ?>/product-list.php?' + params.toString();
   }
-  if (overlay) {
-    overlay.addEventListener('click', function(){
-      sidebar.classList.remove('mobile-open');
-      overlay.classList.remove('show');
-    });
-  }
+
+  btn.addEventListener('click', doSearch);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doSearch();
+    }
+  });
 })();
 </script>
+
+<main class="tt-main">
+
+<!-- 헤더 스크롤 효과 -->
+<script>
+(function(){
+  const header = document.querySelector('.tt-header');
+  if (!header) return;
+  window.addEventListener('scroll', function(){
+    if (window.scrollY > 10) header.classList.add('scrolled');
+    else header.classList.remove('scrolled');
+  }, { passive: true });
+})();
+</script>
+
+<!-- 모바일 메뉴 -->
+<div class="tt-mobile-menu-overlay" id="ttMobileMenuOverlay"></div>
+<aside class="tt-mobile-menu" id="ttMobileMenu">
+  <button type="button" class="tt-mobile-close" id="ttMobileClose" aria-label="닫기">&times;</button>
+  <a href="<?= BASE_URL ?>/index.php">홈</a>
+  <a href="<?= BASE_URL ?>/product-list.php?cat=1">타이어</a>
+  <a href="<?= BASE_URL ?>/product-list.php?cat=2">엔진오일</a>
+  <a href="<?= BASE_URL ?>/product-list.php?cat=3">배터리</a>
+  <a href="<?= BASE_URL ?>/review-list.php">리뷰</a>
+  <a href="<?= BASE_URL ?>/guide.php">이용안내</a>
+  <a href="<?= BASE_URL ?>/cs-center.php">고객센터</a>
+  <?php if (Auth::isLoggedIn()): ?>
+    <a href="<?= BASE_URL ?>/mypage.php">마이페이지</a>
+    <a href="<?= BASE_URL ?>/cart.php">장바구니</a>
+    <a href="<?= BASE_URL ?>/logout.php">로그아웃</a>
+  <?php else: ?>
+    <a href="<?= BASE_URL ?>/login.php">로그인</a>
+    <a href="<?= BASE_URL ?>/login.php#signup-personal">일반 회원가입</a>
+    <a href="<?= BASE_URL ?>/login.php#signup-business">사업자 회원가입</a>
+  <?php endif; ?>
+</aside>
+<script>
+(function(){
+  const btn = document.getElementById('ttMobileMenuBtn');
+  const menu = document.getElementById('ttMobileMenu');
+  const overlay = document.getElementById('ttMobileMenuOverlay');
+  const closeBtn = document.getElementById('ttMobileClose');
+  if (!btn || !menu) return;
+  function open() { menu.classList.add('open'); overlay.classList.add('open'); document.body.style.overflow = 'hidden'; }
+  function close() { menu.classList.remove('open'); overlay.classList.remove('open'); document.body.style.overflow = ''; }
+  btn.addEventListener('click', open);
+  closeBtn?.addEventListener('click', close);
+  overlay?.addEventListener('click', close);
+})();
+</script>
+  <?php if (!empty($activePopups)): ?>
+<style>
+/* [FIX-1] 헤더(z-index:9000)보다 위에 그려지도록 z-index를 올려 상단이 가려지는 문제 해결 */
+.tt-popup-overlay-wrap { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
+.tt-popup-box {
+  position: absolute;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: ttPopupIn .25s ease;
+  max-width: 92vw;
+  max-height: 88vh;
+}
+/* [FIX-2] transform을 쓰지 않는 애니메이션으로 변경 — JS에서 위치 지정에 transform을 쓰기 때문에
+   애니메이션의 transform과 값이 서로 덮어써서 위치가 튀는 충돌을 방지 */
+@keyframes ttPopupIn { from { opacity:0; } to { opacity:1; } }
+
+/* [FIX-3] 링크 유무와 무관하게 이미지 영역 높이가 항상 "박스 전체 - 풋터 40px"로 고정 */
+.tt-popup-img-wrap { display:block; width:100%; height:calc(100% - 40px); overflow:hidden; }
+.tt-popup-img-wrap a { display:block; width:100%; height:100%; }
+.tt-popup-img-wrap img { display:block; width:100%; height:100%; object-fit: contain; background:#f8fafc; }
+
+.tt-popup-footer {
+  height: 40px; display:flex; align-items:center; justify-content:space-between;
+  padding: 0 12px; background:#f8fafc; border-top:1px solid #e2e8f0; font-size:12px;
+}
+.tt-popup-today-btn { background:none; border:none; color:#475569; font-size:12px; cursor:pointer; }
+.tt-popup-close-btn { background:none; border:none; color:#94a3b8; font-size:16px; cursor:pointer; font-weight:700; }
+</style>
+
+<div class="tt-popup-overlay-wrap" id="ttPopupOverlayWrap">
+  <?php foreach ($activePopups as $i => $pp): ?>
+  <div class="tt-popup-box"
+       id="ttPopupBox<?= (int)$pp['id'] ?>"
+       data-popup-id="<?= (int)$pp['id'] ?>"
+       style="width:<?= (int)$pp['width'] ?>px; height:<?= (int)($pp['height'] + 40) ?>px;">
+    <div class="tt-popup-img-wrap">
+      <?php if (!empty($pp['link_url'])): ?>
+        <a href="<?= h($pp['link_url']) ?>"><img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>"></a>
+      <?php else: ?>
+        <img src="<?= h($pp['image_url']) ?>" alt="<?= h($pp['title']) ?>">
+      <?php endif; ?>
+    </div>
+    <div class="tt-popup-footer">
+      <?php if ((int)$pp['allow_today_close'] === 1): ?>
+        <button type="button" class="tt-popup-today-btn" data-hide-today="<?= (int)$pp['id'] ?>">오늘 하루 보지 않기</button>
+      <?php else: ?>
+        <span></span>
+      <?php endif; ?>
+      <button type="button" class="tt-popup-close-btn" data-close="<?= (int)$pp['id'] ?>" aria-label="닫기">&times;</button>
+    </div>
+  </div>
+  <?php endforeach; ?>
+</div>
+
+<script>
+(function () {
+  function getCookie(name) {
+    const m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function setCookieUntilMidnight(name) {
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+    document.cookie = name + '=1; expires=' + midnight.toUTCString() + '; path=/';
+  }
+
+  const boxes = Array.from(document.querySelectorAll('.tt-popup-box'));
+  const OFFSET = 24;
+
+  function layout() {
+    let shown = 0;
+    boxes.forEach((box) => {
+      const id = box.dataset.popupId;
+      if (getCookie('tt_popup_hide_' + id)) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      /* [FIX-4] 화면 정중앙(50%,50%) 기준에서 오른쪽으로 20px 이동한 지점에 배치.
+         translate(-50%,-50%)로 박스 자신의 크기만큼 되돌려 정확히 그 지점을 중심으로 맞춘다.
+         팝업이 여러 개면 대각선으로 OFFSET(24px)씩 추가로 밀어서 겹치지 않게 쌓는다. */
+      box.style.left = 'calc(50% + 20px)';
+      box.style.top  = '50%';
+      box.style.transform = `translate(calc(-50% + ${shown * OFFSET}px), calc(-50% + ${shown * OFFSET}px))`;
+      shown++;
+    });
+    if (shown === 0) {
+      document.getElementById('ttPopupOverlayWrap')?.remove();
+    }
+  }
+  layout();
+
+  document.querySelectorAll('.tt-popup-close-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('ttPopupBox' + btn.dataset.close)?.remove();
+      layout();
+    });
+  });
+  document.querySelectorAll('[data-hide-today]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setCookieUntilMidnight('tt_popup_hide_' + btn.dataset.hideToday);
+      document.getElementById('ttPopupBox' + btn.dataset.hideToday)?.remove();
+      layout();
+    });
+  });
+})();
+</script>
+
+<?php endif; ?>
+

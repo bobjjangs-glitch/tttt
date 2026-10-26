@@ -25,7 +25,10 @@ if (is_post()) {
         $role = trim((string)($_POST['role'] ?? ''));
         $phone = trim((string)($_POST['phone'] ?? ''));
         $pin = trim((string)($_POST['pin'] ?? ''));
-        $isActive = (int)(($_POST['is_active'] ?? 1) === 1);
+        /* [v50] 폼 select 는 문자열 "1"/"0" 을 전송 — 정수 캐스팅 후 비교해야
+           '활성' 선택이 의도대로 저장됨 (이전 엄격비교는 항상 0으로 저장해
+           태블릿 로그인 작업자 목록에서 새로 등록한 작업자가 보이지 않았음) */
+        $isActive = ((int)($_POST['is_active'] ?? 1) === 1) ? 1 : 0;
         if ($name === '') {
             flash('admin_error', '작업자 이름을 입력해 주세요.');
             redirect('/admin/workers.php');

@@ -320,12 +320,12 @@ $offset  = ($page - 1) * $perPage;
 $where  = '1=1';
 $params = [];
 if ($keyword !== '') {
-    $where .= ' AND (u.email LIKE :kw OR u.name LIKE :kw OR u.phone LIKE :kw';
+    $where .= ' AND (u.email LIKE :kw1 OR u.name LIKE :kw2 OR u.phone LIKE :kw3';
     if ($typeFilter === 'business' or $typeFilter === '') {
         // 사업자 검색이 포함된 경우 상호명으로도 검색
     }
     $where .= ')';
-    $params['kw'] = '%' . $keyword . '%';
+    $params['kw1'] = $params['kw2'] = $params['kw3'] = '%' . $keyword . '%';
 }
 if (array_key_exists($statusFilter, $statusLabels)) {
     $where .= ' AND u.status = :status';

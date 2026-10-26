@@ -57,6 +57,12 @@ function admin_stock_brand_alias_groups(): array
     return $groups;
 }
 
+/**
+ * CSV 원본 브랜드 표기를 받아 실제 tt_brands에 등록된 브랜드 id를 찾는다.
+ * 1) DB 이름과 정규화 후 정확히 일치하면 바로 매칭
+ * 2) 별칭 그룹에 속해 있으면, 같은 그룹 안에서 실제 DB에 등록된 표기를 찾아 매칭
+ * 3) 둘 다 실패하면 null
+ */
 function admin_stock_resolve_brand_id(string $rawBrand, array $brandMap): ?int
 {
     $normalized = admin_stock_normalize_key($rawBrand);
@@ -128,10 +134,11 @@ function admin_stock_build_column_check(array $csvHeader): array
 }
 
 /**
- * 브랜드+사이즈(정규화된 키)로 상품을 찾아 재고를 갱신한다.
- * [수정] '하중속도규격' 컬럼은 더 이상 매칭 전용이 아니다. CSV에 값이 있으면
- * 해당 상품의 load_speed_rating도 함께 갱신한다(빈 값이면 기존 값 유지).
- * 그 외 가격, 상태 등 다른 필드는 여전히 절대 변경하지 않는다.
+ * 브랜드+사이즈(정규화된 키)로 상품을 찾아 재고만 갱신한다.
+ * - 동일 브랜드+사이즈에 상품이 정확히 1건이면 바로 갱신.
+ * - 2건 이상이면(하중속도규격이 다른 변형) CSV의 '하중속도규격' 컬럼으로 추가 매칭 시도.
+ * - 그래도 특정할 수 없으면 '모호'로 분류하고 갱신하지 않는다(잘못된 상품 재고를 건드리지 않기 위함).
+ * - 가격, 상태, 스펙 등 다른 필드는 절대 변경하지 않는다.
  */
 function admin_stock_bulk_update(PDO $pdo, array $rows): array
 {
@@ -150,20 +157,12 @@ function admin_stock_bulk_update(PDO $pdo, array $rows): array
     }
 
     $successCount = 0;
-    $lsrUpdatedCount = 0;
     $updated = [];
     $ambiguous = [];
     $notFound = [];
     $errors = [];
 
-    /* [수정] stock과 함께 load_speed_rating도 갱신 대상에 포함.
-       CSV 값이 빈 문자열이면 NULLIF가 NULL로 만들어 COALESCE가 기존 값을 그대로 유지한다. */
-    $updateStmt = $pdo->prepare(
-        'UPDATE tt_products
-         SET stock = :stock,
-             load_speed_rating = COALESCE(NULLIF(:lsr, \'\'), load_speed_rating)
-         WHERE id = :id'
-    );
+    $updateStmt = $pdo->prepare('UPDATE tt_products SET stock = :stock WHERE id = :id');
 
     foreach ($rows as $i => $r) {
         $rowNo = $i + 2;
@@ -219,24 +218,12 @@ function admin_stock_bulk_update(PDO $pdo, array $rows): array
         }
 
         try {
-            $updateStmt->execute(['stock' => $stockVal, 'lsr' => $loadSpeedRaw, 'id' => $target['id']]);
-
-          record_stock_movement((int)$target['id'], null, 'adjust', $stockVal - (int)$target['stock'], $stockVal, '재고 일괄 업데이트 (브랜드+사이즈 매칭)', (string)AdminAuth::currentAdminName());
-ecount_queue_stock_change((int)$target['id'], $stockVal - (int)$target['stock'], '재고 일괄 업데이트');
-
-
+            $updateStmt->execute(['stock' => $stockVal, 'id' => $target['id']]);
+            /* 재고 입출고 이력 기록 (조정) */
+            record_stock_movement((int)$target['id'], null, 'adjust', $stockVal - (int)$target['stock'], $stockVal,
+                '재고 일괄 업데이트 (브랜드+사이즈 매칭)', (string)AdminAuth::currentAdminName());
             $successCount++;
-
-            $lsrNote = '';
-            $beforeLsr = trim((string)($target['load_speed_rating'] ?? ''));
-            if ($loadSpeedRaw !== '' && admin_stock_normalize_key($loadSpeedRaw) !== admin_stock_normalize_key($beforeLsr)) {
-                $lsrUpdatedCount++;
-                $lsrNote = $beforeLsr === ''
-                    ? " / 하중속도규격 (미입력) → {$loadSpeedRaw}"
-                    : " / 하중속도규격 {$beforeLsr} → {$loadSpeedRaw}";
-            }
-
-            $updated[] = "{$rowNo}행: #{$target['id']} {$target['name']} 재고 {$target['stock']} → {$stockVal}{$lsrNote}";
+            $updated[] = "{$rowNo}행: #{$target['id']} {$target['name']} 재고 {$target['stock']} → {$stockVal}";
         } catch (Throwable $e) {
             error_log('[admin/stock_update] ' . $e->getMessage());
             $errors[] = "{$rowNo}행: 저장 중 오류가 발생했습니다.";
@@ -244,12 +231,11 @@ ecount_queue_stock_change((int)$target['id'], $stockVal - (int)$target['stock'],
     }
 
     return [
-        'success'      => $successCount,
-        'lsr_updated'  => $lsrUpdatedCount,
-        'updated'      => $updated,
-        'ambiguous'    => $ambiguous,
-        'notfound'     => $notFound,
-        'errors'       => $errors,
+        'success'   => $successCount,
+        'updated'   => $updated,
+        'ambiguous' => $ambiguous,
+        'notfound'  => $notFound,
+        'errors'    => $errors,
     ];
 }
 
@@ -298,7 +284,7 @@ if (is_post()) {
     AdminAuth::log(
         (int)AdminAuth::currentAdminId(),
         'stock_bulk_update',
-        "재고 일괄 업데이트: 성공 {$result['success']}건(하중속도규격 갱신 {$result['lsr_updated']}건 포함), 모호 " . count($result['ambiguous']) . "건, 미매칭 " . count($result['notfound']) . "건, 오류 " . count($result['errors']) . '건'
+        "재고 일괄 업데이트: 성공 {$result['success']}건, 모호 " . count($result['ambiguous']) . "건, 미매칭 " . count($result['notfound']) . "건, 오류 " . count($result['errors']) . '건'
     );
 }
 
@@ -309,9 +295,7 @@ require __DIR__ . '/includes/header.php';
 <div class="admin-card" style="background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #e0e7ff;">
   <h2 class="admin-page-title">📦 브랜드+사이즈 매칭 재고 일괄 업데이트</h2>
   <p class="admin-form-hint" style="line-height:1.7;">
-    이 기능은 <b>재고 수량</b>을 변경합니다. CSV에 <b>하중속도규격</b> 값을 넣으면 그 값도 함께 저장되며
-    (비어있던 상품은 새로 채워지고, 다른 값이면 CSV 값으로 덮어씁니다), 그 외 가격·상태 등 다른 항목은
-    변경하지 않습니다.<br>
+    이 기능은 <b>재고 수량만 변경</b>합니다. 가격, 상태, 스펙 등 다른 항목은 절대 건드리지 않습니다.<br>
     CSV는 <b>브랜드, 사이즈, 재고</b> 3개 컬럼이 필수입니다. 동일 브랜드+사이즈로 상품이 여러 건(하중속도규격이 다른 경우)
     존재할 경우 <b>하중속도규격</b> 컬럼을 추가로 넣으면 정확히 구분해서 매칭됩니다. 구분이 안 되면 해당 행은
     "모호"로 분류되어 <b>업데이트되지 않고</b> 결과 화면에 표시됩니다.
@@ -340,7 +324,7 @@ BF굿리치,32X11.50R15LT,113R,15</pre>
 <div class="admin-card">
   <h3 class="admin-form-section-title">처리 결과</h3>
   <p>
-    ✅ 성공 <b><?= (int)$result['success'] ?></b>건 (그중 하중속도규격 갱신 <b><?= (int)$result['lsr_updated'] ?></b>건)
+    ✅ 성공 <b><?= (int)$result['success'] ?></b>건
     &nbsp;·&nbsp; ❓ 모호(미확정) <b><?= count($result['ambiguous']) ?></b>건
     &nbsp;·&nbsp; 🚫 미매칭 <b><?= count($result['notfound']) ?></b>건
     &nbsp;·&nbsp; ❌ 오류 <b><?= count($result['errors']) ?></b>건

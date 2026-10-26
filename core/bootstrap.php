@@ -24,8 +24,7 @@ require_once __DIR__ . '/Validator.php';
 require_once __DIR__ . '/Auth.php';
 require_once __DIR__ . '/AdminAuth.php';
 require_once __DIR__ . '/Sms.php';
-require_once __DIR__ . '/EcountClient.php';
-
+require_once __DIR__ . '/EcountAPI.php';
 
 /* =====================================================================
    운영/개발 환경에 따라 에러 노출 방식을 분리한다.

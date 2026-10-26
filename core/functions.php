@@ -130,7 +130,7 @@ function sg_error_log(string $msg): void
  *  (전역 예외 핸들러에서도 같은 판정 사용) */
 function sg_maybe_invalidate(Throwable $e): void
 {
-    if ($e instanceof PDOException && str_starts_with((string)$e->getCode(), '42S')) {
+    if ($e instanceof PDOException && strpos((string)$e->getCode(), '42S') === 0) {
         SchemaGuard::invalidate();
     }
 }
@@ -3583,81 +3583,1152 @@ function worker_pin_lock_state(array $worker): array
     return ['locked' => true, 'minutes' => (int)ceil($left / 60), 'seconds' => $left];
 }
 
-/**
- * 재고 변경 "직후" 한 줄만 호출하면 됩니다.
- * - $productId : tt_products.id
- * - $deltaQty  : 변화량 (입고 +, 출고 -). 0이면 조용히 무시.
- * - $reason    : 사유 메모
- *
- * 절대 예외를 던지지 않습니다 — 이카운트 장애가 쇼핑몰 재고 갱신을
- * 막는 사고를 원천 차단하기 위함입니다. record_stock_movement()와는
- * 완전히 독립적으로 동작하며, 기존 함수는 전혀 건드리지 않습니다.
- */
-/**
- * [신규] 이카운트 동기화 큐(tt_ecount_sync_queue)에 주문 ID(order_id) 컬럼이
- * 없으면 추가한다. 주문관리 화면에서 "이 주문이 이카운트와 동기화됐는지"를
- * order_id 기준으로 조회하려면 반드시 필요하다.
- * 큐 테이블 자체가 없는 서버(EcountClient.php 미설치)에서는 조용히 리턴한다.
- */
-function ensure_ecount_queue_order_column(PDO $pdo): void
+/* ---------- [v51] 이카운트 ERP 연동 ---------- */
+
+/** 이카운트 연동 테이블 자동 생성 (운영 DB에도 ALTER 로 자동 보강된다) */
+function ensure_ecount_tables(): void
 {
-    static $checked = false;
-    if (sg_skip('ensure_ecount_queue_order_column', $checked)) return;
+    static $done = false;
+    if (sg_skip('ensure_ecount_tables', $done)) return;
+    $pdo = Database::connection();
 
     try {
-        $exists = $pdo->query("SHOW TABLES LIKE 'tt_ecount_sync_queue'")->fetchColumn();
-        if (!$exists) return; // 이카운트 연동 자체가 아직 설치 안 된 서버
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_ecount_items (
+            id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            prod_cd    VARCHAR(20)  NOT NULL COMMENT 'ERP 품목코드',
+            prod_des   VARCHAR(100) NULL     COMMENT '품목명',
+            size_des   VARCHAR(100) NULL     COMMENT '규격',
+            unit       VARCHAR(10)  NULL,
+            in_price   VARCHAR(30)  NULL     COMMENT '입고단가',
+            out_price  VARCHAR(30)  NULL     COMMENT '출고단가',
+            class_cd   VARCHAR(10)  NULL     COMMENT '품목그룹',
+            bal_flag   VARCHAR(2)   NULL,
+            use_yn     VARCHAR(2)   NULL,
+            local_product_id INT UNSIGNED NULL COMMENT '매핑된 로컬 상품(tt_products.id)',
+            synced_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_ecount_item (prod_cd)
+        ) ENGINE=InnoDB");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:items] ' . $e->getMessage()); }
 
-        $cols = $pdo->query("SHOW COLUMNS FROM tt_ecount_sync_queue")->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('order_id', $cols, true)) {
-            $pdo->exec("ALTER TABLE tt_ecount_sync_queue ADD COLUMN order_id INT UNSIGNED NULL COMMENT '연결된 주문 ID' AFTER product_id");
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_ecount_partners (
+            id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            cust_cd     VARCHAR(30)  NOT NULL COMMENT '거래처코드(BUSINESS_NO)',
+            cust_name   VARCHAR(100) NOT NULL COMMENT '거래처명',
+            boss_name   VARCHAR(50)  NULL,
+            tel         VARCHAR(50)  NULL,
+            addr        VARCHAR(500) NULL,
+            uptae       VARCHAR(50)  NULL COMMENT '업태',
+            jongmok     VARCHAR(50)  NULL COMMENT '종목',
+            email       VARCHAR(100) NULL,
+            remarks     VARCHAR(500) NULL,
+            source      VARCHAR(20) NOT NULL DEFAULT 'manual' COMMENT 'manual=직접등록 / orders=발주서 수집 / excel=구매현황 엑셀 업로드',
+            created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_ecount_partner (cust_cd)
+        ) ENGINE=InnoDB");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:partners] ' . $e->getMessage()); }
+
+    /* [v62] 기존 설치의 거래처 source 컬럼 확장(10→20) — excel=구매현황 엑셀 업로드 표기 저장 */
+    try {
+        $pdo->exec("ALTER TABLE tt_ecount_partners MODIFY COLUMN source VARCHAR(20) NOT NULL DEFAULT 'manual' COMMENT 'manual=직접등록 / orders=발주서 수집 / excel=구매현황 엑셀 업로드'");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:partner_source] ' . $e->getMessage()); }
+
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_ecount_stock (
+            id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            prod_cd    VARCHAR(20)  NOT NULL,
+            wh_cd      VARCHAR(20)  NOT NULL COMMENT '창고코드',
+            wh_des     VARCHAR(100) NULL     COMMENT '창고명',
+            prod_des   VARCHAR(100) NULL,
+            bal_qty    VARCHAR(30)  NULL     COMMENT '재고수량(ERP 기준)',
+            synced_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_ecount_stock (prod_cd, wh_cd)
+        ) ENGINE=InnoDB");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:stock] ' . $e->getMessage()); }
+
+    /* [v60] 총재고(전 창고 합계) 캐시 */
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_ecount_stock_total (
+            id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            prod_cd    VARCHAR(20)  NOT NULL COMMENT 'ERP 품목코드',
+            prod_des   VARCHAR(100) NULL,
+            bal_qty    VARCHAR(30)  NULL     COMMENT '총재고(전 창고 합계, ERP 기준)',
+            synced_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_ecount_stock_total (prod_cd)
+        ) ENGINE=InnoDB");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:stock_total] ' . $e->getMessage()); }
+
+    /* [v64] 구매관리 원장 — 직접 구매입고(ERP 구매입력 전송) + 작업일지 완료 자동 적용(재고 차감) */
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_ecount_purchases (
+            id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            io_date     VARCHAR(10)  NOT NULL DEFAULT '' COMMENT '일자(YYYYMMDD)',
+            cust_cd     VARCHAR(30)  NULL COMMENT '거래처코드',
+            cust_name   VARCHAR(100) NULL COMMENT '거래처명',
+            prod_cd     VARCHAR(30)  NOT NULL DEFAULT '' COMMENT 'ERP 품목코드',
+            prod_des    VARCHAR(150) NULL COMMENT '품목명',
+            product_id  INT UNSIGNED NULL COMMENT '매핑된 쇼핑몰 상품',
+            qty         INT NOT NULL DEFAULT 0,
+            unit_price  INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '단가',
+            amt         INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '금액(단가×수량)',
+            remark      VARCHAR(200) NULL,
+            source      ENUM('manual','worklog') NOT NULL DEFAULT 'manual' COMMENT 'manual=직접 구매입고 / worklog=작업일지 완료 자동',
+            work_log_id INT UNSIGNED NULL COMMENT '작업일지 연결(중복 방지 유니크)',
+            erp_status  ENUM('pending','sent','fail','skip') NOT NULL DEFAULT 'pending' COMMENT 'sent=ERP 구매입력 전송 완료 / skip=작업 소모(ERP 전송 안 함) / fail=전송 실패(재전송 가능)',
+            erp_sent_at DATETIME NULL,
+            erp_error   VARCHAR(300) NULL,
+            stock_moved TINYINT(1) NOT NULL DEFAULT 0 COMMENT '사이트 재고 반영 여부',
+            created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_ecount_purchase_worklog (work_log_id),
+            INDEX idx_ep_date (io_date),
+            INDEX idx_ep_cust (cust_name)
+        ) ENGINE=InnoDB");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:purchases] ' . $e->getMessage()); }
+
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_ecount_sync_log (
+            id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            direction  VARCHAR(10)  NOT NULL COMMENT 'push=몰→ERP / pull=ERP→몰',
+            type       VARCHAR(30)  NOT NULL COMMENT 'sale/items/stock/partners/purchase/orders',
+            status     VARCHAR(10)  NOT NULL COMMENT 'ok/fail',
+            message    VARCHAR(300) NULL,
+            detail     TEXT NULL,
+            admin_id   INT UNSIGNED NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_ecount_log (created_at)
+        ) ENGINE=InnoDB");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:log] ' . $e->getMessage()); }
+
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tt_ecount_queue (
+            id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            action     VARCHAR(30)  NOT NULL COMMENT 'order_sale/reservation_sale',
+            payload    TEXT NOT NULL COMMENT 'JSON {order_id|reservation_id}',
+            status     VARCHAR(10)  NOT NULL DEFAULT 'pending' COMMENT 'pending/done/fail',
+            attempts   INT NOT NULL DEFAULT 0,
+            last_error VARCHAR(300) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            processed_at DATETIME NULL,
+            INDEX idx_ecount_queue (status)
+        ) ENGINE=InnoDB");
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:queue] ' . $e->getMessage()); }
+
+    /* 로컬 상품 ↔ ERP 품목 매핑 컬럼 */
+    try {
+        if (!$pdo->query("SHOW COLUMNS FROM tt_products LIKE 'ecount_prod_cd'")->fetch()) {
+            $pdo->exec("ALTER TABLE tt_products ADD COLUMN ecount_prod_cd VARCHAR(20) NULL COMMENT '이카운트 품목코드 매핑' AFTER sku");
+            $pdo->exec("ALTER TABLE tt_products ADD INDEX idx_products_ecount (ecount_prod_cd)");
         }
-        $idx = $pdo->query("SHOW INDEX FROM tt_ecount_sync_queue WHERE Key_name = 'idx_order_id'")->fetchAll();
-        if (empty($idx)) {
-            $pdo->exec("ALTER TABLE tt_ecount_sync_queue ADD INDEX idx_order_id (order_id)");
-        }
+    } catch (Throwable $e) { sg_error_log('[ensure_ecount_tables:prod_cd] ' . $e->getMessage()); }
+
+    if (!SchemaGuard::hadErrors()) SchemaGuard::mark('ensure_ecount_tables');
+}
+
+/** 연동 활성 여부 (설정 + 동기화 스위치) */
+function ecount_enabled(): bool
+{
+    return EcountAPI::configured();
+}
+
+/** 다건조회(10분 제한) API 호출 가드 — 마지막 호출 후 $sec 초 지났는지 */
+function ecount_rate_ok(string $key, int $sec): bool
+{
+    ensure_ecount_tables();
+    $last = (int)get_setting($key, '0');
+    return ($last === 0) || ((time() - $last) >= $sec);
+}
+
+function ecount_rate_mark(string $key): void
+{
+    set_setting($key, (string)time());
+}
+
+function ecount_rate_wait(string $key): int
+{
+    $last = (int)get_setting($key, '0');
+    if ($last === 0) return 0;
+    return max(0, ecount_pull_interval() - (time() - $last));
+}
+
+/** [v57] ERP 다건조회(품목·재고·발주 전체조회) 재시도 간격(초) — 관리자 설정값(30~600).
+ *  이카운트 실서버 공식 규칙은 다건조회 10분(600초) 1회 — 기본값.
+ *  그보다 짧게 잡으면 이카운트 Rate Limit(412/302)에 걸릴 수 있어,
+ *  Rate Limit 실패 시 자동으로 10분 페널티 백오프가 동작한다(아래 pull 3종). */
+function ecount_pull_interval(): int
+{
+    $v = (int)get_setting('ecount_pull_interval', '600');
+    return max(30, min(600, $v));
+}
+
+/** [v57] Rate Limit 실패 시 페널티 마킹 — 실패한 시점부터 10분 뒤에 재시도 가능하게 */
+function ecount_rate_penalty(string $key): void
+{
+    set_setting($key, (string)(time() + 600 - ecount_pull_interval()));
+}
+
+/** [v57] 버튼용 대기 라벨 — "N초 후 가능" / "N분 후 가능" */
+function ecount_wait_label(int $waitSec): string
+{
+    if ($waitSec <= 0) return '';
+    return $waitSec < 90
+        ? ' (' . $waitSec . '초 후 가능)'
+        : ' (' . (int)ceil($waitSec / 60) . '분 후 가능)';
+}
+
+/** 연동 로그 기록 */
+function ecount_log(string $direction, string $type, string $status, string $message = '', ?string $detail = null, ?int $adminId = null): void
+{
+    try {
+        Database::connection()->prepare('INSERT INTO tt_ecount_sync_log (direction, type, status, message, detail, admin_id)
+                                         VALUES (:d, :t, :s, :m, :dt, :a)')
+            ->execute(['d'=>$direction, 't'=>$type, 's'=>$status, 'm'=>mb_substr($message,0,300) ?: null, 'dt'=>$detail, 'a'=>$adminId]);
     } catch (Throwable $e) {
-        sg_error_log('[ensure_ecount_queue_order_column] ' . $e->getMessage());
+        error_log('[ecount_log] ' . $e->getMessage());
+    }
+}
+
+/** 상품의 ERP 품목코드 (매핑 > 품번sku > 자동 T+id) */
+function ecount_product_code(array $product): string
+{
+    $code = trim((string)($product['ecount_prod_cd'] ?? ''));
+    if ($code !== '') return $code;
+    $sku = trim((string)($product['sku'] ?? ''));
+    if ($sku !== '') return $sku;
+    return 'T' . str_pad((string)(int)$product['id'], 5, '0', STR_PAD_LEFT);
+}
+
+/** 상품 1건을 로컬 DB에서 조회 */
+function ecount_get_product(int $productId): ?array
+{
+    try {
+        $row = Database::connection()->prepare('SELECT * FROM tt_products WHERE id = :id');
+        $row->execute(['id' => $productId]);
+        $p = $row->fetch(PDO::FETCH_ASSOC);
+        return $p ?: null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+/* ---------- 전송 큐 (몰 → ERP push) ---------- */
+
+function ecount_queue_add(string $action, array $payload): int
+{
+    ensure_ecount_tables();
+    try {
+        Database::connection()->prepare('INSERT INTO tt_ecount_queue (action, payload) VALUES (:a, :p)')
+            ->execute(['a'=>$action, 'p'=>json_encode($payload, JSON_UNESCAPED_UNICODE)]);
+        return (int)Database::connection()->lastInsertId();
+    } catch (Throwable $e) {
+        error_log('[ecount_queue_add] ' . $e->getMessage());
+        return 0;
     }
 }
 
 /**
- * 재고가 변경될 때마다 이카운트 동기화 큐에 적재한다.
- * - deltaQty > 0 : 입고(증가), deltaQty < 0 : 출고(감소)
- * - 이카운트 품목코드(ecount_item_cd)가 매핑되지 않은 상품은 조용히 스킵한다.
- * - 큐 테이블이 없는 서버에서도 예외를 던지지 않는다 → 이 함수가 실패해도
- *   주문/재고 처리 자체에는 절대 영향을 주지 않는다.
- * - [신규] $orderId 를 넘기면 admin/orders.php 주문 상세에서
- *   "이 주문의 이카운트 동기화 현황"을 조회할 수 있다.
+ * 결제완료 → ERP 판매입력(SaveSale) 전송.
+ * 실패 시 재시도(attempts<8)하며 pending 유지 — ecount-cron 이 나중에 다시 처리.
+ * Rate Limit 에러는 attempts 를 올리지 않고 pending 유지.
  */
-function ecount_queue_stock_change(int $productId, int $deltaQty, string $reason = '', ?int $orderId = null): void
+function ecount_push_sale(array $payload): array
 {
-    if ($deltaQty === 0) return;
+    $kind = $payload['kind'] ?? 'order';
+    $refId = (int)($payload['id'] ?? 0);
+    if ($refId <= 0) return ['ok' => false, 'message' => '대상 ID 없음'];
+
+    $api = EcountAPI::fromSettings();
+    if (!EcountAPI::configured()) return ['ok' => false, 'message' => '이카운트 연동 설정이 비어 있습니다(회사코드/ID/인증키).'];
+
+    $pdo = Database::connection();
+    $whCd = get_setting('ecount_wh_cd', '');
+    $custCd = get_setting('ecount_cust_cd', '');
+    $items = [];
+    $ioDate = date('Ymd');
+    $custDes = '쇼핑몰 판매';
+
+    if ($kind === 'order') {
+        $order = $pdo->prepare('SELECT * FROM tt_orders WHERE id = :id');
+        $order->execute(['id' => $refId]);
+        $o = $order->fetch(PDO::FETCH_ASSOC);
+        if (!$o) return ['ok' => false, 'message' => '주문을 찾을 수 없습니다.'];
+        if (($o['payment_status'] ?? '') !== 'paid') return ['ok' => false, 'message' => '결제완료 주문이 아닙니다.'];
+        $custDes = '쇼핑몰 주문 ' . $o['order_no'];
+        $itemStmt = $pdo->prepare('SELECT oi.*, p.ecount_prod_cd, p.sku FROM tt_order_items oi
+                                   LEFT JOIN tt_products p ON p.id = oi.product_id WHERE oi.order_id = :oid');
+        $itemStmt->execute(['oid' => $refId]);
+        $ser = 0;
+        foreach ($itemStmt->fetchAll(PDO::FETCH_ASSOC) as $it) {
+            $ser++;
+            $prodCd = trim((string)($it['ecount_prod_cd'] ?? '')) ?: (trim((string)($it['sku'] ?? '')) ?: 'T' . str_pad((string)(int)$it['product_id'], 5, '0', STR_PAD_LEFT));
+            $qty = (int)$it['qty'];
+            $unit = (int)$it['price'];
+            $supply = (int)round($unit * $qty / 1.1);
+            $vat = ($unit * $qty) - $supply;
+            $items[] = [
+                'UPLOAD_SER_NO' => (string)$ser,
+                'IO_DATE'   => $ioDate,
+                'CUST'      => $custCd,
+                'CUST_DES'  => $custDes,
+                'WH_CD'     => $whCd,
+                'PROD_CD'   => $prodCd,
+                'PROD_DES'  => (string)$it['product_name'],
+                'QTY'       => (string)$qty,
+                'PRICE'     => (string)(int)round($unit / 1.1),
+                'SUPPLY_AMT' => (string)$supply,
+                'VAT_AMT'   => (string)$vat,
+                'REMARKS'   => '쇼핑몰 주문 자동전송(' . $o['order_no'] . ')',
+            ];
+        }
+    } else { // reservation
+        $res = $pdo->prepare('SELECT * FROM tt_reservations WHERE id = :id');
+        $res->execute(['id' => $refId]);
+        $r = $res->fetch(PDO::FETCH_ASSOC);
+        if (!$r) return ['ok' => false, 'message' => '예약을 찾을 수 없습니다.'];
+        if (($r['payment_status'] ?? '') !== 'paid') return ['ok' => false, 'message' => '결제완료 예약이 아닙니다.'];
+        $custDes = '쇼핑몰 예약 ' . $r['res_no'];
+        $p = ecount_get_product((int)$r['product_id']);
+        $prodCd = $p ? ecount_product_code($p) : ('T' . str_pad((string)(int)$r['product_id'], 5, '0', STR_PAD_LEFT));
+        $qty = (int)$r['qty'];
+        $unit = (int)$r['unit_price'];
+        $supply = (int)round($unit * $qty / 1.1);
+        $items[] = [
+            'UPLOAD_SER_NO' => '1',
+            'IO_DATE'   => $ioDate,
+            'CUST'      => $custCd,
+            'CUST_DES'  => $custDes,
+            'WH_CD'     => $whCd,
+            'PROD_CD'   => $prodCd,
+            'PROD_DES'  => (string)$r['product_name_snap'],
+            'QTY'       => (string)$qty,
+            'PRICE'     => (string)(int)round($unit / 1.1),
+            'SUPPLY_AMT' => (string)$supply,
+            'VAT_AMT'   => (string)(($unit * $qty) - $supply),
+            'REMARKS'   => '쇼핑몰 예약결제 자동전송(' . $r['res_no'] . ')',
+        ];
+    }
+
+    if (!$items) return ['ok' => false, 'message' => '전송할 품목이 없습니다.'];
 
     try {
-        $pdo = Database::connection();
-
-        $exists = $pdo->query("SHOW TABLES LIKE 'tt_ecount_sync_queue'")->fetchColumn();
-        if (!$exists) return;
-
-        ensure_ecount_queue_order_column($pdo);
-
-        $stmt = $pdo->prepare('SELECT ecount_item_cd FROM tt_products WHERE id = :id LIMIT 1');
-        $stmt->execute(['id' => $productId]);
-        $itemCd = $stmt->fetchColumn();
-        if (!$itemCd) return; // 품목코드 미매핑 상품은 스킵
-
-        $pdo->prepare('
-            INSERT INTO tt_ecount_sync_queue (product_id, order_id, ecount_item_cd, delta_qty, reason, status)
-            VALUES (:pid, :oid, :cd, :delta, :reason, "pending")
-        ')->execute([
-            'pid'    => $productId,
-            'oid'    => $orderId,
-            'cd'     => $itemCd,
-            'delta'  => $deltaQty,
-            'reason' => mb_substr($reason, 0, 150),
-        ]);
-    } catch (Throwable $e) {
-        error_log('[ecount_queue_stock_change] ' . $e->getMessage());
+        $data = $api->saveSales($items);
+        $okCnt = (int)($data['SuccessCnt'] ?? 0);
+        $failCnt = (int)($data['FailCnt'] ?? 0);
+        if ($okCnt > 0 && $failCnt === 0) {
+            return ['ok' => true, 'message' => 'ERP 판매입력 전송 성공 (' . $okCnt . '건)' . (!empty($data['SlipNos']) ? ' 전표:' . implode(',', (array)$data['SlipNos']) : '')];
+        }
+        $details = is_string($data['ResultDetails'] ?? null) ? (string)$data['ResultDetails'] : json_encode($data['ResultDetails'] ?? [], JSON_UNESCAPED_UNICODE);
+        return ['ok' => false, 'message' => 'ERP 저장 결과 실패(' . $failCnt . '건): ' . mb_substr($details, 0, 200)];
+    } catch (EcountException $e) {
+        return ['ok' => false, 'message' => $e->getMessage(), 'rate' => (stripos($e->getMessage(), '호출 제한') !== false)];
     }
+}
+
+/** 관리자의 수동 재고 채움 → ERP 생산입고 전송 (ERP 재고 증가) */
+function ecount_push_goods_receipt(int $productId, int $qty, string $remark = ''): array
+{
+    $api = EcountAPI::fromSettings();
+    if (!EcountAPI::configured()) return ['ok' => false, 'message' => '이카운트 연동 설정이 비어 있습니다.'];
+    $p = ecount_get_product($productId);
+    if (!$p) return ['ok' => false, 'message' => '상품을 찾을 수 없습니다.'];
+    if ($qty <= 0) return ['ok' => false, 'message' => '수량은 1 이상이어야 합니다.'];
+    $whCd = get_setting('ecount_wh_cd', '');
+    try {
+        $data = $api->saveGoodsReceipts([[
+            'UPLOAD_SER_NO' => '1',
+            'IO_DATE'  => date('Ymd'),
+            'WH_CD_F'  => $whCd,
+            'WH_CD_T'  => $whCd,
+            'PROD_CD'  => ecount_product_code($p),
+            'PROD_DES' => (string)$p['name'],
+            'QTY'      => (string)$qty,
+            'REMARKS'  => ($remark !== '' ? $remark : '쇼핑몰 관리자 재고 입고 전송'),
+        ]]);
+        $okCnt = (int)($data['SuccessCnt'] ?? 0);
+        if ($okCnt > 0) {
+            ecount_log('push', 'receipt', 'ok', '상품 #' . $productId . ' ERP 입고 전송 (' . $qty . '개)');
+            return ['ok' => true, 'message' => 'ERP 입고 전송 성공 (' . $qty . '개)'];
+        }
+        $details = is_string($data['ResultDetails'] ?? null) ? (string)$data['ResultDetails'] : json_encode($data['ResultDetails'] ?? [], JSON_UNESCAPED_UNICODE);
+        return ['ok' => false, 'message' => 'ERP 입고 저장 실패: ' . mb_substr($details, 0, 200)];
+    } catch (EcountException $e) {
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+}
+
+/** 보류 중 큐 처리 (결제완료 건의 ERP 전송 재시도 포함) */
+function ecount_queue_process(int $limit = 10): array
+{
+    ensure_ecount_tables();
+    $pdo = Database::connection();
+    $stmt = $pdo->prepare("SELECT * FROM tt_ecount_queue WHERE status = 'pending' AND attempts < 8 ORDER BY id LIMIT :n");
+    $stmt->bindValue('n', $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $done = 0; $still = 0; $failed = 0;
+
+    foreach ($rows as $q) {
+        $payload = json_decode((string)$q['payload'], true) ?: [];
+        $result = ecount_push_sale($payload);
+        if ($result['ok'] ?? false) {
+            $pdo->prepare("UPDATE tt_ecount_queue SET status='done', processed_at=NOW(), last_error=NULL WHERE id=:id")
+                ->execute(['id' => (int)$q['id']]);
+            ecount_log('push', 'sale', 'ok', ($payload['kind'] ?? 'order') . ' #' . ($payload['id'] ?? '?') . ' ' . ($result['message'] ?? ''));
+            $done++;
+        } elseif ($result['rate'] ?? false) {
+            $still++; // rate limit — 펜딩 유지, attempts 미증가
+        } else {
+            $msg = (string)($result['message'] ?? '전송 실패');
+            $attempts = (int)$q['attempts'] + 1;
+            $newStatus = $attempts >= 8 ? 'fail' : 'pending';
+            $pdo->prepare('UPDATE tt_ecount_queue SET attempts=:a, status=:s, last_error=:e WHERE id=:id')
+                ->execute(['a'=>$attempts, 's'=>$newStatus, 'e'=>mb_substr($msg,0,300), 'id'=>(int)$q['id']]);
+            ecount_log('push', 'sale', 'fail', ($payload['kind'] ?? 'order') . ' #' . ($payload['id'] ?? '?') . ' ' . $msg);
+            if ($newStatus === 'fail') $failed++; else $still++;
+        }
+    }
+    return ['done' => $done, 'pending' => $still, 'failed' => $failed];
+}
+
+/** 결제완료 시점 호출 — 큐 적재 후 응답(리다이렉트)이 끝난 뒤 즉시 전송 시도.
+ *  실패분은 큐에 pending 으로 남아 cron·ajax 핑이 재시도한다.
+ *  shutdown 실행이라 사용자의 결제 화면 응답속도에 영향을 주지 않는다. */
+function ecount_on_paid(string $kind, int $id): void
+{
+    if (!EcountAPI::configured()) return;
+    if (get_setting('ecount_auto_push', '1') !== '1') return;
+    ecount_queue_add($kind === 'order' ? 'order_sale' : 'reservation_sale', ['kind' => $kind, 'id' => $id]);
+    register_shutdown_function(static function (): void {
+        try {
+            ecount_queue_process(10);
+        } catch (Throwable $e) {
+            error_log('[ecount_on_paid:shutdown] ' . $e->getMessage());
+        }
+    });
+}
+
+/* ---------- ERP → 몰 (pull) ---------- */
+
+/** ERP 품목 목록 → tt_ecount_items 캐시 ([v57] 간격 설정 기반 가드) */
+function ecount_pull_items(bool $force = false): array
+{
+    ensure_ecount_tables();
+    if (!$force && !ecount_rate_ok('ecount_last_items_pull', ecount_pull_interval())) {
+        return ['ok' => false, 'message' => '품목 전체조회는 지금 설정 간격(' . ecount_pull_interval() . '초) 안에서 1회만 가능합니다. ' . ecount_rate_wait('ecount_last_items_pull') . '초 후 재시도하세요. (이카운트 실서버 규칙은 다건조회 10분 1회 — 간격은 이카운트 ERP 화면의 동기화 설정에서 바꿀 수 있어요)', 'count' => 0];
+    }
+    try {
+        $api = EcountAPI::fromSettings();
+        // [v57] 호출 전에 가드 표시 — 실패해도 10분 백오프 (반복 재시도가 이카운트 연속 오류 제한에 걸리는 것 방지)
+        ecount_rate_mark('ecount_last_items_pull');
+        $g = $api->getItems();
+        $rows = $g['rows'];
+        $pdo = Database::connection();
+        $up = $pdo->prepare('INSERT INTO tt_ecount_items (prod_cd, prod_des, size_des, unit, in_price, out_price, class_cd, bal_flag, use_yn, synced_at)
+                             VALUES (:cd, :des, :sz, :u, :ip, :op, :cl, :bf, :uy, NOW())
+                             ON DUPLICATE KEY UPDATE prod_des=VALUES(prod_des), size_des=VALUES(size_des), unit=VALUES(unit),
+                               in_price=VALUES(in_price), out_price=VALUES(out_price), class_cd=VALUES(class_cd),
+                               bal_flag=VALUES(bal_flag), use_yn=VALUES(use_yn), synced_at=NOW()');
+        $n = 0;
+        foreach ($rows as $r) {
+            $cd = trim((string)($r['PROD_CD'] ?? ''));
+            if ($cd === '') continue;
+            $up->execute([
+                'cd' => $cd,
+                'des' => mb_substr(trim((string)($r['PROD_DES'] ?? '')), 0, 100),
+                'sz' => mb_substr(trim((string)($r['SIZE_DES'] ?? '')), 0, 100),
+                'u' => mb_substr(trim((string)($r['UNIT'] ?? '')), 0, 10),
+                'ip' => (string)($r['IN_PRICE'] ?? ''),
+                'op' => (string)($r['OUT_PRICE'] ?? ''),
+                'cl' => (string)($r['CLASS_CD'] ?? ''),
+                'bf' => (string)($r['BAL_FLAG'] ?? ''),
+                'uy' => (string)($r['USE_YN'] ?? ($r['DEL_GUBUN'] ?? '')),
+            ]);
+            $n++;
+        }
+        /* [v62] ERP에서 삭제된 품목 동기화 — 전체 조회가 완전(수신 행 >= TotalCnt)하면
+         * 이번 응답에 없는 캐시 품목은 ERP에서 삭제/제외된 것 → 캐시에서 제거(상품 매핑은 보존) */
+        $pruned = 0;
+        if ($n > 0 && count($rows) >= (int)$g['total']) {
+            $seen = [];
+            foreach ($rows as $r) {
+                $cd = trim((string)($r['PROD_CD'] ?? ''));
+                if ($cd !== '') $seen[$cd] = true;
+            }
+            foreach ($pdo->query('SELECT prod_cd FROM tt_ecount_items')->fetchAll(PDO::FETCH_COLUMN) as $cachedCd) {
+                if (!isset($seen[$cachedCd])) {
+                    try { $pdo->prepare('DELETE FROM tt_ecount_items WHERE prod_cd = :cd')->execute(['cd' => $cachedCd]); $pruned++; }
+                    catch (Throwable $ignore) {}
+                }
+            }
+        }
+        ecount_log('pull', 'items', 'ok', 'ERP 품목 ' . $n . '건 캐시 갱신' . ($pruned > 0 ? ' · ERP 삭제 반영 ' . $pruned . '건 제거' : ''));
+        return ['ok' => true, 'message' => 'ERP 품목 ' . $n . '건을 가져왔습니다.' . ($pruned > 0 ? ' (ERP에서 삭제된 ' . $pruned . '건을 목록에서 제거했어요)' : ''), 'count' => $n];
+    } catch (Throwable $e) {
+        // [v57] 이카운트 Rate Limit(412/302) 실패 시 10분 페널티 백오프 — 짧은 간격 설정 방어
+        if (stripos($e->getMessage(), 'Rate Limit') !== false) { ecount_rate_penalty('ecount_last_items_pull'); }
+        ecount_log('pull', 'items', 'fail', $e->getMessage());
+        return ['ok' => false, 'message' => $e->getMessage(), 'count' => 0];
+    }
+}
+
+/** ERP 창고별 재고 → tt_ecount_stock 캐시 + (동기화 켜짐 시) 매핑 상품 로컬 재고 자동 반영 */
+function ecount_pull_stock(bool $force = false): array
+{
+    ensure_ecount_tables();
+    ensure_stock_movement_tables();
+    if (!$force && !ecount_rate_ok('ecount_last_stock_pull', ecount_pull_interval())) {
+        return ['ok' => false, 'message' => '창고별 재고 전체조회는 지금 설정 간격(' . ecount_pull_interval() . '초) 안에서 1회만 가능합니다. ' . ecount_rate_wait('ecount_last_stock_pull') . '초 후 재시도하세요. (이카운트 실서버 규칙은 다건조회 10분 1회 — 간격은 이카운트 ERP 화면의 동기화 설정에서 바꿀 수 있어요. 특정 상품 1개는 재고 페이지에서 언제든 1초 단위 실시간 조회가 돼요)', 'applied' => 0];
+    }
+    try {
+        $api = EcountAPI::fromSettings();
+        // [v54] 호출 전에 가드 표시 — 실패해도 10분 백오프 (반복 재시도가 이카운트 연속 오류 제한에 걸리는 것 방지)
+        ecount_rate_mark('ecount_last_stock_pull');
+        $rows = $api->getStockByWarehouseList();
+        $pdo = Database::connection();
+        $up = $pdo->prepare('INSERT INTO tt_ecount_stock (prod_cd, wh_cd, wh_des, prod_des, bal_qty, synced_at)
+                             VALUES (:cd, :wh, :wd, :pd, :q, NOW())
+                             ON DUPLICATE KEY UPDATE wh_des=VALUES(wh_des), prod_des=VALUES(prod_des), bal_qty=VALUES(bal_qty), synced_at=NOW()');
+        $n = 0;
+        foreach ($rows as $r) {
+            $cd = trim((string)($r['PROD_CD'] ?? ''));
+            $wh = trim((string)($r['WH_CD'] ?? ''));
+            if ($cd === '' || $wh === '') continue;
+            $up->execute([
+                'cd' => $cd, 'wh' => $wh,
+                'wd' => mb_substr(trim((string)($r['WH_DES'] ?? '')), 0, 100),
+                'pd' => mb_substr(trim((string)($r['PROD_DES'] ?? '')), 0, 100),
+                'q' => (string)($r['BAL_QTY'] ?? '0'),
+            ]);
+            $n++;
+        }
+
+        /* 매핑된 상품의 로컬 재고를 ERP 총재고(전 창고 합) 기준으로 자동 반영 */
+        $applied = 0;
+        if (get_setting('ecount_sync_enabled', '1') === '1') {
+            $mapStmt = $pdo->prepare("SELECT p.id, p.stock, p.name, COALESCE(SUM(CAST(s.bal_qty AS DECIMAL(18,4))), 0) AS erp_qty
+                                      FROM tt_products p
+                                      JOIN tt_ecount_stock s ON s.prod_cd = p.ecount_prod_cd
+                                      GROUP BY p.id, p.stock, p.name");
+            $mapStmt->execute();
+            $upd = $pdo->prepare('UPDATE tt_products SET stock = :st WHERE id = :id');
+            foreach ($mapStmt->fetchAll(PDO::FETCH_ASSOC) as $m) {
+                $erpQty = (int)round((float)$m['erp_qty']);
+                $local  = (int)$m['stock'];
+                if ($erpQty === $local) continue;
+                $upd->execute(['st' => $erpQty, 'id' => (int)$m['id']]);
+                record_stock_movement((int)$m['id'], null, 'adjust', $erpQty - $local, $erpQty,
+                    '이카운트 자동 동기화 (ERP ' . $erpQty . ' ← 로컬 ' . $local . ')', 'ecount-sync');
+                $applied++;
+            }
+        }
+        set_setting('ecount_last_stock_sync', (string)time());
+        ecount_log('pull', 'stock', 'ok', 'ERP 창고별 재고 ' . $n . '행 갱신 · 로컬 상품 ' . $applied . '건 자동 반영');
+        return ['ok' => true, 'message' => 'ERP 창고별 재고 ' . $n . '행을 가져왔습니다. 매핑 상품 ' . $applied . '건이 자동 반영되었습니다.', 'applied' => $applied];
+    } catch (Throwable $e) {
+        // [v57] 이카운트 Rate Limit(412/302) 실패 시 10분 페널티 백오프 — 짧은 간격 설정 방어
+        if (stripos($e->getMessage(), 'Rate Limit') !== false) { ecount_rate_penalty('ecount_last_stock_pull'); }
+        ecount_log('pull', 'stock', 'fail', $e->getMessage());
+        return ['ok' => false, 'message' => $e->getMessage(), 'applied' => 0];
+    }
+}
+
+/** [v60] ERP 총재고(전 창고 합계) → tt_ecount_stock_total 캐시 (재고현황 API — 10분 1회) */
+function ecount_pull_stock_total(bool $force = false): array
+{
+    ensure_ecount_tables();
+    if (!$force && !ecount_rate_ok('ecount_last_stock_total_pull', ecount_pull_interval())) {
+        return ['ok' => false, 'message' => '총재고(재고현황) 조회는 지금 설정 간격(' . ecount_pull_interval() . '초) 안에서 1회만 가능합니다. ' . ecount_rate_wait('ecount_last_stock_total_pull') . '초 후 재시도하세요.', 'count' => 0];
+    }
+    try {
+        $api = EcountAPI::fromSettings();
+        ecount_rate_mark('ecount_last_stock_total_pull');
+        $rows = $api->getStockTotalList();
+        $pdo = Database::connection();
+        $up = $pdo->prepare('INSERT INTO tt_ecount_stock_total (prod_cd, prod_des, bal_qty, synced_at)
+                             VALUES (:cd, :pd, :q, NOW())
+                             ON DUPLICATE KEY UPDATE prod_des=VALUES(prod_des), bal_qty=VALUES(bal_qty), synced_at=NOW()');
+        $n = 0;
+        foreach ($rows as $r) {
+            $cd = trim((string)($r['PROD_CD'] ?? ''));
+            if ($cd === '') continue;
+            $up->execute([
+                'cd' => $cd,
+                'pd' => mb_substr(trim((string)($r['PROD_DES'] ?? ($r['PROD_SIZE_DES'] ?? ''))), 0, 100),
+                'q'  => (string)($r['BAL_QTY'] ?? '0'),
+            ]);
+            $n++;
+        }
+        ecount_log('pull', 'stock_total', 'ok', 'ERP 총재고 ' . $n . '품목 갱신');
+        return ['ok' => true, 'message' => 'ERP 총재고 ' . $n . '품목을 가져왔습니다.', 'count' => $n];
+    } catch (Throwable $e) {
+        if (stripos($e->getMessage(), 'Rate Limit') !== false) { ecount_rate_penalty('ecount_last_stock_total_pull'); }
+        ecount_log('pull', 'stock_total', 'fail', $e->getMessage());
+        return ['ok' => false, 'message' => $e->getMessage(), 'count' => 0];
+    }
+}
+
+/** 단일 품목 실시간 창고별 재고 조회(1초 제한 — 버튼 클릭용) */
+function ecount_query_stock_single(string $prodCd): array
+{
+    ensure_ecount_tables();
+    try {
+        $api = EcountAPI::fromSettings();
+        $rows = $api->getStockByWarehouse($prodCd);
+        $pdo = Database::connection();
+        $up = $pdo->prepare('INSERT INTO tt_ecount_stock (prod_cd, wh_cd, wh_des, prod_des, bal_qty, synced_at)
+                             VALUES (:cd, :wh, :wd, :pd, :q, NOW())
+                             ON DUPLICATE KEY UPDATE wh_des=VALUES(wh_des), prod_des=VALUES(prod_des), bal_qty=VALUES(bal_qty), synced_at=NOW()');
+        foreach ($rows as $r) {
+            $wh = trim((string)($r['WH_CD'] ?? ''));
+            if ($wh === '') continue;
+            $up->execute([
+                'cd' => $prodCd, 'wh' => $wh,
+                'wd' => mb_substr(trim((string)($r['WH_DES'] ?? '')), 0, 100),
+                'pd' => mb_substr(trim((string)($r['PROD_DES'] ?? '')), 0, 100),
+                'q' => (string)($r['BAL_QTY'] ?? '0'),
+            ]);
+        }
+        $total = 0;
+        foreach ($rows as $r) $total += (float)($r['BAL_QTY'] ?? 0);
+        ecount_log('pull', 'stock', 'ok', '품목 ' . $prodCd . ' 실시간 조회 (' . count($rows) . '창고)');
+        return ['ok' => true, 'rows' => $rows, 'total' => (int)round($total)];
+    } catch (Throwable $e) {
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+}
+
+/** ERP 거래처 저장(등록) — 몰 관리자 → ERP + 로컬 캐시 */
+function ecount_save_partner(array $fields): array
+{
+    ensure_ecount_tables();
+    $custCd = trim((string)($fields['cust_cd'] ?? ''));
+    $custName = trim((string)($fields['cust_name'] ?? ''));
+    if ($custCd === '' || $custName === '') return ['ok' => false, 'message' => '거래처코드와 거래처명은 필수입니다.'];
+    $bulk = [
+        'BUSINESS_NO' => $custCd,
+        'CUST_NAME'   => $custName,
+    ];
+    foreach ([
+        'boss_name' => 'BOSS_NAME', 'uptae' => 'UPTAE', 'jongmok' => 'JONGMOK',
+        'tel' => 'TEL', 'email' => 'EMAIL', 'addr' => 'ADDR', 'fax' => 'FAX',
+    ] as $k => $apiField) {
+        $v = trim((string)($fields[$k] ?? ''));
+        if ($v !== '') $bulk[$apiField] = mb_substr($v, 0, 200);
+    }
+    if (!empty($fields['remarks'])) $bulk['REMARKS'] = mb_substr(trim((string)$fields['remarks']), 0, 500);
+
+    try {
+        $api = EcountAPI::fromSettings();
+        $data = $api->savePartner($bulk);
+        $okCnt = (int)($data['SuccessCnt'] ?? 0);
+        if ($okCnt < 1) {
+            $details = is_string($data['ResultDetails'] ?? null) ? (string)$data['ResultDetails'] : json_encode($data['ResultDetails'] ?? [], JSON_UNESCAPED_UNICODE);
+            return ['ok' => false, 'message' => 'ERP 거래처 등록 실패: ' . mb_substr($details, 0, 200)];
+        }
+    } catch (EcountException $e) {
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+
+    // 로컬 캐시 upsert
+    try {
+        Database::connection()->prepare('INSERT INTO tt_ecount_partners (cust_cd, cust_name, boss_name, tel, addr, uptae, jongmok, email, remarks, source)
+                                        VALUES (:cd, :nm, :boss, :tel, :addr, :ut, :jm, :em, :rk, :src)
+                                        ON DUPLICATE KEY UPDATE cust_name=VALUES(cust_name), boss_name=VALUES(boss_name), tel=VALUES(tel),
+                                          addr=VALUES(addr), uptae=VALUES(uptae), jongmok=VALUES(jongmok), email=VALUES(email), remarks=VALUES(remarks)')
+            ->execute([
+                'cd'=>$custCd, 'nm'=>$custName,
+                'boss'=>trim((string)($fields['boss_name'] ?? '')) ?: null,
+                'tel'=>trim((string)($fields['tel'] ?? '')) ?: null,
+                'addr'=>trim((string)($fields['addr'] ?? '')) ?: null,
+                'ut'=>trim((string)($fields['uptae'] ?? '')) ?: null,
+                'jm'=>trim((string)($fields['jongmok'] ?? '')) ?: null,
+                'em'=>trim((string)($fields['email'] ?? '')) ?: null,
+                'rk'=>trim((string)($fields['remarks'] ?? '')) ?: null,
+                'src'=>trim((string)($fields['source'] ?? 'manual')) ?: 'manual',
+            ]);
+    } catch (Throwable $e) {
+        error_log('[ecount_save_partner:local] ' . $e->getMessage());
+    }
+    ecount_log('push', 'partners', 'ok', '거래처 등록: ' . $custName . '(' . $custCd . ')');
+    return ['ok' => true, 'message' => 'ERP + 관리자에 거래처가 등록되었습니다.'];
+}
+
+/** ERP 품목 등록 — 몰 관리자 → ERP + 로컬 캐시 */
+function ecount_save_item(array $fields): array
+{
+    ensure_ecount_tables();
+    $prodCd = trim((string)($fields['prod_cd'] ?? ''));
+    $prodDes = trim((string)($fields['prod_des'] ?? ''));
+    if ($prodCd === '' || $prodDes === '') return ['ok' => false, 'message' => '품목코드와 품목명은 필수입니다.'];
+    $bulk = ['PROD_CD' => $prodCd, 'PROD_DES' => $prodDes];
+    foreach ([
+        'size_des' => 'SIZE_DES', 'unit' => 'UNIT', 'in_price' => 'IN_PRICE', 'out_price' => 'OUT_PRICE',
+        'class_cd' => 'CLASS_CD',
+    ] as $k => $apiField) {
+        $v = trim((string)($fields[$k] ?? ''));
+        if ($v !== '') $bulk[$apiField] = $v;
+    }
+    // [v58] WH_CD 는 SaveBasicProduct 에서 생산공정 코드로 해석되어 실서버가
+    // 미등록 코드(예: 005)를 "생산공정(미등록코드)" 오류로 거부 — 품목 등록에서는 전송하지 않는다.
+    if (!empty($fields['remarks'])) $bulk['REMARKS'] = mb_substr(trim((string)$fields['remarks']), 0, 200);
+
+    try {
+        $api = EcountAPI::fromSettings();
+        $data = $api->saveItems([$bulk]);
+        $okCnt = (int)($data['SuccessCnt'] ?? 0);
+        if ($okCnt < 1) {
+            $details = is_string($data['ResultDetails'] ?? null) ? (string)$data['ResultDetails'] : json_encode($data['ResultDetails'] ?? [], JSON_UNESCAPED_UNICODE);
+            return ['ok' => false, 'message' => 'ERP 품목 등록 실패: ' . mb_substr($details, 0, 200)];
+        }
+    } catch (EcountException $e) {
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+    try {
+        Database::connection()->prepare('INSERT INTO tt_ecount_items (prod_cd, prod_des, size_des, unit, in_price, out_price, class_cd, synced_at)
+                                        VALUES (:cd, :des, :sz, :u, :ip, :op, :cl, NOW())
+                                        ON DUPLICATE KEY UPDATE prod_des=VALUES(prod_des), size_des=VALUES(size_des), unit=VALUES(unit),
+                                          in_price=VALUES(in_price), out_price=VALUES(out_price), class_cd=VALUES(class_cd), synced_at=NOW()')
+            ->execute([
+                'cd'=>$prodCd, 'des'=>$prodDes,
+                'sz'=>trim((string)($fields['size_des'] ?? '')) ?: null,
+                'u'=>trim((string)($fields['unit'] ?? '')) ?: null,
+                'ip'=>trim((string)($fields['in_price'] ?? '')) ?: null,
+                'op'=>trim((string)($fields['out_price'] ?? '')) ?: null,
+                'cl'=>trim((string)($fields['class_cd'] ?? '')) ?: null,
+            ]);
+    } catch (Throwable $e) {
+        error_log('[ecount_save_item:local] ' . $e->getMessage());
+    }
+    ecount_log('push', 'items', 'ok', '품목 등록: ' . $prodDes . '(' . $prodCd . ')');
+    return ['ok' => true, 'message' => 'ERP + 관리자에 품목이 등록되었습니다.'];
+}
+
+/** 발주서 입력(SavePurchases) — 여러 라인을 한 전표(UPLOAD_SER_NO=1)로 */
+function ecount_save_purchase_order(array $lines, string $custCd, string $custName, string $ioDateYmd = ''): array
+{
+    ensure_ecount_tables();
+    $custCd = trim($custCd);
+    $custName = trim($custName);
+    if ($custCd === '') return ['ok' => false, 'message' => '거래처를 선택하세요.'];
+    if (!$lines) return ['ok' => false, 'message' => '품목 라인이 없습니다.'];
+    if ($ioDateYmd === '') $ioDateYmd = date('Ymd');
+    $whCd = get_setting('ecount_wh_cd', '');
+
+    $bulk = [];
+    $ser = 0;
+    foreach ($lines as $ln) {
+        $prodCd = trim((string)($ln['prod_cd'] ?? ''));
+        $qty = (int)($ln['qty'] ?? 0);
+        $price = (int)($ln['price'] ?? 0);
+        if ($prodCd === '' || $qty <= 0) continue;
+        $ser++;
+        $supply = $price * $qty;
+        /* [v61] 발주서(SavePurchaseOrder)로 전환 — 발주서조회(GetPurchasesOrderList)에 바로 조회되는 전표.
+         * 이전의 구매입력(SavePurchases)은 구매(입고) 전표라서 발주서조회에 나오지 않았음(구매현황 0건의 원인). */
+        $bulk[] = [
+            'VPM_LINE_SER_NO' => (string)$ser,
+            'UPLOAD_SER_NO' => '1',
+            'IO_DATE'    => $ioDateYmd,
+            'CUST'       => $custCd,
+            'CUST_DES'   => $custName,
+            'WH_CD'      => $whCd,
+            'PROD_CD'    => $prodCd,
+            'PROD_DES'   => mb_substr(trim((string)($ln['prod_des'] ?? '')), 0, 100),
+            'QTY'        => (string)$qty,
+            'PRICE'      => (string)$price,
+            'SUPPLY_AMT' => (string)$supply,
+            'VAT_AMT'    => (string)(int)round($supply * 0.1),
+            'REMARKS'    => '쇼핑몰 관리자 발주 입력',
+        ];
+    }
+    if (!$bulk) return ['ok' => false, 'message' => '유효한 품목 라인이 없습니다(품목·수량 확인).'];
+
+    try {
+        $api = EcountAPI::fromSettings();
+        $data = $api->savePurchaseOrder($bulk);
+        $okCnt = (int)($data['SuccessCnt'] ?? 0);
+        $failCnt = (int)($data['FailCnt'] ?? 0);
+        $slips = $data['SlipNos'] ?? null;
+        if ($okCnt > 0) {
+            ecount_log('push', 'purchase', 'ok', '발주(구매) 입력 ' . $okCnt . '라인' . ($slips ? ' 구매번호:' . implode(',', (array)$slips) : ''));
+            return ['ok' => true, 'message' => 'ERP에 발주(구매)가 입력되었습니다 (' . $okCnt . '라인' . ($failCnt ? ', 실패 ' . $failCnt . '라인' : '') . ')' . ($slips ? ' · 구매번호: ' . implode(', ', (array)$slips) : '')];
+        }
+        $details = is_string($data['ResultDetails'] ?? null) ? (string)$data['ResultDetails'] : json_encode($data['ResultDetails'] ?? [], JSON_UNESCAPED_UNICODE);
+        ecount_log('push', 'purchase', 'fail', '발주 입력 실패: ' . mb_substr($details, 0, 200));
+        return ['ok' => false, 'message' => 'ERP 발주 입력 실패: ' . mb_substr($details, 0, 250)];
+    } catch (EcountException $e) {
+        ecount_log('push', 'purchase', 'fail', '발주 입력 실패: ' . $e->getMessage());
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+}
+
+/* ============================================================ [v64] 구매관리 (구매입고 · 작업소모) ============================================================ */
+
+/** [v64] 직접 구매입고 입력 — ERP 구매입력(SavePurchases) 전송(ERP 재고 증가) + 구매관리 원장 저장 + 매핑 상품 사이트 재고 증가 */
+function ecount_save_purchase_entry(string $custName, string $prodInput, int $qty, int $unitPrice, string $ioDateYmd = '', string $remark = ''): array
+{
+    ensure_ecount_tables();
+    $pdo = Database::connection();
+    $custName = trim($custName);
+    $prodInput = trim($prodInput);
+    if ($custName === '') return ['ok' => false, 'message' => '거래처를 입력·선택해 주세요.'];
+    if ($prodInput === '') return ['ok' => false, 'message' => '품목을 입력·선택해 주세요.'];
+    if ($qty <= 0) return ['ok' => false, 'message' => '수량을 1 이상 입력해 주세요.'];
+    if ($unitPrice < 0) return ['ok' => false, 'message' => '단가를 확인해 주세요.'];
+    if ($ioDateYmd === '') $ioDateYmd = date('Ymd');
+    $ioDateYmd = preg_replace('/[^0-9]/', '', $ioDateYmd);
+    if (strlen($ioDateYmd) !== 8) return ['ok' => false, 'message' => '일자를 YYYY-MM-DD로 입력해 주세요.'];
+
+    /* 거래처 해결 — 이름으로 코드 찾기 */
+    $cp = $pdo->prepare('SELECT cust_cd, cust_name FROM tt_ecount_partners WHERE cust_name = :nm LIMIT 1');
+    $cp->execute(['nm' => $custName]);
+    $partner = $cp->fetch(PDO::FETCH_ASSOC) ?: null;
+    $custCd = $partner ? (string)$partner['cust_cd'] : '';
+
+    /* 품목 해결 — "품목명 [ERP코드]" 후缀 파싱 → 코드 → 이름 */
+    $prodCd = '';
+    $prodDes = $prodInput;
+    if (preg_match('/^(.*)\s\[([A-Za-z0-9_-]{2,30})\]$/u', $prodInput, $m)) {
+        $prodDes = trim($m[1]);
+        $prodCd = $m[2];
+    }
+    if ($prodCd === '') {
+        $ip = $pdo->prepare('SELECT prod_cd, prod_des FROM tt_ecount_items WHERE prod_des = :d ORDER BY prod_cd LIMIT 2');
+        $ip->execute(['d' => $prodDes]);
+        $hits = $ip->fetchAll(PDO::FETCH_ASSOC);
+        if (count($hits) === 1) { $prodCd = (string)$hits[0]['prod_cd']; $prodDes = (string)$hits[0]['prod_des']; }
+        elseif (count($hits) > 1) return ['ok' => false, 'message' => '같은 이름의 ERP 품목이 여러 개예요 — 자동완성에서 "[품목코드]"까지 포함해 선택해 주세요.'];
+    } else {
+        $ip = $pdo->prepare('SELECT prod_des FROM tt_ecount_items WHERE prod_cd = :cd LIMIT 1');
+        $ip->execute(['cd' => $prodCd]);
+        $des = $ip->fetchColumn();
+        if ($des !== false) $prodDes = (string)$des;
+    }
+    if ($prodCd === '') return ['ok' => false, 'message' => 'ERP 품목을 찾지 못했어요 — 자동완성 목록에서 선택해 주세요. (ERP 품목이 안 나오면 품목 관리에서 "ERP에서 가져오기"를 먼저 눌러 주세요)'];
+
+    /* 매핑 상품 */
+    $mp = $pdo->prepare('SELECT id, stock FROM tt_products WHERE ecount_prod_cd = :cd LIMIT 1');
+    $mp->execute(['cd' => $prodCd]);
+    $mRow = $mp->fetch(PDO::FETCH_ASSOC) ?: null;
+    $productId = $mRow ? (int)$mRow['id'] : null;
+    $amt = $unitPrice * $qty;
+
+    $ins = $pdo->prepare('INSERT INTO tt_ecount_purchases (io_date, cust_cd, cust_name, prod_cd, prod_des, product_id, qty, unit_price, amt, remark, source, erp_status)
+                          VALUES (:d, :cd, :cn, :pc, :pd, :pid, :q, :up, :am, :rk, "manual", "pending")');
+    $ins->execute(['d' => $ioDateYmd, 'cd' => $custCd, 'cn' => $custName, 'pc' => $prodCd, 'pd' => mb_substr($prodDes, 0, 150),
+                   'pid' => $productId, 'q' => $qty, 'up' => $unitPrice, 'am' => $amt, 'rk' => mb_substr(trim($remark), 0, 200)]);
+    $purchaseId = (int)$pdo->lastInsertId();
+
+    /* ERP 구매입력 전송 (구매 전표 → ERP 재고 증가 + ERP 구매현황 화면에 기록) */
+    $r = ecount_push_purchase_to_erp($purchaseId, $qty, $unitPrice, $ioDateYmd, $custCd, $custName, $prodCd, $prodDes, '쇼핑몰 구매입고 입력');
+
+    /* 매핑 상품이면 사이트 재고 증가 */
+    if ($productId) {
+        try {
+            $pdo->prepare('UPDATE tt_products SET stock = stock + :q WHERE id = :id')->execute(['q' => $qty, 'id' => $productId]);
+            $pdo->prepare('UPDATE tt_ecount_purchases SET stock_moved = 1 WHERE id = :id')->execute(['id' => $purchaseId]);
+        } catch (Throwable $e) { sg_error_log('[ecount_purchase stock+] ' . $e->getMessage()); }
+    }
+    $extra = $productId ? ' · 쇼핑몰 재고도 ' . $qty . '만큼 늘렸어요' : '';
+    if ($r['ok']) return ['ok' => true, 'message' => '구매입고가 저장되고 ERP에 전송되었어요(ERP 재고 증가)' . $extra];
+    return ['ok' => true, 'message' => '구매입고는 저장했지만 ERP 전송이 실패했어요: ' . $r['message'] . ' — 목록에서 "ERP 재전송"으로 다시 보낼 수 있어요' . $extra];
+}
+
+/** [v64] ERP 구매입력(SavePurchases) 전송 공통 — 신규 입력/재전송 공용 */
+function ecount_push_purchase_to_erp(int $purchaseId, int $qty, int $unitPrice, string $ioDateYmd, string $custCd, string $custName, string $prodCd, string $prodDes, string $remarks): array
+{
+    $pdo = Database::connection();
+    $whCd = get_setting('ecount_wh_cd', '');
+    try {
+        $api = EcountAPI::fromSettings();
+        $supply = $unitPrice * $qty;
+        $data = $api->savePurchases([[
+            'VPM_LINE_SER_NO' => '1',
+            'UPLOAD_SER_NO' => '1',
+            'IO_DATE'    => $ioDateYmd,
+            'CUST'       => $custCd,
+            'CUST_DES'   => $custName,
+            'WH_CD'      => $whCd,
+            'PROD_CD'    => $prodCd,
+            'PROD_DES'   => mb_substr($prodDes, 0, 100),
+            'QTY'        => (string)$qty,
+            'PRICE'      => (string)$unitPrice,
+            'SUPPLY_AMT' => (string)$supply,
+            'VAT_AMT'    => (string)(int)round($supply * 0.1),
+            'REMARKS'    => $remarks,
+        ]]);
+        $okCnt = (int)($data['SuccessCnt'] ?? 0);
+        if ($okCnt > 0) {
+            $pdo->prepare("UPDATE tt_ecount_purchases SET erp_status='sent', erp_sent_at=NOW(), erp_error=NULL WHERE id=:id")->execute(['id' => $purchaseId]);
+            ecount_log('push', 'purchase_entry', 'ok', '구매입고 전송 #' . $purchaseId . ' (' . $prodCd . ' x' . $qty . ')');
+            return ['ok' => true, 'message' => '전송 성공'];
+        }
+        $details = is_string($data['ResultDetails'] ?? null) ? (string)$data['ResultDetails'] : json_encode($data['ResultDetails'] ?? [], JSON_UNESCAPED_UNICODE);
+        $pdo->prepare("UPDATE tt_ecount_purchases SET erp_status='fail', erp_error=:e WHERE id=:id")->execute(['e' => mb_substr($details, 0, 300), 'id' => $purchaseId]);
+        ecount_log('push', 'purchase_entry', 'fail', '구매입고 전송 실패 #' . $purchaseId . ': ' . mb_substr($details, 0, 200));
+        return ['ok' => false, 'message' => mb_substr($details, 0, 250)];
+    } catch (Throwable $e) {
+        $pdo->prepare("UPDATE tt_ecount_purchases SET erp_status='fail', erp_error=:e WHERE id=:id")->execute(['e' => mb_substr($e->getMessage(), 0, 300), 'id' => $purchaseId]);
+        ecount_log('push', 'purchase_entry', 'fail', '구매입고 전송 실패 #' . $purchaseId . ': ' . $e->getMessage());
+        return ['ok' => false, 'message' => $e->getMessage()];
+    }
+}
+
+/** [v64] 구매관리 재전송 — fail/skip/pending 행을 ERP 구매입력으로 보내기 */
+function ecount_resend_purchase(int $purchaseId): array
+{
+    ensure_ecount_tables();
+    $pdo = Database::connection();
+    $st = $pdo->prepare('SELECT * FROM tt_ecount_purchases WHERE id = :id LIMIT 1');
+    $st->execute(['id' => $purchaseId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) return ['ok' => false, 'message' => '구매입고 행을 찾지 못했습니다.'];
+    $r = ecount_push_purchase_to_erp($purchaseId, (int)$row['qty'], (int)$row['unit_price'], (string)$row['io_date'], (string)$row['cust_cd'], (string)$row['cust_name'], (string)$row['prod_cd'], (string)$row['prod_des'],
+        $row['source'] === 'worklog' ? '쇼핑몰 작업일지 구매 전송' : '쇼핑몰 구매입고 재전송');
+    return $r['ok'] ? ['ok' => true, 'message' => 'ERP에 구매입력으로 전송했어요 (ERP 재고가 증가합니다).'] : ['ok' => false, 'message' => 'ERP 전송 실패: ' . $r['message']];
+}
+
+/** [v64] 작업일지 완료 → 구매관리 자동 적용 (단가=매입단가) + 사이트 재고 차감 / 진행중 복원 시 되돌리기 */
+function ecount_apply_worklog_purchase(int $workLogId, bool $completed): array
+{
+    ensure_ecount_tables();
+    $pdo = Database::connection();
+    $lp = $pdo->prepare('SELECT * FROM tt_work_logs WHERE id = :id LIMIT 1');
+    $lp->execute(['id' => $workLogId]);
+    $log = $lp->fetch(PDO::FETCH_ASSOC);
+    if (!$log) return ['ok' => false, 'message' => '작업일지를 찾지 못했습니다.'];
+
+    $existing = $pdo->prepare('SELECT * FROM tt_ecount_purchases WHERE work_log_id = :id LIMIT 1');
+    $existing->execute(['id' => $workLogId]);
+    $prev = $existing->fetch(PDO::FETCH_ASSOC) ?: null;
+
+    if (!$completed) {
+        /* 진행중으로 되돌림 — 작업소모 항목 제거 + 차감했던 재고 복원 */
+        if ($prev && $prev['source'] === 'worklog') {
+            if ((int)$prev['stock_moved'] === 1 && $prev['product_id']) {
+                try { $pdo->prepare('UPDATE tt_products SET stock = stock + :q WHERE id = :id')->execute(['q' => (int)$prev['qty'], 'id' => (int)$prev['product_id']]); }
+                catch (Throwable $e) { sg_error_log('[ecount_worklog stock restore] ' . $e->getMessage()); }
+            }
+            $pdo->prepare('DELETE FROM tt_ecount_purchases WHERE id = :id')->execute(['id' => (int)$prev['id']]);
+            return ['ok' => true, 'message' => '작업일지를 진행중으로 되돌렸어요 — 구매관리 자동 항목을 제거하고 차감한 재고를 복원했어요.'];
+        }
+        return ['ok' => true, 'message' => ''];
+    }
+
+    $productId = $log['product_id'] ? (int)$log['product_id'] : null;
+    $prodCd = '';
+    if ($productId) {
+        $pp = $pdo->prepare('SELECT ecount_prod_cd FROM tt_products WHERE id = :id LIMIT 1');
+        $pp->execute(['id' => $productId]);
+        $cd = $pp->fetchColumn();
+        if ($cd !== false && $cd !== null && (string)$cd !== '') $prodCd = (string)$cd;
+    }
+    $qty = max(1, (int)$log['qty']);
+    $price = (int)$log['cost_supply'];
+    $name = (string)($log['product_name_snap'] ?: '작업 상품');
+    $ioDate = preg_replace('/[^0-9]/', '', (string)$log['work_date']);
+    if (strlen($ioDate) !== 8) $ioDate = date('Ymd');
+    $remark = '작업일지 #' . $workLogId . ' 완료 자동 (' . mb_substr((string)$log['work_content'], 0, 80) . ')';
+
+    /* 사이트 재고 차감 — "재고가 있으면 차감" (첫 적용 때만; 재적용은 항목만 갱신해 이중 차감 방지) */
+    $stockMoved = 0;
+    if ($prev) {
+        $stockMoved = (int)$prev['stock_moved'];
+    } elseif ($productId) {
+        try {
+            $dec = $pdo->prepare('UPDATE tt_products SET stock = GREATEST(0, stock - :q) WHERE id = :id AND stock > 0');
+            $dec->execute(['q' => $qty, 'id' => $productId]);
+            $stockMoved = $dec->rowCount() > 0 ? 1 : 0;
+        } catch (Throwable $e) { sg_error_log('[ecount_worklog stock-] ' . $e->getMessage()); }
+    }
+
+    if ($prev) {
+        $pdo->prepare("UPDATE tt_ecount_purchases SET io_date=:d, prod_cd=:pc, prod_des=:pd, product_id=:pid, qty=:q, unit_price=:up, amt=:am, remark=:rk, erp_status='skip', erp_error=NULL, stock_moved=:sm WHERE id=:id")
+            ->execute(['d' => $ioDate, 'pc' => $prodCd, 'pd' => mb_substr($name, 0, 150), 'pid' => $productId, 'q' => $qty, 'up' => $price, 'am' => $price * $qty, 'rk' => mb_substr($remark, 0, 200), 'sm' => $stockMoved, 'id' => (int)$prev['id']]);
+    } else {
+        $pdo->prepare('INSERT INTO tt_ecount_purchases (io_date, cust_cd, cust_name, prod_cd, prod_des, product_id, qty, unit_price, amt, remark, source, work_log_id, erp_status, stock_moved)
+                        VALUES (:d, NULL, :cn, :pc, :pd, :pid, :q, :up, :am, :rk, "worklog", :wid, "skip", :sm)')
+            ->execute(['d' => $ioDate, 'cn' => mb_substr((string)($log['customer_name'] ?: '작업 고객'), 0, 100), 'pc' => $prodCd, 'pd' => mb_substr($name, 0, 150),
+                       'pid' => $productId, 'q' => $qty, 'up' => $price, 'am' => $price * $qty, 'rk' => mb_substr($remark, 0, 200), 'wid' => $workLogId, 'sm' => $stockMoved]);
+    }
+    $note = $productId ? ' · 사이트 재고 ' . $qty . ' 차감' : '';
+    $prodNote = $prodCd !== '' ? ' (ERP 매핑:' . $prodCd . ')' : ' (ERP 미매핑 — 창고별 재고 화면에서 자동 매핑해 보세요)';
+    return ['ok' => true, 'message' => '작업 완료 — 구매관리(작업 소모)에 자동 적용했어요: ' . mb_substr($name, 0, 30) . ' x' . $qty . ' · 단가 ' . number_format($price) . '원' . $prodNote . $note];
+}
+
+/** [v64] 미매핑 쇼핑몰 상품 ↔ ERP 품목 자동 매핑 — 정규화 이름이 정확히 1:1로 일치할 때만 */
+function ecount_auto_map_products(): array
+{
+    ensure_ecount_tables();
+    $pdo = Database::connection();
+    $norm = static function (string $s): string {
+        $s = mb_strtolower(trim($s));
+        $s = preg_replace('/[\s\-\/\*\.\,\(\)\[\]ㆍ·:;_]+/u', '', $s);
+        return (string)$s;
+    };
+    $items = $pdo->query('SELECT prod_cd, prod_des FROM tt_ecount_items')->fetchAll(PDO::FETCH_ASSOC);
+    $byName = [];
+    foreach ($items as $it) {
+        $k = $norm((string)$it['prod_des']);
+        if ($k === '') continue;
+        $byName[$k][] = (string)$it['prod_cd'];
+    }
+    $used = [];
+    foreach ($pdo->query("SELECT ecount_prod_cd FROM tt_products WHERE ecount_prod_cd IS NOT NULL AND ecount_prod_cd <> ''")->fetchAll(PDO::FETCH_COLUMN) as $u) $used[(string)$u] = true;
+    $unmapped = $pdo->query("SELECT id, name FROM tt_products WHERE ecount_prod_cd IS NULL OR ecount_prod_cd = ''")->fetchAll(PDO::FETCH_ASSOC);
+    $mapped = 0;
+    $upd = $pdo->prepare('UPDATE tt_products SET ecount_prod_cd = :cd WHERE id = :id');
+    foreach ($unmapped as $p) {
+        $k = $norm((string)$p['name']);
+        if ($k === '' || !isset($byName[$k]) || count($byName[$k]) !== 1) continue;
+        $cd = $byName[$k][0];
+        if (isset($used[$cd])) continue; /* 이미 다른 상품이 쓰는 코드 */
+        $upd->execute(['cd' => $cd, 'id' => (int)$p['id']]);
+        $used[$cd] = true;
+        $mapped++;
+    }
+    ecount_log('sync', 'auto_map', 'ok', '자동 매핑 ' . $mapped . '건 (대상 미매핑 ' . count($unmapped) . '건)');
+    return ['ok' => true, 'mapped' => $mapped, 'candidates' => count($unmapped),
+            'message' => $mapped > 0 ? 'ERP 품목과 이름이 일치하는 상품 ' . $mapped . '건을 자동 매핑했어요.' : '이름이 정확히 일치하는 미매핑 상품이 없어요 (자동 매핑은 이름이 1:1로 같을 때만 돼요 — 나머지는 상품 수정에서 ERP 코드를 직접 연결해 주세요).'];
+}
+
+/** 발주서 조회 → 화면 표시용 rows 정규화 + (거래처 수집 옵션) */
+function ecount_fetch_purchase_orders(string $fromYmd, string $toYmd, bool $collectPartners = false, int $maxPages = 3, bool $bypassGuard = false): array
+{
+    ensure_ecount_tables();
+    /* [v59] bypassGuard=true — 년도 전체조회(자동 분할)용: 거친 간격 가드를 건너뛰고
+     * 호출자(JS 순차+pacing)가 간격을 지배. 실패(Rate Limit) 페널티는 그대로 적용돼 안전. */
+    if (!$bypassGuard && !ecount_rate_ok('ecount_last_orders_pull', ecount_pull_interval())) {
+        return ['ok' => false, 'message' => '발주서(구매현황) 전체조회는 지금 설정 간격(' . ecount_pull_interval() . '초) 안에서 1회만 가능합니다. ' . ecount_rate_wait('ecount_last_orders_pull') . '초 후 재시도하세요. (이미 조회한 목록에서 거래처 검색·필터는 언제든 즉시 돼요)', 'rows' => [], 'total' => 0];
+    }
+    try {
+        $api = EcountAPI::fromSettings();
+        $out = [];
+        $total = 0;
+        $pdo = Database::connection();
+        $upPartner = null;
+        if ($collectPartners) {
+            $upPartner = $pdo->prepare('INSERT INTO tt_ecount_partners (cust_cd, cust_name, source)
+                                       VALUES (:cd, :nm, "orders")
+                                       ON DUPLICATE KEY UPDATE cust_name=VALUES(cust_name)');
+        }
+        for ($page = 1; $page <= $maxPages; $page++) {
+            if ($page === 1) {
+                // [v54] 첫 호출 전에 가드 표시 — 실패해도 10분 백오프 (반복 재시도가 이카운트 연속 오류 제한에 걸리는 것 방지)
+                ecount_rate_mark('ecount_last_orders_pull');
+            }
+            $res = $api->getPurchaseOrders($fromYmd, $toYmd, $page, 100);
+            $total = max($total, (int)$res['total']);
+            foreach ($res['rows'] as $r) {
+                $out[] = $r;
+                if ($upPartner) {
+                    $cd = trim((string)($r['CUST'] ?? ''));
+                    $nm = trim((string)($r['CUST_DES'] ?? ''));
+                    if ($cd !== '' && $nm !== '') {
+                        try { $upPartner->execute(['cd' => $cd, 'nm' => mb_substr($nm, 0, 100)]); } catch (Throwable $ignore) {}
+                    }
+                }
+            }
+            if (count($res['rows']) < 100) break;
+        }
+        ecount_log('pull', 'orders', 'ok', '발주서 ' . count($out) . '건 조회' . ($collectPartners ? ' · 거래처 수집' : ''));
+        return ['ok' => true, 'message' => '발주서 ' . count($out) . '건을 조회했습니다.', 'rows' => $out, 'total' => $total];
+    } catch (Throwable $e) {
+        // [v57] 이카운트 Rate Limit(412/302) 실패 시 10분 페널티 백오프 — 짧은 간격 설정 방어
+        if (stripos($e->getMessage(), 'Rate Limit') !== false) { ecount_rate_penalty('ecount_last_orders_pull'); }
+        ecount_log('pull', 'orders', 'fail', $e->getMessage());
+        return ['ok' => false, 'message' => $e->getMessage(), 'rows' => [], 'total' => 0];
+    }
+}
+
+/** [v54] 구매현황(발주서) 행을 거래처 키워드(거래처명·거래처코드 부분일치, 대소문자 무시)로 필터링 */
+function ecount_filter_po_rows(array $rows, string $keyword): array
+{
+    $kw = mb_strtolower(trim($keyword));
+    if ($kw === '') {
+        return $rows;
+    }
+    return array_values(array_filter($rows, static function (array $r) use ($kw): bool {
+        $hay = mb_strtolower(trim((string)($r['CUST_DES'] ?? '')) . ' ' . trim((string)($r['CUST'] ?? '')));
+        return mb_strpos($hay, $kw) !== false;
+    }));
+}
+
+/** 로컬 상품 재고를 ERP 값으로 수동 반영 (재고이력 '조정' 기록) */
+function ecount_apply_stock_to_local(int $productId, int $erpQty): array
+{
+    ensure_stock_movement_tables();
+    $p = ecount_get_product($productId);
+    if (!$p) return ['ok' => false, 'message' => '상품을 찾을 수 없습니다.'];
+    $local = (int)$p['stock'];
+    if ($erpQty === $local) return ['ok' => true, 'message' => '이미 ERP 재고(' . $erpQty . ')와 동일합니다.', 'changed' => false];
+    Database::connection()->prepare('UPDATE tt_products SET stock = :st WHERE id = :id')
+        ->execute(['st' => $erpQty, 'id' => $productId]);
+    record_stock_movement($productId, null, 'adjust', $erpQty - $local, $erpQty,
+        '이카운트 재고 수동 반영 (ERP ' . $erpQty . ' ← 로컬 ' . $local . ')', 'ecount-manual');
+    ecount_log('pull', 'stock', 'ok', '상품 #' . $productId . ' 재고 수동 반영 (' . $local . '→' . $erpQty . ')');
+    return ['ok' => true, 'message' => '재고가 ' . $local . ' → ' . $erpQty . ' 로 반영되었습니다.', 'changed' => true];
+}
+
+/** [v51] 연결 상태 요약 (대시보드·ajax 공용) */
+function ecount_status_summary(): array
+{
+    ensure_ecount_tables();
+    $pdo = Database::connection();
+    $cfg = EcountAPI::configured();
+    $summary = [
+        'configured' => $cfg,
+        'test_mode' => get_setting('ecount_test_mode', '0') === '1',
+        'sync_enabled' => get_setting('ecount_sync_enabled', '1') === '1',
+        'auto_push' => get_setting('ecount_auto_push', '1') === '1',
+        'wh_cd' => get_setting('ecount_wh_cd', ''),
+        'cust_cd' => get_setting('ecount_cust_cd', ''),
+        'zone' => get_setting('ecount_zone', ''),
+        'last_stock_sync' => (int)get_setting('ecount_last_stock_sync', '0'),
+        'items_cached' => 0, 'partners_cached' => 0, 'stock_rows' => 0,
+        'queue_pending' => 0, 'queue_done' => 0,
+        'stock_pull_wait' => ecount_rate_wait('ecount_last_stock_pull'),
+        'items_pull_wait' => ecount_rate_wait('ecount_last_items_pull'),
+        'orders_pull_wait' => ecount_rate_wait('ecount_last_orders_pull'),
+        'stock_total_pull_wait' => ecount_rate_wait('ecount_last_stock_total_pull'),
+    ];
+    try {
+        $summary['items_cached'] = (int)$pdo->query('SELECT COUNT(*) FROM tt_ecount_items')->fetchColumn();
+        $summary['partners_cached'] = (int)$pdo->query('SELECT COUNT(*) FROM tt_ecount_partners')->fetchColumn();
+        $summary['stock_rows'] = (int)$pdo->query('SELECT COUNT(*) FROM tt_ecount_stock')->fetchColumn();
+        $summary['stock_total_rows'] = (int)$pdo->query('SELECT COUNT(*) FROM tt_ecount_stock_total')->fetchColumn();
+        $q = $pdo->query("SELECT status, COUNT(*) c FROM tt_ecount_queue GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
+        $summary['queue_pending'] = (int)($q['pending'] ?? 0);
+        $summary['queue_done'] = (int)($q['done'] ?? 0);
+    } catch (Throwable $e) {
+        error_log('[ecount_status_summary] ' . $e->getMessage());
+    }
+    return $summary;
+}
+
+/**
+ * [v51] 주기 자동화 엔트리 — 관리자 대시보드 ajax(60초) 또는 호스팅 cron(예: 5분)이 호출.
+ *  1) 보류 큐(결제완료 ERP 전송 실패분) 재시도
+ *  2) 재고 자동 동기화가 켜져 있고 마지막 풀 후 10분 이상 지났으면 창고별 재고 풀 → 로컬 자동 반영
+ */
+function ecount_cron_run(bool $forceStock = false): array
+{
+    ensure_ecount_tables();
+    $out = ['queue' => null, 'stock' => null, 'at' => date('Y-m-d H:i:s')];
+    if (!EcountAPI::configured()) {
+        $out['note'] = '이카운트 설정이 비어 있습니다.';
+        return $out;
+    }
+    $out['queue'] = ecount_queue_process(10);
+    $lastStock = (int)get_setting('ecount_last_stock_sync', '0');
+    /* [v61] cron 자동 재고풀은 최소 10분 주기 고정 — 수동 조회 간격 설정(짧게 잡아도)을
+     * 따라가면 대시보드 60초 핑이 ERP를 매분 호출해 관리자가 느려지고 오류 누적 위험이 생긴다 */
+    if (get_setting('ecount_sync_enabled', '1') === '1' && ($forceStock || (time() - $lastStock) >= max(600, ecount_pull_interval()))) {
+        $out['stock'] = ecount_pull_stock(true);
+        // [v57] Rate Limit 실패 시 cron 쪽 간격도 10분 백오프 (짧은 간격 설정에서 반복 412 방어)
+        if (($out['stock']['ok'] ?? true) === false && stripos((string)($out['stock']['message'] ?? ''), 'Rate Limit') !== false) {
+            set_setting('ecount_last_stock_sync', (string)(time() + 600 - ecount_pull_interval()));
+        }
+    }
+    return $out;
 }

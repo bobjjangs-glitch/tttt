@@ -117,8 +117,8 @@ if ($filterStatus !== '') {
     $params['st'] = $filterStatus;
 }
 if ($kw !== '') {
-    $where .= ' AND (t.req_no LIKE :kw OR t.buyer_biz_name LIKE :kw OR t.buyer_biz_number LIKE :kw OR t.buyer_ceo LIKE :kw OR u.name LIKE :kw OR u.email LIKE :kw)';
-    $params['kw'] = '%' . $kw . '%';
+    $where .= ' AND (t.req_no LIKE :kw1 OR t.buyer_biz_name LIKE :kw2 OR t.buyer_biz_number LIKE :kw3 OR t.buyer_ceo LIKE :kw4 OR u.name LIKE :kw5 OR u.email LIKE :kw6)';
+    $params['kw1'] = $params['kw2'] = $params['kw3'] = $params['kw4'] = $params['kw5'] = $params['kw6'] = '%' . $kw . '%';
 }
 if ($from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
     $where .= ' AND DATE(t.created_at) >= :dfrom';

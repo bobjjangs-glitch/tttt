@@ -27,8 +27,8 @@ if ($filterFrom) { $where .= ' AND m.created_at >= :from'; $params[':from'] = $f
 if ($filterTo)   { $where .= ' AND m.created_at <= :to'; $params[':to'] = $filterTo . ' 23:59:59'; }
 if ($filterType) { $where .= ' AND m.change_type = :t'; $params[':t'] = $filterType; }
 if ($search !== '') {
-    $where .= ' AND (p.name LIKE :q OR p.sku LIKE :q OR m.note LIKE :q)';
-    $params[':q'] = '%' . $search . '%';
+    $where .= ' AND (p.name LIKE :q1 OR p.sku LIKE :q2 OR m.note LIKE :q3)';
+    $params[':q1'] = $params[':q2'] = $params[':q3'] = '%' . $search . '%';
 }
 
 $perPage = 30;

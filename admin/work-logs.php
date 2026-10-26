@@ -29,8 +29,8 @@ if ($filterSource) { $where .= ' AND w.source = :s'; $params[':s'] = $filterSour
 if ($filterWorker) { $where .= ' AND w.worker_id = :w'; $params[':w'] = $filterWorker; }
 if ($filterJob) { $where .= ' AND w.job_type = :j'; $params[':j'] = $filterJob; }
 if ($search !== '') {
-    $where .= ' AND (w.work_content LIKE :q OR w.customer_name LIKE :q OR w.car_info LIKE :q OR w.res_no_snap LIKE :q OR w.product_name_snap LIKE :q)';
-    $params[':q'] = '%' . $search . '%';
+    $where .= ' AND (w.work_content LIKE :q1 OR w.customer_name LIKE :q2 OR w.car_info LIKE :q3 OR w.res_no_snap LIKE :q4 OR w.product_name_snap LIKE :q5)';
+    $params[':q1'] = $params[':q2'] = $params[':q3'] = $params[':q4'] = $params[':q5'] = '%' . $search . '%';
 }
 
 /* ===== 삭제/상태 처리 ===== */
@@ -60,7 +60,13 @@ if (is_post()) {
     } elseif (($_POST['action'] ?? '') === 'toggle_status') {
         $newStatus = $log['status'] === 'done' ? 'working' : 'done';
         $pdo->prepare('UPDATE tt_work_logs SET status = :s WHERE id = :id')->execute(['s'=>$newStatus, 'id'=>$id]);
-        flash('admin_success', $newStatus === 'done' ? '작업 완료로 표시했습니다.' : '작업중으로 되돌렸습니다.');
+        /* [v64] 작업 완료 → 구매관리 자동 적용(단가=매입단가) + 사이트 재고 차감 / 되돌림 시 복원 */
+        $epMsg = '';
+        try {
+            $ep = ecount_apply_worklog_purchase($id, $newStatus === 'done');
+            if ($ep['ok'] && $ep['message'] !== '') $epMsg = ' ' . $ep['message'];
+        } catch (Throwable $e) { sg_error_log('[work-logs toggle ecount] ' . $e->getMessage()); }
+        flash('admin_success', ($newStatus === 'done' ? '작업 완료로 표시했습니다.' : '작업중으로 되돌렸습니다.') . $epMsg);
     } elseif (($_POST['action'] ?? '') === 'toggle_receipt') {
         /* [v42] 현금영수증 발행 처리/해제 — 현금결제 건만 */
         if (($log['pay_method'] ?? '') !== 'cash') {

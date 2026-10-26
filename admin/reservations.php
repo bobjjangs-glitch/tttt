@@ -101,8 +101,8 @@ $params = [];
 if ($filterStatus) { $where .= ' AND r.status = :st'; $params[':st'] = $filterStatus; }
 if ($filterDate)   { $where .= ' AND r.visit_date = :vd'; $params[':vd'] = $filterDate; }
 if ($search !== '') {
-    $where .= ' AND (r.res_no LIKE :q OR r.visitor_name LIKE :q OR r.visitor_phone LIKE :q OR r.product_name_snap LIKE :q)';
-    $params[':q'] = '%' . $search . '%';
+    $where .= ' AND (r.res_no LIKE :q1 OR r.visitor_name LIKE :q2 OR r.visitor_phone LIKE :q3 OR r.product_name_snap LIKE :q4)';
+    $params[':q1'] = $params[':q2'] = $params[':q3'] = $params[':q4'] = '%' . $search . '%';
 }
 
 $returnQuery = http_build_query(array_filter([

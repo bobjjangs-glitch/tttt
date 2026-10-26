@@ -133,8 +133,8 @@ if ($statusFilter !== '' && array_key_exists($statusFilter, $statusLabels)) {
     $params['status'] = $statusFilter;
 }
 if ($keyword !== '') {
-    $where .= ' AND (customer_name LIKE :kw OR customer_phone LIKE :kw OR phone LIKE :kw OR brand_text LIKE :kw)';
-    $params['kw'] = '%' . $keyword . '%';
+    $where .= ' AND (customer_name LIKE :kw1 OR customer_phone LIKE :kw2 OR phone LIKE :kw3 OR brand_text LIKE :kw4)';
+    $params['kw1'] = $params['kw2'] = $params['kw3'] = $params['kw4'] = '%' . $keyword . '%';
 }
 
 $countStmt = $pdo->prepare("SELECT COUNT(*) FROM tt_stock_requests WHERE {$where}");

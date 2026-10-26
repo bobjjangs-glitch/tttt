@@ -19,7 +19,7 @@ $adminRoleLabel = $adminRoleLabels[$adminRole] ?? $adminRole;
 // 현재 페이지가 어느 그룹에 속하는지 확인 (드롭다운 자동 펼침용)
 $orderGroup = ['orders.php', 'business-orders.php', 'reservations.php', 'reservation-reminders.php'];
 $taxGroup = ['tax-invoices.php', 'tax-invoice-faxes.php', 'tax-invoice-print.php', 'tax-invoice-export.php'];
-$productGroup = ['products.php', 'brands.php', 'coupons.php', 'benefits-settings.php', 'reviews.php', 'popups.php', 'banners.php', 'bulk-upload.php', 'stock-movements.php', 'ecount-items.php'];
+$productGroup = ['products.php', 'brands.php', 'coupons.php', 'benefits-settings.php', 'reviews.php', 'popups.php', 'banners.php', 'bulk-upload.php', 'stock-movements.php'];
 $memberGroup = ['users.php', 'business-approvals.php', 'inquiries.php', 'chatbot.php', 'vehicles.php'];
 $settleGroup = ['daily-settlement.php', 'daily-settlement-print.php', 'monthly-settlement.php', 'monthly-settlement-print.php', 'card-fees.php', 'wholesale-sales.php', 'wholesale-sale-print.php'];
 $tabletGroup = ['work-logs.php', 'workers.php'];
@@ -65,12 +65,12 @@ function admin_nav_active(string $script, string $target): string {
       <div class="admin-nav-group <?= $activeGroup === 'orders' ? 'open' : '' ?>" data-group="orders">
         <button type="button" class="admin-nav-toggle">
           <span class="admin-nav-icon">📦</span>
-          <span>주문 관리</span>
+          <span>주문 · 예약</span>
           <span class="admin-nav-arrow">▾</span>
         </button>
         <div class="admin-nav-sub">
           <?php if (AdminAuth::can('orders')): ?>
-          <a href="<?= BASE_URL ?>/admin/orders.php" class="<?= admin_nav_active($currentScript, 'orders.php') ?>">주문 관리</a>
+          <a href="<?= BASE_URL ?>/admin/orders.php" class="<?= admin_nav_active($currentScript, 'orders.php') ?>">📋 주문 조회 · 관리</a>
           <?php endif; ?>
           <?php if (AdminAuth::can('business-orders')): ?>
           <a href="<?= BASE_URL ?>/admin/business-orders.php" class="<?= admin_nav_active($currentScript, 'business-orders.php') ?>">사업자 주문 관리</a>
@@ -151,17 +151,14 @@ function admin_nav_active(string $script, string $target): string {
       <div class="admin-nav-group <?= $activeGroup === 'products' ? 'open' : '' ?>" data-group="products">
         <button type="button" class="admin-nav-toggle">
           <span class="admin-nav-icon">🏷️</span>
-          <span>상품 관리</span>
+          <span>상품 · 재고</span>
           <span class="admin-nav-arrow">▾</span>
         </button>
         <div class="admin-nav-sub">
           <?php if (AdminAuth::can('products')): ?>
-          <a href="<?= BASE_URL ?>/admin/products.php" class="<?= admin_nav_active($currentScript, 'products.php') ?>">상품 관리</a>
-          <a href="<?= BASE_URL ?>/admin/bulk-upload.php" class="<?= admin_nav_active($currentScript, 'bulk-upload.php') ?>">📤 일괄 업로드</a>
-          <a href="<?= BASE_URL ?>/admin/ecount-items.php" class="<?= admin_nav_active($currentScript, 'ecount-items.php') ?>">📦 이카운트 품목 등록</a>
-
+          <a href="<?= BASE_URL ?>/admin/products.php" class="<?= admin_nav_active($currentScript, 'products.php') ?>">🛍️ 상품 조회 · 등록</a>
+          <a href="<?= BASE_URL ?>/admin/bulk-upload.php" class="<?= admin_nav_active($currentScript, 'bulk-upload.php') ?>">📤 엑셀 일괄 업로드</a>
           <?php endif; ?>
-
           <?php if (AdminAuth::can('stock-movements')): ?>
           <a href="<?= BASE_URL ?>/admin/stock-movements.php" class="<?= admin_nav_active($currentScript, 'stock-movements.php') ?>">📋 재고 입출고 이력</a>
           <?php endif; ?>
@@ -212,7 +209,7 @@ function admin_nav_active(string $script, string $target): string {
         </button>
         <div class="admin-nav-sub">
           <?php if (AdminAuth::can('users')): ?>
-          <a href="<?= BASE_URL ?>/admin/users.php" class="<?= admin_nav_active($currentScript, 'users.php') ?>">회원 관리</a>
+          <a href="<?= BASE_URL ?>/admin/users.php" class="<?= admin_nav_active($currentScript, 'users.php') ?>">👤 회원 조회 · 관리</a>
           <?php endif; ?>
           <?php if (AdminAuth::can('vehicles')): ?>
           <a href="<?= BASE_URL ?>/admin/vehicles.php" class="<?= admin_nav_active($currentScript, 'vehicles.php') ?>">🚗 차량 교체주기 관리</a>
@@ -226,6 +223,26 @@ function admin_nav_active(string $script, string $target): string {
           <?php if (AdminAuth::can('chatbot')): ?>
           <a href="<?= BASE_URL ?>/admin/chatbot.php" class="<?= admin_nav_active($currentScript, 'chatbot.php') ?>">💬 AI 챗봇 관리</a>
           <?php endif; ?>
+         </div>
+       </div>
+       <?php endif; ?>
+
+       <!-- 이카운트 ERP 연동 (v51) -->
+       <?php if (AdminAuth::can('ecount')): ?>
+       <div class="admin-nav-group <?= in_array($currentScript, ['ecount.php', 'ecount-items.php', 'ecount-partners.php', 'ecount-stock.php', 'ecount-purchase-orders.php'], true) ? 'open' : '' ?>">
+         <button type="button" class="admin-nav-toggle">
+           <span class="admin-nav-icon">📊</span>
+           <span>이카운트 ERP 연동</span>
+           <span class="admin-nav-arrow">▾</span>
+         </button>
+         <div class="admin-nav-sub">
+           <a href="<?= BASE_URL ?>/admin/ecount.php" class="<?= admin_nav_active($currentScript, 'ecount.php') ?>">🔗 연동 대시보드 (설정 · 연결상태)</a>
+           <a href="<?= BASE_URL ?>/admin/ecount-items.php" class="<?= admin_nav_active($currentScript, 'ecount-items.php') ?>">📦 품목 (조회 · 등록 · 엑셀)</a>
+           <a href="<?= BASE_URL ?>/admin/ecount-partners.php" class="<?= admin_nav_active($currentScript, 'ecount-partners.php') ?>">🤝 거래처 (조회 · 등록 · 수정)</a>
+           <a href="<?= BASE_URL ?>/admin/ecount-stock.php" class="<?= admin_nav_active($currentScript, 'ecount-stock.php') ?>">🏬 재고현황 (창고별 · 총재고 · 실시간)</a>
+           <a href="<?= BASE_URL ?>/admin/ecount-purchases.php" class="<?= admin_nav_active($currentScript, 'ecount-purchases.php') ?>">🛒 구매관리 (입고 입력 · 작업소모)</a>
+           <a href="<?= BASE_URL ?>/admin/ecount-purchase-orders.php" class="<?= admin_nav_active($currentScript, 'ecount-purchase-orders.php') ?>">🧾 발주서 (조회 · 입력 · 엑셀)</a>
+           <a href="<?= BASE_URL ?>/admin/ecount-purchase-list.php" class="<?= admin_nav_active($currentScript, 'ecount-purchase-list.php') ?>">📈 구매현황 (엑셀 업로드 · 조회)</a>
          </div>
        </div>
        <?php endif; ?>
@@ -313,5 +330,27 @@ function admin_nav_active(string $script, string $target): string {
       overlay.classList.remove('show');
     });
   }
+})();
+</script>
+
+<script>
+/* [v59] 대기 버튼 실시간 카운트다운 — "(N초 후 가능)" 표시가 초 단위로 줄어들고 0초가 되면 사라짐 */
+(function(){
+  setInterval(function(){
+    document.querySelectorAll('button[data-wait]').forEach(function(b){
+      var w = parseInt(b.getAttribute('data-wait') || '0', 10);
+      if (!(w > 0)) return;
+      w--;
+      b.setAttribute('data-wait', String(w));
+      var base = b.textContent.replace(/\s*\([0-9]+\s*(초|분) 후 가능\)\s*$/, '');
+      if (w > 90) {
+        b.textContent = base + ' (' + Math.ceil(w / 60) + '분 후 가능)';
+      } else if (w > 0) {
+        b.textContent = base + ' (' + w + '초 후 가능)';
+      } else {
+        b.textContent = base;
+      }
+    });
+  }, 1000);
 })();
 </script>

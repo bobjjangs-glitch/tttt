@@ -18,8 +18,8 @@ $statusFilter = $_GET['status'] ?? '';
 $where  = '1=1';
 $params = [];
 if ($keyword !== '') {
-    $where .= ' AND (u.email LIKE :kw OR u.name LIKE :kw OR u.phone LIKE :kw)';
-    $params['kw'] = '%' . $keyword . '%';
+    $where .= ' AND (u.email LIKE :kw1 OR u.name LIKE :kw2 OR u.phone LIKE :kw3)';
+    $params['kw1'] = $params['kw2'] = $params['kw3'] = '%' . $keyword . '%';
 }
 if (array_key_exists($statusFilter, $statusLabels)) {
     $where .= ' AND u.status = :status';

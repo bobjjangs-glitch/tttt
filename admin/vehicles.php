@@ -133,8 +133,8 @@ $search = trim((string)($_GET['q'] ?? ''));
 $where = 'WHERE 1=1';
 $params = [];
 if ($search !== '') {
-    $where .= ' AND (plate_no LIKE :q OR owner_name LIKE :q OR owner_phone LIKE :q OR car_model LIKE :q OR last_tire_product LIKE :q)';
-    $params[':q'] = '%' . $search . '%';
+    $where .= ' AND (plate_no LIKE :q1 OR owner_name LIKE :q2 OR owner_phone LIKE :q3 OR car_model LIKE :q4 OR last_tire_product LIKE :q5)';
+    $params[':q1'] = $params[':q2'] = $params[':q3'] = $params[':q4'] = $params[':q5'] = '%' . $search . '%';
 }
 
 $cycleDefault = vehicle_cycle_months();
