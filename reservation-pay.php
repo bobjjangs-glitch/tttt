@@ -163,6 +163,10 @@ if (is_post()) {
             }
 
             $pdo->commit();
+            /* [v51] 결제완료(비현금 즉시결제) 예약은 이카운트 ERP 판매입력 자동 전송 */
+            if ($payStatus === 'paid') {
+                ecount_on_paid('reservation', (int)$reservation['id']);
+            }
             redirect('/reservation-complete.php?no=' . urlencode($resNo));
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {

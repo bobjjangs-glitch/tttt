@@ -59,8 +59,8 @@ if (!empty($brandIds)) {
 }
 
 if ($name !== '') {
-    $where[] = '(p.name LIKE :name OR p.model LIKE :name)';
-    $params['name'] = '%' . $name . '%';
+    $where[] = '(p.name LIKE :name1 OR p.model LIKE :name2)';
+    $params['name1'] = $params['name2'] = '%' . $name . '%';
 }
 
 if ($width !== '' && ctype_digit($width)) {

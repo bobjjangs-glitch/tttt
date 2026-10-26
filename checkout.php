@@ -332,21 +332,6 @@ if (is_post()) {
             ]);
         }
 
-        /* [신규] 이카운트 동기화 큐 적재 — 주문번호가 확정된 '이 시점'에서만 가능하다.
-           (재고 차감 루프 안에서는 아직 $orderId가 없어 주문과 연결할 수 없었다.)
-           품목코드 미매핑 상품은 함수 내부에서 조용히 스킵되고, 함수 자체가
-           없는 서버에서도 결제가 막히지 않도록 function_exists()로 방어한다. */
-        if (function_exists('ecount_queue_stock_change')) {
-            foreach ($orderItemsData as $d) {
-                ecount_queue_stock_change(
-                    (int)$d['product_id'],
-                    -1 * (int)$d['qty'],
-                    "주문 출고 — {$d['name_snap']} (주문번호 {$orderNo})",
-                    $orderId
-                );
-            }
-        }
-
         /* [v46→v48] 상태로그에 결제수단 + 결제상태 + 현금영수증 요청까지 기록.
            비현금(카드·간편결제)은 즉시 결제완료 처리, 현금수단은 입금 확인 후 확정. */
         $statusMemo = '주문 생성 (결제수단: ' . $paymentMethods[$paymentMethod] . ')';
@@ -368,6 +353,11 @@ if (is_post()) {
         unset($_SESSION['_old']);
         if ($mode === 'buynow') {
             unset($_SESSION['buy_now']);
+        }
+        /* [v51] 결제완료(비현금 즉시결제) 건은 이카운트 ERP 판매입력 자동 전송
+           (응답 후 shutdown 에서 전송 — 사용자 화면 전환속도에 영향 없음, 실패 시 큐 재시도) */
+        if ($initPayStatus === 'paid') {
+            ecount_on_paid('order', $orderId);
         }
         redirect('/order-complete.php?no=' . $orderNo);
 
