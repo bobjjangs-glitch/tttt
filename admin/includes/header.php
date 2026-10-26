@@ -19,7 +19,7 @@ $adminRoleLabel = $adminRoleLabels[$adminRole] ?? $adminRole;
 // 현재 페이지가 어느 그룹에 속하는지 확인 (드롭다운 자동 펼침용)
 $orderGroup = ['orders.php', 'business-orders.php', 'reservations.php', 'reservation-reminders.php'];
 $taxGroup = ['tax-invoices.php', 'tax-invoice-faxes.php', 'tax-invoice-print.php', 'tax-invoice-export.php'];
-$productGroup = ['products.php', 'brands.php', 'coupons.php', 'benefits-settings.php', 'reviews.php', 'popups.php', 'banners.php', 'bulk-upload.php', 'stock-movements.php'];
+$productGroup = ['products.php', 'brands.php', 'coupons.php', 'benefits-settings.php', 'reviews.php', 'popups.php', 'banners.php', 'bulk-upload.php', 'stock-movements.php', 'ecount-items.php'];
 $memberGroup = ['users.php', 'business-approvals.php', 'inquiries.php', 'chatbot.php', 'vehicles.php'];
 $settleGroup = ['daily-settlement.php', 'daily-settlement-print.php', 'monthly-settlement.php', 'monthly-settlement-print.php', 'card-fees.php', 'wholesale-sales.php', 'wholesale-sale-print.php'];
 $tabletGroup = ['work-logs.php', 'workers.php'];
@@ -158,7 +158,10 @@ function admin_nav_active(string $script, string $target): string {
           <?php if (AdminAuth::can('products')): ?>
           <a href="<?= BASE_URL ?>/admin/products.php" class="<?= admin_nav_active($currentScript, 'products.php') ?>">상품 관리</a>
           <a href="<?= BASE_URL ?>/admin/bulk-upload.php" class="<?= admin_nav_active($currentScript, 'bulk-upload.php') ?>">📤 일괄 업로드</a>
+          <a href="<?= BASE_URL ?>/admin/ecount-items.php" class="<?= admin_nav_active($currentScript, 'ecount-items.php') ?>">📦 이카운트 품목 등록</a>
+
           <?php endif; ?>
+
           <?php if (AdminAuth::can('stock-movements')): ?>
           <a href="<?= BASE_URL ?>/admin/stock-movements.php" class="<?= admin_nav_active($currentScript, 'stock-movements.php') ?>">📋 재고 입출고 이력</a>
           <?php endif; ?>

@@ -233,14 +233,38 @@ final class EcountClient
         return $this->httpPost($url, ['PurchasesList' => $purchaseList]);
     }
 
-    private function httpPost(string $url, array $payload): array
+    /**
+     * [신규] 품목 등록 — InventoryBasic/SaveBasicProduct (저장 API: 10초에 1회).
+     * $products = [['PROD_CD'=>..., 'PROD_DES'=>..., ...], ...]  (SESSION_ID 는 여기서 주입)
+     * 대량 전송은 15초를 넘길 수 있어 타임아웃을 60초로 둔다.
+     */
+    public function saveBasicProducts(array $products): array
+    {
+        $s = $this->getValidSession();
+        $list = [];
+        foreach (array_values($products) as $p) {
+            $list[] = ['BulkDatas' => array_merge(['SESSION_ID' => $s['session_id']], $p)];
+        }
+        $url = "https://{$this->domainBase}{$s['zone']}.ecount.com/OAPI/V2/InventoryBasic/SaveBasicProduct?SESSION_ID={$s['session_id']}";
+        return $this->httpPost($url, ['ProductList' => $list], 60);
+    }
+
+    /** [신규] 품목 단건 조회 — InventoryBasic/ViewBasicProduct (1초에 1회). 전송 결과 검증용. */
+    public function viewBasicProduct(string $prodCd): array
+    {
+        $s = $this->getValidSession();
+        $url = "https://{$this->domainBase}{$s['zone']}.ecount.com/OAPI/V2/InventoryBasic/ViewBasicProduct?SESSION_ID={$s['session_id']}";
+        return $this->httpPost($url, ['SESSION_ID' => $s['session_id'], 'PROD_CD' => $prodCd]);
+    }
+
+    private function httpPost(string $url, array $payload, int $timeout = 15): array
     {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
             CURLOPT_HTTPHEADER => ['Accept: application/json', 'Content-Type: application/json'],
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_TIMEOUT => $timeout,
         ]);
         $response = curl_exec($ch);
         $errno = curl_errno($ch);
