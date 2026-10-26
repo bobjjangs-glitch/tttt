@@ -2,12 +2,6 @@
 declare(strict_types=1);
 require_once __DIR__ . '/includes/bootstrap.php';
 
-/* [현황판] 입고 연동 — 파일이 없거나 오류가 나도 기존 태블릿 기능은 영향받지 않게 격리 */
-$boardLibPath = __DIR__ . '/includes/board-lib.php';
-if (is_file($boardLibPath)) {
-    try { require_once $boardLibPath; } catch (Throwable $e) { error_log('[board-lib] ' . $e->getMessage()); }
-}
-
 /* 태블릿 액션 라우터 — 모든 POST 처리 (로그인 상태 필요) */
 $worker = tablet_current_worker();
 if (!$worker && !AdminAuth::isLoggedIn()) {
@@ -51,7 +45,13 @@ switch ($action) {
                     ->execute(['id'=>(int)$log['reservation_id']]);
             } catch (Throwable $e) {}
         }
-        $back('tablet_ok', $newStatus === 'done' ? '작업 완료로 표시했습니다.' : '작업 중으로 되돌렸습니다.', $returnTo);
+        /* [v64] 작업 완료 → 구매관리 자동 적용(단가=매입단가) + 사이트 재고 차감 / 되돌림 시 복원 */
+        $epMsg = '';
+        try {
+            $ep = ecount_apply_worklog_purchase($id, $newStatus === 'done');
+            $epMsg = $ep['ok'] && $ep['message'] !== '' ? ' ' . $ep['message'] : '';
+        } catch (Throwable $e) { sg_error_log('[tablet log_status ecount] ' . $e->getMessage()); }
+        $back('tablet_ok', ($newStatus === 'done' ? '작업 완료로 표시했습니다.' : '작업 중으로 되돌렸습니다.') . $epMsg, $returnTo);
     }
 
     /* ---- 작업일지 삭제 ---- */
@@ -265,15 +265,6 @@ switch ($action) {
                     'by'=>($worker['name'] ?? AdminAuth::currentAdminName()),
                 ]);
             $savedId = (int)$pdo->lastInsertId();
-
-            /* [현황판] 현장 입고 차량에서 시작한 작업이면 입고 기록과 작업일지를 연결.
-               실패해도 작업일지 저장은 이미 끝났으므로 기존 동작에 영향 없음. */
-            $walkinId = (int)($_POST['walkin_id'] ?? 0);
-            if ($walkinId > 0 && $savedId > 0 && function_exists('board_link_walkin')) {
-                try { board_link_walkin($walkinId, $savedId); }
-                catch (Throwable $e) { error_log('[board-link] ' . $e->getMessage()); }
-            }
-
             $doneMsg = '작업일지를 등록했습니다.';
         }
 
@@ -289,8 +280,13 @@ switch ($action) {
             if (!empty($photos['error'])) $photoMsg .= ' ' . implode(' ', $photos['error']);
         }
 
-         $dateNote = ($workDate !== date('Y-m-d')) ? ' ※ 작업 날짜(' . $workDate . ')가 오늘이 아니라 실시간 현황판(오늘 기준)에는 표시되지 않습니다.' : '';
-        $back('tablet_ok', $doneMsg . $photoMsg . $dateNote, '/tablet/index.php?date=' . $workDate);
+        /* [v64] 완료 상태로 저장 → 구매관리 자동 적용(단가=매입단가) + 사이트 재고 차감 / 진행중 저장이면 자동 항목 되돌리기 */
+        if ($savedId > 0) {
+            try { $ep = ecount_apply_worklog_purchase($savedId, $status === 'done'); if (!empty($ep['message'])) $photoMsg .= ' ' . $ep['message']; }
+            catch (Throwable $e) { sg_error_log('[tablet log_save ecount] ' . $e->getMessage()); }
+        }
+
+        $back('tablet_ok', $doneMsg . $photoMsg, '/tablet/index.php?date=' . $workDate);
     }
 
     default:
