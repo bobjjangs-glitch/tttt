@@ -56,10 +56,10 @@ body{display:flex;flex-direction:column}
 .col-h b{font-size:3.6vh;color:var(--c)}
 .col-h span{font-size:4.4vh;font-weight:800}
 .col-b{flex:1;min-height:0;overflow:hidden;padding:0 1vw 1vh;display:flex;flex-direction:column;gap:1vh}
-.card{background:var(--card);border-radius:1vh;padding:1.4vh 1vw;display:flex;justify-content:space-between;align-items:center}
+.card{flex:none;background:var(--card);border-radius:1vh;padding:1.4vh 1vw;display:flex;justify-content:space-between;align-items:center}
 .plate{font-size:4.4vh;font-weight:800;letter-spacing:.04em}
 .time{font-size:2.4vh;color:var(--muted);font-variant-numeric:tabular-nums}
-.more{text-align:center;color:var(--muted);font-size:2.6vh;padding-top:.6vh}
+.more{flex:none;text-align:center;color:var(--muted);font-size:2.6vh;padding-top:.6vh}
 @keyframes flash{from{background:#facc15;color:#000}to{background:var(--card)}}
 .card.flash{animation:flash 2.5s ease-out}
 #alert{display:none;position:fixed;left:0;right:0;bottom:0;background:#b91c1c;color:#fff;
@@ -85,7 +85,7 @@ body{display:flex;flex-direction:column}
     {id: 'reserved', label: '예약차'},
     {id: 'done',     label: '작업완료'}
   ];
-  var MAX = 10, POLL_MS = 3000, STALE_MS = 15000;
+  var POLL_MS = 3000, STALE_MS = 15000;
 
   var board = document.getElementById('board');
   var alertEl = document.getElementById('alert');
@@ -105,10 +105,30 @@ body{display:flex;flex-direction:column}
     bodies[c.id] = b; counts[c.id] = n;
   });
 
-  var prev = {}, lastHash = null, firstLoad = true, pageDate = null;
+  var prev = {}, lastHash = null, lastItems = null, firstLoad = true, pageDate = null;
   var lastOk = Date.now(), failCount = 0, authFailed = false;
 
+  /* 컬럼 높이에 들어가는 만큼만 남기고 나머지는 "외 N대"로 — 잘려서 조용히 사라지는 것 방지 */
+  function fitColumn(body, total) {
+    if (!body.clientHeight) return;
+    var cards = body.querySelectorAll('.card');
+    var shown = cards.length;
+    function over() { return body.scrollHeight > body.clientHeight + 1; }
+    while (shown > 0 && over()) { body.removeChild(cards[--shown]); }
+    if (shown < total) {
+      var more = document.createElement('div');
+      more.className = 'more';
+      more.textContent = '외 ' + (total - shown) + '대';
+      body.appendChild(more);
+      while (shown > 1 && over()) {
+        body.removeChild(cards[--shown]);
+        more.textContent = '외 ' + (total - shown) + '대';
+      }
+    }
+  }
+
   function render(items) {
+    lastItems = items;
     var groups = {checkin: [], working: [], reserved: [], done: []};
     items.forEach(function (it) { (groups[it.state] || groups.reserved).push(it); });
     groups.done.reverse(); // 최근 완료가 위로
@@ -117,7 +137,7 @@ body{display:flex;flex-direction:column}
       var list = groups[c.id], body = bodies[c.id];
       body.textContent = '';
       counts[c.id].textContent = String(list.length);
-      list.slice(0, MAX).forEach(function (it) {
+      list.forEach(function (it) {
         var card = document.createElement('div');
         card.className = 'card' + ((!firstLoad && prev[it.key] !== it.state) ? ' flash' : '');
         var p = document.createElement('span'); p.className = 'plate'; p.textContent = it.plate;
@@ -125,17 +145,14 @@ body{display:flex;flex-direction:column}
         card.appendChild(p); card.appendChild(t);
         body.appendChild(card);
       });
-      if (list.length > MAX) {
-        var more = document.createElement('div');
-        more.className = 'more';
-        more.textContent = '외 ' + (list.length - MAX) + '대';
-        body.appendChild(more);
-      }
+      fitColumn(body, list.length);
     });
     prev = {};
     items.forEach(function (it) { prev[it.key] = it.state; });
     firstLoad = false;
   }
+
+  window.addEventListener('resize', function () { if (lastItems) render(lastItems); });
 
   function poll() {
     var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;

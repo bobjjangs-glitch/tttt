@@ -72,7 +72,14 @@ $walkinInvalid = false;
 $walkinReq = (int)($_GET['walkin_id'] ?? 0);
 if (!$resv && $walkinReq > 0) {
     try {
-        $stmt = $pdo->prepare('SELECT id, plate_no FROM tt_board_walkins WHERE id = :id AND work_log_id IS NULL LIMIT 1');
+        /* [FIX] walkin.php 목록 / board_fetch 와 같은 기준으로 "입고중"을 판정한다.
+           연결됐던 작업일지가 삭제돼 사라진 건(w.id IS NULL)도 목록에는 다시 입고중으로 보이므로,
+           work_log_id IS NULL 만 허용하면 목록에서 누른 "작업 시작"이 경고만 띄우고 실패한다. */
+        $stmt = $pdo->prepare(
+            'SELECT i.id, i.plate_no FROM tt_board_walkins i
+               LEFT JOIN tt_work_logs w ON w.id = i.work_log_id
+              WHERE i.id = :id AND w.id IS NULL LIMIT 1'
+        );
         $stmt->execute(['id' => $walkinReq]);
         if ($entry = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $walkinId = (int)$entry['id'];

@@ -75,13 +75,23 @@ function board_plate(?string $carInfo): string
     return $plate !== '' ? $plate : mb_substr($carInfo, 0, 12);
 }
 
-/** 현장 입고 기록 → 작업일지 연결 (log_save 저장 직후 호출). 이미 연결된 건은 건드리지 않는다. */
+/** 현장 입고 기록 → 작업일지 연결 (log_save 저장 직후 호출).
+ *  [FIX] 연결 가능 조건을 화면 목록(walkin.php / board_fetch)과 같은 기준으로 맞춘다.
+ *  - work_log_id가 NULL이거나
+ *  - 연결돼 있던 작업일지가 삭제돼 사라진 경우(목록에는 다시 "입고중"으로 보이는 건)
+ *  예전에는 IS NULL만 허용해서, 작업일지를 지운 뒤 다시 나타난 입고 건은 새 작업일지와
+ *  연결되지 않았다. 살아 있는 작업일지에 연결된 건은 여전히 건드리지 않는다. */
 function board_link_walkin(int $walkinId, int $workLogId): void
 {
     if ($walkinId <= 0 || $workLogId <= 0) return;
     ensure_board_columns();
     Database::connection()
-        ->prepare('UPDATE tt_board_walkins SET work_log_id = :l WHERE id = :id AND work_log_id IS NULL')
+        ->prepare(
+            'UPDATE tt_board_walkins SET work_log_id = :l
+              WHERE id = :id
+                AND (work_log_id IS NULL
+                     OR NOT EXISTS (SELECT 1 FROM tt_work_logs w WHERE w.id = tt_board_walkins.work_log_id))'
+        )
         ->execute(['l' => $workLogId, 'id' => $walkinId]);
 }
 

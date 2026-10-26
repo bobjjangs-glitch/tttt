@@ -5,11 +5,16 @@ require_once __DIR__ . '/includes/board-lib.php';
 function board_json(array $data, int $code = 200): never
 {
     if (ob_get_level()) ob_clean();
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {                       // 인코딩 실패를 빈 응답으로 흘리지 않는다
+        $code = 500;
+        $json = '{"ok":false,"msg":"encode error"}';
+    }
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
     header('X-Robots-Tag: noindex');
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
+    echo $json;
     exit;
 }
 

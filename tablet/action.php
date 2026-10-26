@@ -289,7 +289,8 @@ switch ($action) {
             if (!empty($photos['error'])) $photoMsg .= ' ' . implode(' ', $photos['error']);
         }
 
-        $back('tablet_ok', $doneMsg . $photoMsg, '/tablet/index.php?date=' . $workDate);
+         $dateNote = ($workDate !== date('Y-m-d')) ? ' ※ 작업 날짜(' . $workDate . ')가 오늘이 아니라 실시간 현황판(오늘 기준)에는 표시되지 않습니다.' : '';
+        $back('tablet_ok', $doneMsg . $photoMsg . $dateNote, '/tablet/index.php?date=' . $workDate);
     }
 
     default:

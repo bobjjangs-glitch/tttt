@@ -47,11 +47,27 @@ if (is_post()) {
                 }
             }
         } elseif ($action === 'cancel') {
-            $id   = (int)($_POST['id'] ?? 0);
-            $stmt = $pdo->prepare('DELETE FROM tt_board_walkins WHERE id = :id AND work_log_id IS NULL');
+            $id = (int)($_POST['id'] ?? 0);
+            /* [FIX] 화면 목록과 같은 기준으로 삭제한다.
+               목록은 "작업일지 미연결 건 + 연결된 작업일지가 삭제돼 사라진 건"을 모두 보여주는데,
+               예전 삭제문은 work_log_id IS NULL만 허용해서 후자는 화면에 보이는데도 지워지지 않았다.
+               (살아 있는 작업일지에 연결된 건만 취소 불가) */
+            $stmt = $pdo->prepare(
+                'DELETE i FROM tt_board_walkins i
+                   LEFT JOIN tt_work_logs w ON w.id = i.work_log_id
+                  WHERE i.id = :id AND w.id IS NULL'
+            );
             $stmt->execute(['id' => $id]);
-            flash($stmt->rowCount() > 0 ? 'tablet_ok' : 'tablet_error',
-                  $stmt->rowCount() > 0 ? '입고를 취소했습니다.' : '취소할 수 없습니다 (이미 작업이 시작됐거나 없는 건).');
+            if ($stmt->rowCount() > 0) {
+                flash('tablet_ok', '입고를 취소했습니다.');
+            } else {
+                /* 실패 사유를 구분해서 알려준다 (지워진 건인지, 작업이 진행 중인 건인지) */
+                $chk = $pdo->prepare('SELECT 1 FROM tt_board_walkins WHERE id = :id');
+                $chk->execute(['id' => $id]);
+                flash('tablet_error', $chk->fetchColumn()
+                    ? '작업이 이미 시작된 건이라 취소할 수 없습니다. (작업일지를 삭제하면 다시 취소할 수 있습니다)'
+                    : '이미 취소됐거나 존재하지 않는 입고 건입니다.');
+            }
         }
     } catch (Throwable $e) {
         error_log('[walkin] ' . $e->getMessage());

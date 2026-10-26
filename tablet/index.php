@@ -1,6 +1,13 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/includes/bootstrap.php';
+
+/* 보강된 상태 해시(예약확정 감지) — 파일이 없거나 오류여도 기존 화면은 그대로 */
+$boardLibPath = __DIR__ . '/includes/board-lib.php';
+if (is_file($boardLibPath)) {
+    try { require_once $boardLibPath; } catch (Throwable $e) { error_log('[board-lib] ' . $e->getMessage()); }
+}
+
 $worker = tablet_require_worker();
 
 $pageTitle = '오늘의 작업일지';
@@ -18,21 +25,30 @@ $calc = compute_day_settlement($date);
 $settlement = get_settlement($date);
 $isClosed = $settlement && $settlement['reopened_at'] === null;
 
-/* 미연동 예약(작업 대기) — 예약이 들어오면 별도 확인 없이 이 곳에 자동 표시
- * 예약판과 동일한 조건: 취소(canceled)/노쇼(noshow)만 제외한 미연동 예약 전부.
+/* 미연동 예약(작업 대기) — "예약확정(confirmed)" 이후 예약만 이 곳에 표시.
+ * 접수(pending) 상태는 관리자가 예약확정 처리하기 전까지 표시하지 않는다.
  * visited(방문확정) 상태인데 작업일지가 없는 예약도 놓치지 않고 표시한다. */
 $pdo = Database::connection();
 $waitReservations = [];
 try {
     $stmt = $pdo->prepare(
         "SELECT r.* FROM tt_reservations r
-         WHERE r.visit_date = :d AND r.status NOT IN ('canceled','noshow')
+         WHERE r.visit_date = :d AND r.status IN ('confirmed','visited')
            AND NOT EXISTS (SELECT 1 FROM tt_work_logs w WHERE w.reservation_id = r.id)
-         ORDER BY FIELD(r.status,'pending','confirmed','visited'), r.visit_time ASC, r.id ASC");
+         ORDER BY FIELD(r.status,'confirmed','visited'), r.visit_time ASC, r.id ASC");
     $stmt->execute(['d'=>$date]);
     $waitReservations = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {}
 $waitCount = count($waitReservations);
+
+/* 확정 대기 건수 — 표시는 안 하고 안내만 */
+$pendingCount = 0;
+try {
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM tt_reservations WHERE visit_date = :d AND status = 'pending'");
+    $stmt->execute(['d'=>$date]);
+    $pendingCount = (int)$stmt->fetchColumn();
+} catch (Throwable $e) {}
+
 $workers = get_workers(true);
 
 /* 첨부 사진 (작업일지별 맵) */
@@ -56,9 +72,9 @@ ksort($groups['walkin']);
 
 $fmt = fn(int $n): string => number_format($n);
 
-/* 폴링용 상태 해시 — api-state.php와 같은 계산(tablet_state_data) */
+/* 폴링용 상태 해시 — api-state.php와 같은 계산 */
 $stateDate = $date;
-$stateHash = tablet_state_data($date)['hash'];
+$stateHash = function_exists('tablet_page_hash') ? tablet_page_hash($date) : tablet_state_data($date)['hash'];
 
 $okMsg = flash('tablet_ok');
 $errMsg = flash('tablet_error');
@@ -104,9 +120,13 @@ require __DIR__ . '/includes/header.php';
   <section class="tablet-card">
     <div class="tablet-card-title">🗓️ 예약작업 <span class="count-chip"><?= (int)$calc['reservation_count'] ?>건<?= $waitCount ? ' · 대기 ' . (int)$waitCount . '건' : '' ?> · <?= $fmt($calc['reservation_sales']) ?>원</span></div>
 
-    <?php /* 새로 들어온 예약 — 자동 표시 (연동 전) */ ?>
+    <?php if ($pendingCount > 0): ?>
+      <div class="time-group-label" style="color:#92400e;">⏳ 예약확정 대기 <?= (int)$pendingCount ?>건 — 관리자가 '예약확정' 처리하면 이 곳에 표시됩니다</div>
+    <?php endif; ?>
+
+    <?php /* 예약확정된 예약 — 자동 표시 (연동 전) */ ?>
     <?php if ($waitCount > 0): ?>
-      <div class="time-group-label" style="color:var(--tbl-blue-dark);">🔔 자동 표시된 예약 (<?= (int)$waitCount ?>건) — 예약이 접수되면 별도 확인 없이 이 곳에 바로 뜹니다</div>
+      <div class="time-group-label" style="color:var(--tbl-blue-dark);">🔔 확정된 예약 (<?= (int)$waitCount ?>건) — 예약확정 처리된 예약이 이 곳에 표시됩니다</div>
       <div class="resv-grid wait-grid">
         <?php foreach ($waitReservations as $r): ?>
         <div class="resv-card is-wait">
@@ -114,7 +134,6 @@ require __DIR__ . '/includes/header.php';
             <div class="resv-time"><?= h(substr((string)$r['visit_time'], 0, 5)) ?></div>
             <?php $vt = $r['visit_type'] ?? 'tire'; $vtLabels = resv_visit_type_labels(); if (!array_key_exists($vt, $vtLabels)) $vt = 'tire'; ?>
             <span class="badge badge-<?= $vt === 'repair' ? 'repair' : ($vt === 'etc' ? 'etc' : 'tire') ?>"><?= h($vtLabels[$vt]) ?></span>
-            <?php if ($r['status'] === 'pending'): ?><span class="badge badge-working">확정 대기</span><?php endif; ?>
             <?php if ($r['status'] === 'confirmed'): ?><span class="badge badge-resv">예약 확정</span><?php endif; ?>
             <?php if ($r['status'] === 'visited'): ?><span class="badge badge-done">방문 확정 · 연동 대기</span><?php endif; ?>
             <span class="resv-no" style="margin-left:auto;"><?= h($r['res_no']) ?></span>
@@ -151,7 +170,7 @@ require __DIR__ . '/includes/header.php';
     <?php endif; ?>
 
     <?php if (empty($groups['reservation']) && $waitCount === 0): ?>
-      <div class="empty-state">예약이 접수되면 자동으로 이 곳에 표시됩니다<br><small style="font-weight:500;">사이트에서 예약이 들어오면 별도 확인 없이 30초 내 자동 갱신 — "작업 시작"을 누르면 작업일지로 연동됩니다</small></div>
+      <div class="empty-state">확정된 예약이 없습니다<br><small style="font-weight:500;">예약이 접수된 뒤 관리자가 '예약확정' 처리하면 30초 내 자동으로 이 곳에 표시됩니다 — "작업 시작"을 누르면 작업일지로 연동됩니다</small></div>
     <?php elseif (!empty($groups['reservation'])): ?>
       <?php if ($waitCount > 0): ?><div class="time-group-label" style="margin-top:18px;">연동 완료된 예약 작업</div><?php endif; ?>
       <?php foreach ($groups['reservation'] as $hour => $logs): ?>
